@@ -1,0 +1,51 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: tally
+      POSTGRES_PASSWORD: tallysecret
+      POSTGRES_DB: lurus
+    volumes:
+      - tally_pgdata:/var/lib/postgresql/data
+    networks:
+      - tally_dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tally"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - tally_dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  nats:
+    image: nats:2.10-alpine
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["--jetstream", "-m", "8222"]
+    networks:
+      - tally_dev
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  tally_pgdata:
+
+networks:
+  tally_dev:
+    driver: bridge

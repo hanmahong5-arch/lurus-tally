@@ -33,52 +33,63 @@
 ### Prerequisites
 
 - Go 1.25+
-- Docker (for `make docker-build`)
+- Bun 1.2+ (for `make dev-web`)
+- Docker Desktop with Compose v2 (for `make dev` / `make test-integration`)
 - golangci-lint (for `make lint`)
 
-### Local Run
+### Five-minute setup
 
 ```bash
-# 1. Clone the repo and enter the service directory
-git clone https://github.com/hanmahong5-arch/lurus-tally.git
-cd lurus-tally
+# 1. Clone and enter the repo
+git clone https://github.com/hanmahong5-arch/lurus-tally.git && cd lurus-tally
 
-# 2. Copy env template and fill in placeholder values
+# 2. Configure (defaults work as-is for local dev — no edits required)
 cp .env.example .env
-# Edit .env — set DATABASE_DSN / REDIS_URL / NATS_URL at minimum
 
-# 3. Start the server
-make run
+# 3. Start Postgres + Redis + NATS containers, then the Go backend
+make dev
 
-# 4. Verify health endpoints
+# 4. Verify the backend is running
 curl http://localhost:18200/internal/v1/tally/health
 # Expected: {"service":"lurus-tally","status":"ok","version":"dev"}
 
-curl http://localhost:18200/internal/v1/tally/ready
-# Expected: {"status":"ready"}
+# 5. (Second terminal) Start the Next.js frontend
+make dev-web
+# Frontend available at http://localhost:3000
+
+# 6. Tear down Docker services when done
+make dev-stop
 ```
 
-### Environment Variables
+### Migration
 
-| Variable | Required | Default | Description |
-|----------|----------|---------|-------------|
-| `DATABASE_DSN` | Yes | — | PostgreSQL DSN (e.g. `postgres://user:pass@host/db?sslmode=disable`) |
-| `REDIS_URL` | Yes | — | Redis URL (e.g. `redis://localhost:6379/5`) |
-| `NATS_URL` | Yes | — | NATS URL (e.g. `nats://localhost:4222`) |
-| `PORT` | No | `18200` | HTTP listen port |
-| `LOG_LEVEL` | No | `info` | Log verbosity: `debug`, `info`, `warn`, `error` |
-| `GIN_MODE` | No | `release` | Gin mode: `release` or `debug` |
-| `SERVICE_VERSION` | No | `dev` | Build version label (injected by `-ldflags` in CI) |
-| `SHUTDOWN_TIMEOUT` | No | `5s` | Graceful shutdown deadline |
+```bash
+make migrate-up     # Apply all pending migrations against DATABASE_DSN in .env
+make migrate-down   # Roll back the most recent migration
+```
+
+### Testing
+
+```bash
+make test               # Unit tests (no Docker required)
+make test-integration   # Integration tests via testcontainers-go (requires Docker Desktop)
+```
 
 ## Make Targets
 
 | Target | Description |
 |--------|-------------|
+| `make dev` | Start Docker services (Postgres + Redis + NATS) then Go backend |
+| `make dev-web` | Start Next.js dev server at http://localhost:3000 |
+| `make dev-stop` | Stop and remove Docker Compose services |
+| `make migrate-up` | Apply all pending migrations against `.env` DATABASE_DSN |
+| `make migrate-down` | Roll back the most recent migration |
+| `make seed` | Seed stub (no-op in MVP stage) |
+| `make test-integration` | Run testcontainers integration tests (requires Docker) |
 | `make build` | Compile production binary `tally-backend` |
-| `make test` | Run all unit and integration tests |
+| `make test` | Run unit tests |
 | `make lint` | Run golangci-lint |
-| `make run` | Start server from source (requires `.env`) |
+| `make run` | Start server from source (requires services already up) |
 | `make docker-build` | Build Docker image `lurus-tally:local` |
 | `make clean` | Remove build artifacts |
 | `make coverage` | Generate and open HTML coverage report |
