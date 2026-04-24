@@ -9,8 +9,8 @@ import (
 	"github.com/golang-migrate/migrate/v4"
 	migratepg "github.com/golang-migrate/migrate/v4/database/postgres"
 	"github.com/golang-migrate/migrate/v4/source/iofs"
-	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
 	"github.com/hanmahong5-arch/lurus-tally/migrations"
+	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
 )
 
 // RunMigrations applies all pending SQL migrations from the embedded migrations directory.
@@ -28,7 +28,7 @@ func RunMigrations(ctx context.Context, dsn string, logger *slog.Logger) error {
 			"expected a valid PostgreSQL DSN (e.g. postgres://user:pass@host/db?sslmode=disable); "+
 			"check DATABASE_DSN environment variable", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.PingContext(ctx); err != nil {
 		return fmt.Errorf("migration failed: cannot reach PostgreSQL: %w; "+
@@ -90,7 +90,7 @@ func RunMigrationsDown(ctx context.Context, dsn string) error {
 	if err != nil {
 		return fmt.Errorf("migration down: cannot parse DSN: %w", err)
 	}
-	defer db.Close()
+	defer func() { _ = db.Close() }()
 
 	if err := db.PingContext(ctx); err != nil {
 		return fmt.Errorf("migration down: cannot reach PostgreSQL: %w", err)
@@ -120,6 +120,12 @@ func RunMigrationsDown(ctx context.Context, dsn string) error {
 
 	if err := m.Down(); err != nil && err != migrate.ErrNoChange {
 		return fmt.Errorf("migration down: apply down migrations: %w", err)
+	}
+
+	// Drop the migrations tracking table so a down-all leaves the tally schema
+	// genuinely empty (no leftover bookkeeping rows).
+	if _, err := db.ExecContext(ctx, `DROP TABLE IF EXISTS tally.schema_migrations`); err != nil {
+		return fmt.Errorf("migration down: cleanup schema_migrations: %w", err)
 	}
 	return nil
 }
