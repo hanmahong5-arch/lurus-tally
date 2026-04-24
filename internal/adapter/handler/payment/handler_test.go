@@ -27,9 +27,8 @@ func init() {
 }
 
 var (
-	phTenantID  = uuid.New()
-	phBillID    = uuid.New()
-	phCreatorID = uuid.New()
+	phTenantID = uuid.New()
+	phBillID   = uuid.New()
 )
 
 // ----- mock BillReader -----

@@ -10,8 +10,8 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/unit"
+	"github.com/shopspring/decimal"
 )
 
 // ErrNotFound is returned when a unit_def row is not found.

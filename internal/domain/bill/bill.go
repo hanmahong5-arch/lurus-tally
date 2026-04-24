@@ -89,9 +89,9 @@ type BillHead struct {
 	// Currency is the original invoice currency (e.g. "USD"). Empty / "CNY" = domestic.
 	// ExchangeRateVal is the rate applied (1 orig-currency = ExchangeRateVal CNY).
 	// AmountLocal is the original-currency total (snapshot, never recalculated on rate changes).
-	Currency         string          `json:"currency,omitempty"`
-	ExchangeRateVal  decimal.Decimal `json:"exchange_rate,omitempty"`
-	AmountLocal      decimal.Decimal `json:"amount_local,omitempty"`
+	Currency        string          `json:"currency,omitempty"`
+	ExchangeRateVal decimal.Decimal `json:"exchange_rate,omitempty"`
+	AmountLocal     decimal.Decimal `json:"amount_local,omitempty"`
 
 	// Approval metadata
 	ApprovedAt *time.Time `json:"approved_at,omitempty"`

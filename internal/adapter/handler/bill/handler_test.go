@@ -17,9 +17,7 @@ import (
 
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
-	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
-	domainstock "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
 )
 
 func init() {
@@ -115,22 +113,6 @@ func (m *mockBillRepo) AcquireBillAdvisoryLock(_ context.Context, _ *sql.Tx, _, 
 
 func (m *mockBillRepo) UpdatePaidAmount(_ context.Context, _ *sql.Tx, _, _ uuid.UUID, _ decimal.Decimal) error {
 	return nil
-}
-
-// ----- mock stock executor -----
-
-type mockStockExecutor struct{}
-
-func (m *mockStockExecutor) ExecuteInTx(_ context.Context, _ *sql.Tx, req appstock.RecordMovementRequest) (*domainstock.Snapshot, error) {
-	return &domainstock.Snapshot{OnHandQty: req.Qty}, nil
-}
-
-// ----- mock product unit repo -----
-
-type mockUnitRepo struct{}
-
-func (m *mockUnitRepo) GetConversionFactor(_ context.Context, _, _ uuid.UUID) (decimal.Decimal, error) {
-	return decimal.NewFromInt(1), nil
 }
 
 // ----- test router helper -----

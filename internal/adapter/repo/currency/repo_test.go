@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/shopspring/decimal"
 
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/currency"

@@ -31,9 +31,9 @@ func init() {
 // ----- shared test fixtures -----
 
 var (
-	shTenantID   = uuid.New()
+	shTenantID    = uuid.New()
 	shWarehouseID = uuid.New()
-	shProductID  = uuid.New()
+	shProductID   = uuid.New()
 )
 
 // ----- mock BillRepo (sale handler tests) -----

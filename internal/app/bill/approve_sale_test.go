@@ -17,7 +17,6 @@ import (
 	domainstock "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
 )
 
-
 // ----- mock PaymentRepo -----
 
 type mockPaymentRepo struct {

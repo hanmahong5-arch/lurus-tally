@@ -42,7 +42,7 @@ func (r *Repo) ListCurrencies(ctx context.Context) ([]domain.Currency, error) {
 	if err != nil {
 		return nil, fmt.Errorf("currency repo: list currencies: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var result []domain.Currency
 	for rows.Next() {
@@ -116,7 +116,7 @@ func (r *Repo) ListRateHistory(ctx context.Context, tenantID uuid.UUID, from, to
 	if err != nil {
 		return nil, fmt.Errorf("currency repo: list rate history: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var result []domain.ExchangeRate
 	for rows.Next() {

@@ -191,4 +191,3 @@ var _ appstock.InventoryCalculator = (*appstock.FIFOCalculator)(nil)
 
 // Compile-time check: WACCalculator satisfies InventoryCalculator.
 var _ appstock.InventoryCalculator = (*appstock.WACCalculator)(nil)
-
