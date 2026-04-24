@@ -1,0 +1,33 @@
+# Version control
+.git
+.gitignore
+
+# Documentation and planning artifacts
+_bmad-output/
+_research/
+*.md
+!README.md
+
+# Frontend directory (not needed in backend build context)
+web/
+
+# Test artifacts
+tests/
+coverage.out
+*.test
+
+# Build artifacts
+bin/
+tally-backend
+tally-backend.exe
+
+# Secrets
+.env
+
+# IDE
+.idea/
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db

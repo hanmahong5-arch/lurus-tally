@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: tally-config
+  namespace: lurus-tally
+data:
+  PORT: "18200"
+  LOG_LEVEL: "info"
+  GIN_MODE: "release"
+  KOVA_URL: ""
+  MEMORUS_URL: "http://memorus.lurus-system.svc:8880"
+  ZITADEL_DOMAIN: "auth.lurus.cn"
+  JWT_AUDIENCE: ""
+  SHUTDOWN_TIMEOUT: "5s"
+  MIGRATE_ON_BOOT: "true"

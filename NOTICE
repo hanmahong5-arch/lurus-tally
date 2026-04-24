@@ -1,0 +1,103 @@
+Lurus Tally (2b-svc-psi)
+Copyright 2026 Lurus Tech
+
+This product includes software developed by:
+  Lurus Tech (hanmahong5-arch)
+
+This product borrows data model designs, business workflow patterns,
+and/or schema concepts from the following open-source projects.
+No code is copied verbatim; all derived implementations are rewritten
+in Go and adapted to multi-tenant + AI-native architecture.
+
+────────────────────────────────────────────────────────────────────
+Data Model Lineage (License: Apache-2.0)
+────────────────────────────────────────────────────────────────────
+
+1. jshERP (管伊佳ERP)
+   Copyright (c) Ji Shenghua and contributors
+   Source: https://github.com/jishenghua/jshERP
+   License: Apache License 2.0
+   Used for: Core PSI domain entities (depot_head/depot_item universal
+             document model, material/SKU schema, account/finance
+             ledger structure, weighted-average-cost algorithm
+             reference). Translated to PostgreSQL DDL with
+             multi-tenant RLS isolation, snake_case naming,
+             tenant_id row-level security, soft-delete via
+             deleted_at TIMESTAMPTZ, PostgreSQL native arrays
+             replacing CSV string fields.
+
+2. GreaterWMS
+   Copyright (c) Singosan and contributors
+   Source: https://github.com/GreaterWMS/GreaterWMS
+   License: Apache License 2.0
+   Used for: Warehouse management module schema (six-state stock
+             fields: on_hand/available/reserved/in_transit/damage/hold;
+             ASN/receiving/picking/putaway workflow patterns;
+             location/bin hierarchy). Adapted from Django models to
+             Go GORM entities.
+
+3. Apache OFBiz
+   Copyright (c) The Apache Software Foundation
+   Source: https://github.com/apache/ofbiz-framework
+   License: Apache License 2.0
+   Used for: Order/Inventory/Facility entity design patterns;
+             InventoryItem variance handling; serial number tracking;
+             general ledger account code structure (referenced for
+             v2 finance integration design).
+
+────────────────────────────────────────────────────────────────────
+Frontend Component Lineage (License: MIT)
+────────────────────────────────────────────────────────────────────
+
+4. shadcn/ui
+   Copyright (c) shadcn
+   Source: https://github.com/shadcn-ui/ui
+   License: MIT License
+   Used for: Component primitives copied into web/components/ui/
+             (Button, Sheet, Dialog, Command, Sonner, Tabs, etc.).
+             Not a runtime dependency; copy-and-customize model.
+
+5. Radix UI
+   Copyright (c) WorkOS
+   Source: https://github.com/radix-ui/primitives
+   License: MIT License
+   Used for: Underlying accessibility primitives consumed by shadcn/ui.
+
+6. Medusa.js v2 (selected modules)
+   Copyright (c) Medusa Commerce ApS
+   Source: https://github.com/medusajs/medusa
+   License: MIT License
+   Used for: Reference architecture for headless inventory module
+             API design. No runtime code dependency.
+
+────────────────────────────────────────────────────────────────────
+Industry Reference (Design Inspiration Only — No Code or Schema)
+────────────────────────────────────────────────────────────────────
+
+The following projects influenced product strategy, UX, or workflow
+design but contributed neither code nor data schema. Listed for
+transparency only:
+
+  - ERPNext / Frappe (GPL-3.0 — referenced for workflow understanding only)
+  - Odoo Community (LGPL-3.0 — referenced for workflow understanding only)
+  - Tryton (GPL-3.0 — referenced for module design understanding only)
+  - Linear, Vercel, Stripe Dashboard, Notion, Shopify Admin, Cron,
+    Raycast, Plain, Height, Attio (UX inspiration)
+  - SAP Business One, Oracle NetSuite, Microsoft Dynamics 365 BC,
+    Cin7 Core, Brightpearl, Zoho Inventory, Katana MRP (market reference)
+  - 用友 / 金蝶 / 管家婆 / 速达 / 简道云 / 有赞 / 微盟 (China market reference)
+
+────────────────────────────────────────────────────────────────────
+Lurus-Internal Dependencies (Not Third-Party)
+────────────────────────────────────────────────────────────────────
+
+Tally consumes the following Lurus capabilities via API:
+
+  - identity / billing / notification / auth ← lurus-platform
+  - llm-inference (LLM gateway) ← lurus-hub (2b-svc-api)
+  - memory (RAG) ← lurus-memorus
+  - agent-execution ← lurus-kova
+
+────────────────────────────────────────────────────────────────────
+End of NOTICE
+────────────────────────────────────────────────────────────────────

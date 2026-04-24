@@ -1,0 +1,19 @@
+# Version control
+.git
+
+# Dependency directory (installed fresh inside image)
+node_modules
+
+# Build output (produced inside image)
+.next
+
+# Environment secrets
+.env
+.env.*
+.env*.local
+
+# Documentation
+*.md
+
+# Test coverage
+coverage/

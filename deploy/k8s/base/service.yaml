@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: tally-backend
+  namespace: lurus-tally
+  labels:
+    app: tally-backend
+spec:
+  type: ClusterIP
+  selector:
+    app: tally-backend
+  ports:
+    - name: http
+      port: 18200
+      targetPort: 18200
+      protocol: TCP

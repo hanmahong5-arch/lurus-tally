@@ -1,0 +1,23 @@
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: tally-ingress
+  namespace: lurus-tally
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`tally-stage.lurus.cn`) && (PathPrefix(`/api`) || PathPrefix(`/internal`))
+      kind: Rule
+      priority: 10
+      services:
+        - name: tally-backend
+          port: 18200
+    - match: Host(`tally-stage.lurus.cn`)
+      kind: Rule
+      priority: 1
+      services:
+        - name: tally-web
+          port: 3000
+  tls:
+    secretName: lurus-cn-wildcard-tls

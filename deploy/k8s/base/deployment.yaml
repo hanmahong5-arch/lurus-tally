@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tally-backend
+  namespace: lurus-tally
+  labels:
+    app: tally-backend
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: tally-backend
+  template:
+    metadata:
+      labels:
+        app: tally-backend
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+      containers:
+        - name: tally-backend
+          image: ghcr.io/hanmahong5-arch/lurus-tally-backend:main-placeholder
+          ports:
+            - name: http
+              containerPort: 18200
+              protocol: TCP
+          envFrom:
+            - configMapRef:
+                name: tally-config
+            - secretRef:
+                name: tally-secrets
+          securityContext:
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+                - ALL
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          livenessProbe:
+            httpGet:
+              path: /internal/v1/tally/health
+              port: 18200
+            initialDelaySeconds: 10
+            periodSeconds: 15
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /internal/v1/tally/ready
+              port: 18200
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 3
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir: {}

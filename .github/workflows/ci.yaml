@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GO_VERSION: "1.25"
+
+jobs:
+  backend-lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+
+  backend-test:
+    name: Unit Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Run unit tests
+        run: go test -race -count=1 -coverprofile=coverage.out ./...
+      - name: Upload coverage
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - name: Cache node_modules
+        uses: actions/cache@v4
+        with:
+          path: web/node_modules
+          key: bun-${{ hashFiles('web/bun.lock') }}
+          restore-keys: bun-
+      - name: Install dependencies
+        working-directory: web
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        working-directory: web
+        run: bunx tsc --noEmit
+      - name: Lint
+        working-directory: web
+        run: bun run lint
+      - name: Build
+        working-directory: web
+        run: bun run build
+
+  backend-integration:
+    name: Integration Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Run integration tests
+        run: go test -v -tags integration -timeout 180s ./tests/integration/...
+
+  backend-build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [backend-lint, backend-test]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - name: Build backend binary
+        run: CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o tally-backend ./cmd/server
+      - name: Verify binary
+        run: ls -lh tally-backend
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: tally-backend
+          path: tally-backend

@@ -1,0 +1,32 @@
+# Binaries
+tally-backend
+tally-backend.exe
+bin/
+
+# Go build artifacts
+*.out
+coverage.out
+
+# Environment secrets — never commit real values
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Vendor (dependencies managed by go modules)
+vendor/
+
+# Test cache
+/tmp/
+
+# Frontend build artifacts
+web/.next/
+web/node_modules/
+web/.env*.local
