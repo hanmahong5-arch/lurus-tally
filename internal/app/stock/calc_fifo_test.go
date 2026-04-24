@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
@@ -193,12 +192,3 @@ var _ appstock.InventoryCalculator = (*appstock.FIFOCalculator)(nil)
 // Compile-time check: WACCalculator satisfies InventoryCalculator.
 var _ appstock.InventoryCalculator = (*appstock.WACCalculator)(nil)
 
-// helper: make a snapshot with lots pre-seeded into a repo (for isolated outbound tests).
-func makeRepoWithLots(lots []struct {
-	qty      decimal.Decimal
-	cost     decimal.Decimal
-	received string // time offset hack not needed — insertion order matters
-}) *mockRepo {
-	repo := newMockRepo(nil)
-	return repo
-}

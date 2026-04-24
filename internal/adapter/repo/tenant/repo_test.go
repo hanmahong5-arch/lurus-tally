@@ -10,19 +10,6 @@ import (
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/tenant"
 )
 
-// mockDB satisfies the repoTenant.DB interface with all operations returning no-row results.
-type mockDB struct{}
-
-func (m *mockDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	// sql.Row with no data; scanning will return sql.ErrNoRows.
-	db, _ := sql.Open("driver-name", "")
-	return db.QueryRowContext(ctx, "SELECT NULL WHERE FALSE")
-}
-
-func (m *mockDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
-	return nil, nil
-}
-
 // TestTenantProfileRepo_GetByTenantID_NotFound_ReturnsNil verifies that a missing profile
 // returns nil, nil (not an error).
 func TestTenantProfileRepo_GetByTenantID_NotFound_ReturnsNil(t *testing.T) {

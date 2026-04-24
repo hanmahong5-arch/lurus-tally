@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/unit"
 )
 
@@ -114,6 +115,28 @@ func (r *Repo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.Uni
 	u.UnitType = domain.UnitType(unitType)
 	return u, nil
 }
+
+// GetConversionFactor returns the conversion_factor for the (product, unit) pair from product_unit.
+// Returns appbill.ErrInvalidUnitForProduct when the pair does not exist.
+// This is a surgical extension for Story 6.1 (ApprovePurchaseUseCase dependency).
+func (r *Repo) GetConversionFactor(ctx context.Context, productID, unitID uuid.UUID) (decimal.Decimal, error) {
+	const q = `SELECT conversion_factor FROM tally.product_unit WHERE product_id = $1 AND unit_id = $2`
+
+	var factor string
+	err := r.db.QueryRowContext(ctx, q, productID, unitID).Scan(&factor)
+	if errors.Is(err, sql.ErrNoRows) {
+		return decimal.Zero, errInvalidUnitForProduct
+	}
+	if err != nil {
+		return decimal.Zero, fmt.Errorf("unit repo: get conversion factor: %w", err)
+	}
+	f, _ := decimal.NewFromString(factor)
+	return f, nil
+}
+
+// errInvalidUnitForProduct is a package-level sentinel wrapping the app-layer error.
+// We import the app-layer error indirectly to avoid circular imports.
+var errInvalidUnitForProduct = fmt.Errorf("unit: unit_id is not valid for this product")
 
 // Delete removes a tenant-custom unit_def.
 // The caller (use case) is responsible for checking is_system before calling this.

@@ -175,6 +175,68 @@ func (uc *RecordMovementUseCase) Execute(ctx context.Context, req RecordMovement
 	return snap, nil
 }
 
+// ExecuteInTx is identical to Execute but uses an externally-managed transaction.
+// Use this when the caller (e.g. ApprovePurchaseUseCase) needs to atomically commit
+// multiple movements together with a bill status update in one transaction.
+//
+// Caller is responsible for tx.Begin / tx.Commit / tx.Rollback.
+// The advisory lock is still acquired inside the provided tx so it is automatically
+// released when that transaction ends.
+func (uc *RecordMovementUseCase) ExecuteInTx(ctx context.Context, tx *sql.Tx, req RecordMovementRequest) (*domain.Snapshot, error) {
+	if req.TenantID == uuid.Nil {
+		return nil, fmt.Errorf("record movement (tx): tenant_id is required")
+	}
+	if req.ProductID == uuid.Nil {
+		return nil, fmt.Errorf("record movement (tx): product_id is required")
+	}
+	if req.WarehouseID == uuid.Nil {
+		return nil, fmt.Errorf("record movement (tx): warehouse_id is required")
+	}
+	if err := req.Direction.Validate(); err != nil {
+		return nil, fmt.Errorf("record movement (tx): %w", err)
+	}
+
+	qtyBase, err := convertToBase(req.Qty, req.ConvFactor)
+	if err != nil {
+		return nil, fmt.Errorf("record movement (tx): unit conversion: %w", err)
+	}
+
+	occurredAt := req.OccurredAt
+	if occurredAt.IsZero() {
+		occurredAt = time.Now().UTC()
+	}
+
+	m := &domain.Movement{
+		ID:            uuid.New(),
+		TenantID:      req.TenantID,
+		ProductID:     req.ProductID,
+		WarehouseID:   req.WarehouseID,
+		Direction:     req.Direction,
+		QtyBase:       qtyBase,
+		UnitCost:      req.UnitCost,
+		ReferenceType: req.ReferenceType,
+		ReferenceID:   req.ReferenceID,
+		OccurredAt:    occurredAt,
+		CreatedBy:     req.CreatedBy,
+		Note:          req.Note,
+	}
+
+	if err := uc.repo.AcquireAdvisoryLock(ctx, tx, req.TenantID, req.ProductID, req.WarehouseID); err != nil {
+		return nil, fmt.Errorf("record movement (tx): acquire advisory lock: %w", err)
+	}
+
+	if err := uc.calculator.ValidateMovement(ctx, tx, m); err != nil {
+		return nil, err
+	}
+
+	snap, err := uc.calculator.ApplyMovement(ctx, tx, m)
+	if err != nil {
+		return nil, fmt.Errorf("record movement (tx): apply movement: %w", err)
+	}
+
+	return snap, nil
+}
+
 // convertToBase converts qty using the provided factor string.
 // Empty or "1" factors return qty unchanged (already in base unit).
 func convertToBase(qty decimal.Decimal, factor string) (decimal.Decimal, error) {

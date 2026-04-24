@@ -26,11 +26,6 @@ func d(s string) decimal.Decimal {
 	return v
 }
 
-// newWAC returns a WACCalculator backed by a fresh mockRepo.
-func newWAC(snap *domain.Snapshot) appstock.InventoryCalculator {
-	return appstock.NewCalculator(stubProfile{"wac"}, newMockRepo(snap))
-}
-
 // TestWAC_ApplyMovement_Inbound_UpdatesAvgCost verifies AC-2:
 // initial 100@10 + in 50@12 → avg = (100*10 + 50*12)/150 = 10.666667
 func TestWAC_ApplyMovement_Inbound_UpdatesAvgCost(t *testing.T) {

@@ -1,8 +1,9 @@
 // Package unitconv provides unit conversion arithmetic using decimal strings.
 // All inputs and outputs are NUMERIC-compatible strings to avoid float64 precision loss.
 // The conversion_factor stored in product_unit is always relative to the base unit:
-//   base_quantity = user_quantity * conversion_factor
-//   user_quantity = base_quantity / conversion_factor
+//
+//	base_quantity = user_quantity * conversion_factor
+//	user_quantity = base_quantity / conversion_factor
 package unitconv
 
 import (

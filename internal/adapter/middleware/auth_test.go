@@ -94,13 +94,6 @@ func mockJWKSServer(t *testing.T, jwksJSON []byte) *httptest.Server {
 	return srv
 }
 
-// protectedEndpoint returns a Gin handler that records injected claims.
-func protectedEndpoint(w http.ResponseWriter, r *http.Request, engine *gin.Engine) *httptest.ResponseRecorder {
-	rec := httptest.NewRecorder()
-	engine.ServeHTTP(rec, r)
-	return rec
-}
-
 func newEngineWithAuth(t *testing.T, m gin.HandlerFunc) *gin.Engine {
 	t.Helper()
 	e := gin.New()

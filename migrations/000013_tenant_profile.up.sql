@@ -20,6 +20,7 @@ CREATE TABLE tenant_profile (
 CREATE INDEX idx_tenant_profile_tenant ON tenant_profile (tenant_id);
 
 ALTER TABLE tenant_profile ENABLE ROW LEVEL SECURITY;
+ALTER TABLE tenant_profile FORCE ROW LEVEL SECURITY;
 CREATE POLICY tenant_profile_rls ON tenant_profile
     USING (tenant_id = current_setting('app.tenant_id', true)::UUID);
 
@@ -41,5 +42,6 @@ CREATE INDEX uim_tenant_idx ON user_identity_mapping (tenant_id);
 CREATE INDEX uim_email_idx  ON user_identity_mapping (email);
 
 ALTER TABLE user_identity_mapping ENABLE ROW LEVEL SECURITY;
+ALTER TABLE user_identity_mapping FORCE ROW LEVEL SECURITY;
 CREATE POLICY uim_rls ON user_identity_mapping
     USING (tenant_id = current_setting('app.tenant_id', true)::UUID);

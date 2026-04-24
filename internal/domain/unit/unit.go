@@ -35,16 +35,16 @@ type UnitDef struct {
 // ProductUnit maps one unit_def to one product with a conversion factor relative to the base unit.
 // Exactly one ProductUnit per product must have IsBase = true; conversion_factor for the base unit is 1.
 type ProductUnit struct {
-	ID                 uuid.UUID `json:"id"`
-	TenantID           uuid.UUID `json:"tenant_id"`
-	ProductID          uuid.UUID `json:"product_id"`
-	UnitID             uuid.UUID `json:"unit_id"`
-	ConversionFactor   string    `json:"conversion_factor"` // NUMERIC as string to avoid float
-	IsBase             bool      `json:"is_base"`
-	IsDefaultSale      bool      `json:"is_default_sale"`
-	IsDefaultPurchase  bool      `json:"is_default_purchase"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                uuid.UUID `json:"id"`
+	TenantID          uuid.UUID `json:"tenant_id"`
+	ProductID         uuid.UUID `json:"product_id"`
+	UnitID            uuid.UUID `json:"unit_id"`
+	ConversionFactor  string    `json:"conversion_factor"` // NUMERIC as string to avoid float
+	IsBase            bool      `json:"is_base"`
+	IsDefaultSale     bool      `json:"is_default_sale"`
+	IsDefaultPurchase bool      `json:"is_default_purchase"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
 }
 
 // CreateInput carries the fields needed to define a custom tenant unit.

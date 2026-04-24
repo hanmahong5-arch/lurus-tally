@@ -10,8 +10,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
-	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
+	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/product"
 )
 
@@ -43,25 +43,25 @@ func New(
 
 // createRequest is the JSON body for POST /api/v1/products.
 type createRequest struct {
-	CategoryID          *uuid.UUID          `json:"category_id"`
-	Code                string              `json:"code"`
-	Name                string              `json:"name"`
-	Manufacturer        string              `json:"manufacturer"`
-	Model               string              `json:"model"`
-	Spec                string              `json:"spec"`
-	Brand               string              `json:"brand"`
-	Mnemonic            string              `json:"mnemonic"`
-	Color               string              `json:"color"`
-	ExpiryDays          *int                `json:"expiry_days"`
-	WeightKg            *string             `json:"weight_kg"`
-	EnableSerialNo      bool                `json:"enable_serial_no"`
-	EnableLotNo         bool                `json:"enable_lot_no"`
-	ShelfPosition       string              `json:"shelf_position"`
-	ImgURLs             []string            `json:"img_urls"`
-	Remark              string              `json:"remark"`
+	CategoryID          *uuid.UUID                 `json:"category_id"`
+	Code                string                     `json:"code"`
+	Name                string                     `json:"name"`
+	Manufacturer        string                     `json:"manufacturer"`
+	Model               string                     `json:"model"`
+	Spec                string                     `json:"spec"`
+	Brand               string                     `json:"brand"`
+	Mnemonic            string                     `json:"mnemonic"`
+	Color               string                     `json:"color"`
+	ExpiryDays          *int                       `json:"expiry_days"`
+	WeightKg            *string                    `json:"weight_kg"`
+	EnableSerialNo      bool                       `json:"enable_serial_no"`
+	EnableLotNo         bool                       `json:"enable_lot_no"`
+	ShelfPosition       string                     `json:"shelf_position"`
+	ImgURLs             []string                   `json:"img_urls"`
+	Remark              string                     `json:"remark"`
 	MeasurementStrategy domain.MeasurementStrategy `json:"measurement_strategy"`
-	DefaultUnitID       *uuid.UUID          `json:"default_unit_id"`
-	Attributes          json.RawMessage     `json:"attributes"`
+	DefaultUnitID       *uuid.UUID                 `json:"default_unit_id"`
+	Attributes          json.RawMessage            `json:"attributes"`
 }
 
 // Create handles POST /api/v1/products.

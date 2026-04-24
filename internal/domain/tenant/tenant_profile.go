@@ -21,11 +21,11 @@ const (
 type InventoryMethod string
 
 const (
-	InventoryMethodFIFO        InventoryMethod = "fifo"
-	InventoryMethodWAC         InventoryMethod = "wac"
-	InventoryMethodByWeight    InventoryMethod = "by_weight"
-	InventoryMethodBatch       InventoryMethod = "batch"
-	InventoryMethodBulkMerged  InventoryMethod = "bulk_merged"
+	InventoryMethodFIFO       InventoryMethod = "fifo"
+	InventoryMethodWAC        InventoryMethod = "wac"
+	InventoryMethodByWeight   InventoryMethod = "by_weight"
+	InventoryMethodBatch      InventoryMethod = "batch"
+	InventoryMethodBulkMerged InventoryMethod = "bulk_merged"
 )
 
 // defaultInventoryMethod returns the recommended costing method for the given profile.

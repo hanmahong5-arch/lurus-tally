@@ -22,7 +22,7 @@ type GetMeInput struct {
 
 // GetMeOutput is the response payload for GET /api/v1/me.
 type GetMeOutput struct {
-	UserSub     string `json:"user_id"`   // Zitadel sub
+	UserSub     string `json:"user_id"` // Zitadel sub
 	TenantID    string `json:"tenant_id"`
 	ProfileType string `json:"profile_type"` // "" when no profile set yet
 }
