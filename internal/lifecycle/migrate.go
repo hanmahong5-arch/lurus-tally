@@ -36,16 +36,20 @@ func RunMigrations(ctx context.Context, dsn string, logger *slog.Logger) error {
 			"check network connectivity, credentials, and that the PostgreSQL pod is Running", err)
 	}
 
+	if _, err := db.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS tally`); err != nil {
+		return fmt.Errorf("migration failed: cannot create tally schema: %w; "+
+			"ensure the DATABASE_DSN user has CREATE SCHEMA privilege", err)
+	}
+
 	src, err := iofs.New(migrations.FS, ".")
 	if err != nil {
 		return fmt.Errorf("migration failed: cannot load embedded SQL files: %w; "+
 			"this is a build error — rebuild the binary", err)
 	}
 
-	// schema_migrations lives in `public` (not `tally`) so that down-all's DROP SCHEMA tally
-	// CASCADE in 000001 does not leave the migrate driver's TRUNCATE step orphaned.
 	driver, err := migratepg.WithInstance(db, &migratepg.Config{
 		MigrationsTable: "schema_migrations",
+		SchemaName:      "tally",
 	})
 	if err != nil {
 		return fmt.Errorf("migration failed: cannot create postgres driver: %w; "+
@@ -92,6 +96,10 @@ func RunMigrationsDown(ctx context.Context, dsn string) error {
 		return fmt.Errorf("migration down: cannot reach PostgreSQL: %w", err)
 	}
 
+	if _, err := db.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS tally`); err != nil {
+		return fmt.Errorf("migration down: cannot create tally schema: %w", err)
+	}
+
 	src, err := iofs.New(migrations.FS, ".")
 	if err != nil {
 		return fmt.Errorf("migration down: cannot load embedded SQL files: %w", err)
@@ -99,6 +107,7 @@ func RunMigrationsDown(ctx context.Context, dsn string) error {
 
 	driver, err := migratepg.WithInstance(db, &migratepg.Config{
 		MigrationsTable: "schema_migrations",
+		SchemaName:      "tally",
 	})
 	if err != nil {
 		return fmt.Errorf("migration down: cannot create postgres driver: %w", err)
