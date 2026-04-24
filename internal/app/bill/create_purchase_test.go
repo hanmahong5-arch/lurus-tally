@@ -104,6 +104,106 @@ func TestCreatePurchaseDraft_MissingTenantID_ReturnsError(t *testing.T) {
 	}
 }
 
+// TestCreatePurchaseDraft_WithUSD_StoresCurrencyAndRate verifies multi-currency fields.
+// Input: currency=USD, exchange_rate=7.25, original total=100 USD
+// Expected: bill_head.currency="USD", exchange_rate=7.25, amount_local=100, total_amount=725 CNY
+func TestCreatePurchaseDraft_WithUSD_StoresCurrencyAndRate(t *testing.T) {
+	repo := newMockBillRepo()
+	uc := appbill.NewCreatePurchaseDraftUseCase(repo)
+
+	// 100 USD total in original currency (1 item: qty=10, price=10 USD)
+	req := appbill.CreatePurchaseDraftRequest{
+		TenantID:     testTenantID,
+		CreatorID:    testCreatorID,
+		BillDate:     time.Now(),
+		Currency:     "USD",
+		ExchangeRate: decimal.NewFromFloat(7.25),
+		Items: []appbill.CreatePurchaseItemInput{
+			{ProductID: uuid.New(), Qty: decimal.NewFromFloat(10), UnitPrice: decimal.NewFromFloat(10), LineNo: 1},
+		},
+	}
+
+	out, err := uc.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if out.BillID == uuid.Nil {
+		t.Error("BillID is nil")
+	}
+
+	head := repo.storedHead
+	if head == nil {
+		t.Fatal("head not stored")
+	}
+	if head.Currency != "USD" {
+		t.Errorf("Currency = %q, want USD", head.Currency)
+	}
+	if !head.ExchangeRateVal.Equal(decimal.NewFromFloat(7.25)) {
+		t.Errorf("ExchangeRateVal = %s, want 7.25", head.ExchangeRateVal)
+	}
+	// amount_local = 100 USD (original currency total)
+	wantAmountLocal := decimal.NewFromFloat(100)
+	if !head.AmountLocal.Equal(wantAmountLocal) {
+		t.Errorf("AmountLocal = %s, want 100 (USD)", head.AmountLocal)
+	}
+	// total_amount = 100 * 7.25 = 725 CNY
+	wantTotalCNY := decimal.NewFromFloat(725)
+	if !head.TotalAmount.Equal(wantTotalCNY) {
+		t.Errorf("TotalAmount = %s, want 725 (CNY equivalent)", head.TotalAmount)
+	}
+}
+
+// TestCreatePurchaseDraft_WithCNY_ExchangeRateIsOne verifies CNY shortcut.
+func TestCreatePurchaseDraft_WithCNY_ExchangeRateIsOne(t *testing.T) {
+	repo := newMockBillRepo()
+	uc := appbill.NewCreatePurchaseDraftUseCase(repo)
+
+	req := appbill.CreatePurchaseDraftRequest{
+		TenantID:  testTenantID,
+		CreatorID: testCreatorID,
+		BillDate:  time.Now(),
+		Currency:  "CNY",
+		Items: []appbill.CreatePurchaseItemInput{
+			{ProductID: uuid.New(), Qty: decimal.NewFromFloat(1), UnitPrice: decimal.NewFromFloat(100), LineNo: 1},
+		},
+	}
+
+	_, err := uc.Execute(context.Background(), req)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	head := repo.storedHead
+	if !head.ExchangeRateVal.Equal(decimal.NewFromInt(1)) {
+		t.Errorf("ExchangeRateVal = %s, want 1 for CNY", head.ExchangeRateVal)
+	}
+	if !head.AmountLocal.Equal(head.TotalAmount) {
+		t.Errorf("AmountLocal (%s) != TotalAmount (%s) for CNY bill", head.AmountLocal, head.TotalAmount)
+	}
+}
+
+// TestCreatePurchaseDraft_ForeignCurrencyZeroRate_ReturnsError validates exchange_rate guard.
+func TestCreatePurchaseDraft_ForeignCurrencyZeroRate_ReturnsError(t *testing.T) {
+	repo := newMockBillRepo()
+	uc := appbill.NewCreatePurchaseDraftUseCase(repo)
+
+	req := appbill.CreatePurchaseDraftRequest{
+		TenantID:     testTenantID,
+		CreatorID:    testCreatorID,
+		BillDate:     time.Now(),
+		Currency:     "USD",
+		ExchangeRate: decimal.Zero, // missing exchange rate
+		Items: []appbill.CreatePurchaseItemInput{
+			{ProductID: uuid.New(), Qty: decimal.NewFromFloat(1), UnitPrice: decimal.NewFromFloat(10), LineNo: 1},
+		},
+	}
+
+	_, err := uc.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected error for zero exchange_rate with USD, got nil")
+	}
+}
+
 // --- shared mock repo for app/bill tests ---
 
 var (
@@ -207,5 +307,14 @@ func (m *mockBillRepo) NextBillNo(_ context.Context, _ *sql.Tx, _ uuid.UUID, pre
 }
 
 func (m *mockBillRepo) AcquireBillAdvisoryLock(_ context.Context, _ *sql.Tx, _, _ uuid.UUID) error {
+	return nil
+}
+
+func (m *mockBillRepo) UpdatePaidAmount(_ context.Context, _ *sql.Tx, _, billID uuid.UUID, paidAmount decimal.Decimal) error {
+	h, ok := m.billsByID[billID]
+	if !ok {
+		return appbill.ErrBillNotFound
+	}
+	h.PaidAmount = paidAmount
 	return nil
 }

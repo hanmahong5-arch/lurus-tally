@@ -38,6 +38,16 @@ const (
 // ErrInvalidTransition is returned when the requested status transition is not allowed.
 var ErrInvalidTransition = errors.New("bill: invalid status transition")
 
+// ReceivableAmount returns TotalAmount - PaidAmount, clamped to zero.
+// It is a derived value; never stored directly.
+func (h *BillHead) ReceivableAmount() decimal.Decimal {
+	diff := h.TotalAmount.Sub(h.PaidAmount)
+	if diff.IsNegative() {
+		return decimal.Zero
+	}
+	return diff
+}
+
 // CanTransitionTo returns whether the status machine allows moving from s to next.
 // Allowed transitions:
 //   - Draft     → Approved
@@ -73,6 +83,15 @@ type BillHead struct {
 	ShippingFee decimal.Decimal `json:"shipping_fee"`
 	TaxAmount   decimal.Decimal `json:"tax_amount"`
 	TotalAmount decimal.Decimal `json:"total_amount"`
+	PaidAmount  decimal.Decimal `json:"paid_amount"`
+
+	// Multi-currency fields (Story 9.1).
+	// Currency is the original invoice currency (e.g. "USD"). Empty / "CNY" = domestic.
+	// ExchangeRateVal is the rate applied (1 orig-currency = ExchangeRateVal CNY).
+	// AmountLocal is the original-currency total (snapshot, never recalculated on rate changes).
+	Currency         string          `json:"currency,omitempty"`
+	ExchangeRateVal  decimal.Decimal `json:"exchange_rate,omitempty"`
+	AmountLocal      decimal.Decimal `json:"amount_local,omitempty"`
 
 	// Approval metadata
 	ApprovedAt *time.Time `json:"approved_at,omitempty"`

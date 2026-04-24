@@ -11,15 +11,24 @@ import (
 
 	"github.com/gin-gonic/gin"
 	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
+	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
+	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
+	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
+	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
+	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
+	repopayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/payment"
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
+	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
+	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
+	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	apptenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
@@ -88,15 +97,54 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// will be invoked inside the use case).
 	stockRepo := repostock.New(db)
 	stockCalculator := appstock.NewCalculator(nil, stockRepo) // nil profile → WAC default
+	recordMovementUC := appstock.NewRecordMovementUseCase(stockRepo, stockCalculator, nil, l)
 	stockHandler := handlerstock.New(
-		appstock.NewRecordMovementUseCase(stockRepo, stockCalculator, nil, l),
+		recordMovementUC,
 		appstock.NewGetSnapshotUseCase(stockRepo),
 		appstock.NewListSnapshotsUseCase(stockRepo),
 		appstock.NewListMovementsUseCase(stockRepo),
 	)
 
+	// Wire bill use cases (Story 6.1: purchase receipt baseline).
+	billRepo := repobill.New(db)
+	billHandler := handlerbill.New(
+		appbill.NewCreatePurchaseDraftUseCase(billRepo),
+		appbill.NewUpdatePurchaseDraftUseCase(billRepo),
+		appbill.NewApprovePurchaseUseCase(billRepo, recordMovementUC, unitRepo),
+		appbill.NewCancelPurchaseUseCase(billRepo),
+		appbill.NewListPurchasesUseCase(billRepo),
+		appbill.NewGetPurchaseUseCase(billRepo),
+	)
+
+	// Wire currency use cases (Story 9.1: multi-currency + manual exchange rate entry).
+	currencyRepo := repocurrency.New(db)
+	currencyHandler := handlercurrency.New(
+		appcurrency.NewListCurrenciesUseCase(currencyRepo),
+		appcurrency.NewGetRateUseCase(currencyRepo),
+		appcurrency.NewCreateRateUseCase(currencyRepo),
+		appcurrency.NewListRateHistoryUseCase(currencyRepo),
+	)
+
+	// Wire sale + payment use cases (Story 7.1: sales shipment + POS checkout).
+	paymentRepo := repopayment.New(db)
+	approveSaleUC := appbill.NewApproveSaleUseCase(billRepo, recordMovementUC, unitRepo, paymentRepo)
+	quickCheckoutUC := appbill.NewQuickCheckoutUseCase(billRepo, approveSaleUC)
+	recordPaymentUC := apppayment.NewRecordPaymentUseCase(billRepo, paymentRepo)
+	listPaymentsUC := apppayment.NewListPaymentsUseCase(paymentRepo)
+
+	saleHandler := handlerbill.NewSaleHandler(
+		appbill.NewCreateSaleUseCase(billRepo),
+		approveSaleUC,
+		appbill.NewCancelPurchaseUseCase(billRepo),
+		appbill.NewListPurchasesUseCase(billRepo),
+		billRepo,
+		quickCheckoutUC,
+		listPaymentsUC,
+	)
+	paymentHandler := handlerpayment.New(recordPaymentUC, listPaymentsUC)
+
 	h := health.New(cfg.ServiceVersion)
-	r := router.New(h, productHandler, unitHandler, authHandler, stockHandler)
+	r := router.New(h, productHandler, unitHandler, authHandler, stockHandler, billHandler, currencyHandler, saleHandler, paymentHandler)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

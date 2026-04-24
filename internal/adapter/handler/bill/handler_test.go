@@ -113,6 +113,10 @@ func (m *mockBillRepo) AcquireBillAdvisoryLock(_ context.Context, _ *sql.Tx, _, 
 	return nil
 }
 
+func (m *mockBillRepo) UpdatePaidAmount(_ context.Context, _ *sql.Tx, _, _ uuid.UUID, _ decimal.Decimal) error {
+	return nil
+}
+
 // ----- mock stock executor -----
 
 type mockStockExecutor struct{}

@@ -167,7 +167,7 @@ func (r *Repo) GetBillForUpdate(ctx context.Context, tx *sql.Tx, tenantID, billI
 	const q = `
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       approved_at, approved_by, remark, created_at, updated_at
+		       paid_amount, approved_at, approved_by, remark, created_at, updated_at
 		FROM tally.bill_head
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
 		FOR UPDATE`
@@ -179,7 +179,7 @@ func (r *Repo) GetBill(ctx context.Context, tenantID, billID uuid.UUID) (*domain
 	const q = `
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       approved_at, approved_by, remark, created_at, updated_at
+		       paid_amount, approved_at, approved_by, remark, created_at, updated_at
 		FROM tally.bill_head
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
 
@@ -190,12 +190,13 @@ func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
 	var h domain.BillHead
 	var billType, subType string
 	var status int16
-	var subtotal, shippingFee, taxAmount, totalAmount string
+	var subtotal, shippingFee, taxAmount, totalAmount, paidAmount string
 	err := row.Scan(
 		&h.ID, &h.TenantID, &h.BillNo, &billType, &subType, &status,
 		&h.PartnerID, &h.WarehouseID,
 		&h.CreatorID, &h.BillDate,
 		&subtotal, &shippingFee, &taxAmount, &totalAmount,
+		&paidAmount,
 		&h.ApprovedAt, &h.ApprovedBy,
 		&h.Remark, &h.CreatedAt, &h.UpdatedAt,
 	)
@@ -212,6 +213,7 @@ func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
 	h.ShippingFee, _ = decimal.NewFromString(shippingFee)
 	h.TaxAmount, _ = decimal.NewFromString(taxAmount)
 	h.TotalAmount, _ = decimal.NewFromString(totalAmount)
+	h.PaidAmount, _ = decimal.NewFromString(paidAmount)
 	return &h, nil
 }
 
@@ -304,6 +306,16 @@ func (r *Repo) UpdateBill(ctx context.Context, tx *sql.Tx, head *domain.BillHead
 	return r.insertItems(ctx, tx, items)
 }
 
+// UpdatePaidAmount sets bill_head.paid_amount within tx.
+func (r *Repo) UpdatePaidAmount(ctx context.Context, tx *sql.Tx, tenantID, billID uuid.UUID, paidAmount decimal.Decimal) error {
+	const q = `UPDATE tally.bill_head SET paid_amount = $1, updated_at = $2 WHERE id = $3 AND tenant_id = $4 AND deleted_at IS NULL`
+	_, err := tx.ExecContext(ctx, q, paidAmount.String(), time.Now().UTC(), billID, tenantID)
+	if err != nil {
+		return fmt.Errorf("bill repo: update paid_amount: %w", err)
+	}
+	return nil
+}
+
 func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domain.BillHead, int64, error) {
 	args := []any{f.TenantID}
 	idx := 2
@@ -356,7 +368,7 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 	q := `
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       approved_at, approved_by, remark, created_at, updated_at
+		       paid_amount, approved_at, approved_by, remark, created_at, updated_at
 		FROM tally.bill_head
 		WHERE ` + whereClause + `
 		ORDER BY created_at DESC
@@ -373,12 +385,13 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 		var h domain.BillHead
 		var billType, subType string
 		var status int16
-		var subtotal, shippingFee, taxAmount, totalAmount string
+		var subtotal, shippingFee, taxAmount, totalAmount, paidAmount string
 		if err := rows.Scan(
 			&h.ID, &h.TenantID, &h.BillNo, &billType, &subType, &status,
 			&h.PartnerID, &h.WarehouseID,
 			&h.CreatorID, &h.BillDate,
 			&subtotal, &shippingFee, &taxAmount, &totalAmount,
+			&paidAmount,
 			&h.ApprovedAt, &h.ApprovedBy,
 			&h.Remark, &h.CreatedAt, &h.UpdatedAt,
 		); err != nil {
@@ -391,6 +404,7 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 		h.ShippingFee, _ = decimal.NewFromString(shippingFee)
 		h.TaxAmount, _ = decimal.NewFromString(taxAmount)
 		h.TotalAmount, _ = decimal.NewFromString(totalAmount)
+		h.PaidAmount, _ = decimal.NewFromString(paidAmount)
 		bills = append(bills, h)
 	}
 	if err := rows.Err(); err != nil {

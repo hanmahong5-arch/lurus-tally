@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
 )
@@ -62,4 +63,8 @@ type BillRepo interface {
 	// AcquireBillAdvisoryLock obtains a transaction-scoped advisory lock for the given bill.
 	// Used by ApprovePurchase to prevent concurrent double-approval.
 	AcquireBillAdvisoryLock(ctx context.Context, tx *sql.Tx, tenantID, billID uuid.UUID) error
+
+	// UpdatePaidAmount sets the bill_head.paid_amount column within tx.
+	// Replaces the current value (caller should pass the new cumulative total).
+	UpdatePaidAmount(ctx context.Context, tx *sql.Tx, tenantID, billID uuid.UUID, paidAmount decimal.Decimal) error
 }

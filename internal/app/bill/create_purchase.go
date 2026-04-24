@@ -33,6 +33,13 @@ type CreatePurchaseDraftRequest struct {
 	TaxAmount   decimal.Decimal
 	Remark      string
 	Items       []CreatePurchaseItemInput
+
+	// Multi-currency fields (Story 9.1). Optional; zero values = CNY domestic.
+	// Currency is the original invoice currency code (e.g. "USD").
+	// ExchangeRate is 1 orig-currency = ExchangeRate CNY.
+	// When Currency is empty or "CNY", ExchangeRate is ignored and set to 1.
+	Currency     string
+	ExchangeRate decimal.Decimal
 }
 
 // CreatePurchaseDraftOutput is returned on success.
@@ -104,7 +111,33 @@ func (uc *CreatePurchaseDraftUseCase) Execute(ctx context.Context, req CreatePur
 	if taxAmount.IsNegative() {
 		taxAmount = decimal.Zero
 	}
-	totalAmount := subtotal.Add(shippingFee).Add(taxAmount).Round(4)
+	// totalInOrigCurrency is the sum in the original currency (before conversion).
+	totalInOrigCurrency := subtotal.Add(shippingFee).Add(taxAmount).Round(4)
+
+	// Resolve multi-currency fields.
+	currency := req.Currency
+	if currency == "" {
+		currency = "CNY"
+	}
+	exchangeRate := req.ExchangeRate
+	var amountLocal decimal.Decimal
+	var totalAmountCNY decimal.Decimal
+
+	if currency == "CNY" {
+		// Domestic: no conversion needed.
+		exchangeRate = decimal.NewFromInt(1)
+		amountLocal = totalInOrigCurrency
+		totalAmountCNY = totalInOrigCurrency
+	} else {
+		// Foreign currency: validate exchange rate.
+		if exchangeRate.IsZero() || exchangeRate.IsNegative() {
+			return nil, fmt.Errorf("%w: exchange_rate must be positive for non-CNY currency", ErrValidation)
+		}
+		// amountLocal = original-currency total (snapshot)
+		amountLocal = totalInOrigCurrency
+		// totalAmount = CNY equivalent (report basis)
+		totalAmountCNY = amountLocal.Mul(exchangeRate).Round(4)
+	}
 
 	billID := uuid.New()
 	now := time.Now().UTC()
@@ -118,23 +151,26 @@ func (uc *CreatePurchaseDraftUseCase) Execute(ctx context.Context, req CreatePur
 		}
 
 		head := &domain.BillHead{
-			ID:          billID,
-			TenantID:    req.TenantID,
-			BillNo:      billNo,
-			BillType:    domain.BillTypePurchase,
-			SubType:     domain.BillSubTypePurchase,
-			Status:      domain.StatusDraft,
-			PartnerID:   req.PartnerID,
-			WarehouseID: req.WarehouseID,
-			CreatorID:   req.CreatorID,
-			BillDate:    req.BillDate,
-			Subtotal:    subtotal,
-			ShippingFee: shippingFee,
-			TaxAmount:   taxAmount,
-			TotalAmount: totalAmount,
-			Remark:      req.Remark,
-			CreatedAt:   now,
-			UpdatedAt:   now,
+			ID:              billID,
+			TenantID:        req.TenantID,
+			BillNo:          billNo,
+			BillType:        domain.BillTypePurchase,
+			SubType:         domain.BillSubTypePurchase,
+			Status:          domain.StatusDraft,
+			PartnerID:       req.PartnerID,
+			WarehouseID:     req.WarehouseID,
+			CreatorID:       req.CreatorID,
+			BillDate:        req.BillDate,
+			Subtotal:        subtotal,
+			ShippingFee:     shippingFee,
+			TaxAmount:       taxAmount,
+			TotalAmount:     totalAmountCNY,
+			Currency:        currency,
+			ExchangeRateVal: exchangeRate,
+			AmountLocal:     amountLocal,
+			Remark:          req.Remark,
+			CreatedAt:       now,
+			UpdatedAt:       now,
 		}
 
 		for _, item := range items {

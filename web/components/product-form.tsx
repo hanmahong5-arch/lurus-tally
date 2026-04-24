@@ -3,6 +3,7 @@
 import { useState } from "react"
 import { useProfile, ProfileGate } from "@/lib/profile"
 import { UnitSelector } from "@/components/unit-selector"
+import { HsCodeInput } from "@/components/cross-border/hs-code-input"
 import type {
   CreateProductInput,
   MeasurementStrategy,
@@ -249,12 +250,11 @@ export function ProductForm({
           <div className="grid grid-cols-3 gap-4">
             <div>
               <label className={labelCls}>HS Code</label>
-              <input
+              <HsCodeInput
                 className={inputCls}
                 value={hsCode}
-                onChange={(e) => setHsCode(e.target.value)}
+                onChange={setHsCode}
                 disabled={disabled || submitting}
-                placeholder="如 8471.30"
               />
             </div>
             <div>
