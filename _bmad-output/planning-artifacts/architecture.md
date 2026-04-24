@@ -1,1806 +1,1104 @@
-# Lurus Tally — Architecture Document
+# Lurus Tally — Architecture Document v2
 
-> 版本: 1.0 | 日期: 2026-04-23 | 状态: **APPROVED**
-> 数据来源: decision-lock.md (LOCKED) + code-borrowing-plan.md §6 + ux-benchmarks.md + lurus.yaml
-> 所有端口/命名空间/DB schema/Redis DB/NATS stream 均严格匹配 lurus.yaml 已注册值。
-
----
-
-## 1. System Context (C4 Level 1)
-
-### 1.1 上下文图
-
-```
-                        ┌─────────────────────────────────────────────┐
-                        │             外部用户                         │
-                        │  中小企业老板 / 财务 / 仓管 / 业务员          │
-                        └───────────────────┬─────────────────────────┘
-                                            │ HTTPS (tally.lurus.cn)
-                        ┌───────────────────▼─────────────────────────┐
-                        │              Lurus Tally                     │
-                        │   2b-svc-psi  |  namespace: lurus-tally      │
-                        │   后端 Go :18200 + 前端 Next.js :3000         │
-                        └──┬────┬─────┬────┬────┬────┬────────────────┘
-                           │    │     │    │    │    │
-            ┌──────────────┘    │     │    │    │    └──────────────────┐
-            │            ┌──────┘     │    │    └──────────────┐        │
-            │            │            │    │                   │        │
-            ▼            ▼            ▼    ▼                   ▼        ▼
-   ┌──────────────┐ ┌─────────┐ ┌───────┐ ┌──────────┐ ┌─────────┐ ┌──────────┐
-   │ 2l-svc-      │ │ 2b-svc- │ │ 2b-   │ │ 2b-svc-  │ │ NATS    │ │ Zitadel  │
-   │ platform     │ │ api     │ │ svc-  │ │ memorus  │ │ PSI_    │ │ (auth.   │
-   │ (账户/计费)  │ │ (Hub    │ │ kova  │ │ (RAG)    │ │ EVENTS) │ │ lurus.cn)│
-   │ :18104       │ │ LLM)    │ │ (Agent│ │ :8880    │ │         │ │          │
-   │              │ │ :8850   │ │ )     │ │          │ │         │ │          │
-   └──────────────┘ └─────────┘ └───────┘ └──────────┘ └─────────┘ └──────────┘
-            │
-            ▼
-   ┌──────────────────────────────────────────────────────────────────┐
-   │           共享基础设施                                            │
-   │  lurus-pg-rw (schema: tally)  Redis DB 5  NATS PSI_EVENTS        │
-   │  MinIO (user-uploads bucket)  Jaeger/Loki/Prometheus              │
-   └──────────────────────────────────────────────────────────────────┘
-```
-
-### 1.2 外部依赖关系
-
-| 系统 | 调用方向 | 协议 | 用途 |
-|------|----------|------|------|
-| Zitadel (auth.lurus.cn) | Tally ← | OIDC | 用户认证、JWT 签发、角色声明 |
-| 2l-svc-platform (:18104) | Tally → | HTTP REST (bearer key) | 租户账户验证、订阅状态、配额检查、计费事件 |
-| 2b-svc-api / Hub (:8850) | Tally → | HTTP REST (OpenAI 兼容) | LLM 自然语言查询、函数调用、流式输出 |
-| 2b-svc-kova | Tally → | HTTP REST | 补货 Agent 注册与触发、Agent 状态查询 |
-| 2b-svc-memorus (:8880) | Tally → | HTTP REST | 写入销售/库存事件；RAG 历史语义检索 |
-| 2l-svc-platform/notification | Tally → | HTTP POST (internal bearer) | 库存预警推送、单据状态通知 |
-| PostgreSQL (lurus-pg-rw) | Tally → | TCP/5432 | 所有业务数据持久化 (schema: tally) |
-| Redis DB 5 | Tally → | TCP/6379 | 会话缓存、限流计数器、乐观锁版本 |
-| NATS PSI_EVENTS | Tally ↔ | TCP/4222 | 库存变更事件发布；Worker 消费 |
-| MinIO | Tally → | HTTP S3 API | 附件/商品图片存储 (user-uploads bucket) |
-
-### 1.3 数据流向概述
-
-1. **用户认证流**: 浏览器 → Zitadel OIDC → tally-web Next.js BFF → `/api/auth/callback` → 签发 session cookie → 后续请求携带 JWT 到 tally-backend
-2. **业务操作流**: 前端 → Next.js BFF (`/api/v1/*`) → Go Backend → PostgreSQL/Redis → 返回响应
-3. **库存事件流**: Go Backend 审核单据 → 更新 `stock_snapshot` → 发布 `psi.stock.changed` 到 NATS PSI_EVENTS → tally-worker 消费 → 触发预警/AI分析
-4. **AI 查询流**: 前端 AI Drawer → Go Backend `/api/v1/ai/chat` → Hub LLM (SSE) → Memorus RAG 增强 → 流式响应到前端
-5. **Agent 触发流**: tally-worker 定时/事件触发 → Kova Agent API → Agent 执行 → 结果写回 PostgreSQL → 通知前端
+> 版本: 2.0 | 日期: 2026-04-23 | 状态: **APPROVED**
+> 本版本重写原因：双 Persona + 行业 Profile + 边缘离线部署。
+> v1 备份：`_archive/architecture-v1-single-cloud-2026-04-23.md`
+> 所有端口/命名空间/DB schema/Redis DB/NATS stream 严格匹配 lurus.yaml。
 
 ---
 
-## 2. Container Diagram (C4 Level 2)
+## 1. System Context
+
+### 1.1 总览：云端 SaaS + 边缘节点 + 双 Persona 共享 Kernel
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────┐
-│  namespace: lurus-tally                                                          │
-│                                                                                  │
-│  ┌─────────────────────────┐      ┌─────────────────────────────────────────┐   │
-│  │     tally-web            │      │          tally-backend                   │   │
-│  │  Next.js 14 (App Router) │      │    Go 1.25 + Gin + GORM                 │   │
-│  │  TypeScript + Bun        │      │    Port: 18200                           │   │
-│  │  Port: 3000              │      │                                          │   │
-│  │                          │      │  ┌──────────┐  ┌──────────┐             │   │
-│  │  • shadcn/ui             │──────▶  │ handler/ │  │  app/    │             │   │
-│  │  • TanStack Table/Query  │  REST│  │  (Gin)   │  │ use-case │             │   │
-│  │  • Zustand               │      │  └────┬─────┘  └────┬─────┘             │   │
-│  │  • Framer Motion         │      │       │              │                   │   │
-│  │  • Recharts + Tremor     │      │  ┌────▼─────────────▼────────────────┐  │   │
-│  │  • cmdk + sonner         │      │  │        adapter/                   │  │   │
-│  │  • next-themes           │      │  │  repo/ │ nats/ │ hub/ │ kova/    │  │   │
-│  │                          │      │  │ platform/ │ memorus/ │ tax/      │  │   │
-│  │  BFF 层: /api/* proxy    │      │  └───────────────────────────────────┘  │   │
-│  └─────────────────────────┘      └─────────────────────────────────────────┘   │
-│                                                                                  │
-│  ┌─────────────────────────────────────────────────────────────────────────┐    │
-│  │                          tally-worker                                    │    │
-│  │  Go 1.25 独立 Goroutine 组 (同 binary，独立 Deployment 可选)              │    │
-│  │  • NATS PSI_EVENTS 消费者（库存预警、单据状态变更）                       │    │
-│  │  • 定时任务（低库存扫描 每小时、AI预测刷新 每日）                         │    │
-│  │  • Kova Agent 触发器（补货 Agent / 滞销 Agent）                          │    │
-│  │  • Memorus 写入（销售事件 / 库存快照）                                   │    │
-│  └─────────────────────────────────────────────────────────────────────────┘    │
-│                                                                                  │
-└─────────────────────────────────────────────────────────────────────────────────┘
-
-外部依赖 (cluster-internal):
-  lurus-pg-rw.database.svc:5432  (schema: tally)
-  redis.messaging.svc:6379       (DB 5)
-  nats.messaging.svc:4222        (PSI_EVENTS stream)
-  api.lurus.cn / lurus-system    (Hub LLM :8850)
-  platform-core.lurus-platform.svc:18104  (Platform)
-  kova-rest                      (Kova Agent)
-  memorus.lurus-system.svc:8880  (Memorus)
+│                           外部用户（两类 Persona）                               │
+│   Persona A: 跨境贸易商 (cross_border)        Persona B: 实体零售/批发 (retail) │
+│   批发商 / 电商卖家 / 外贸公司                  五金店 / 食品经销商 / 便利店      │
+└─────────┬──────────────────────────────────────────────┬───────────────────────┘
+          │ HTTPS tally.lurus.cn                         │ 本地网络 / 离线
+          │                                              │
+┌─────────▼──────────────────────────────┐   ┌──────────▼────────────────────────┐
+│          云端 SaaS                      │   │         边缘节点 (Edge)            │
+│  namespace: lurus-tally (K3s)          │   │  单 Go binary (build tag: edge)   │
+│  tally-backend :18200 (Go)             │   │  SQLite (WAL 模式)                 │
+│  tally-web :3000 (Next.js 14)          │   │  PWA 前端 (离线 service worker)   │
+│  tally-worker (goroutine group)        │   │  Tauri 可选壳                      │
+│                                        │   │  支持 retail profile 仓库场景      │
+│  Profile Kernel (共享)                 │◄──►│  Profile Kernel (共享，子集 schema)│
+│  cross_border | retail | hybrid        │   │  NATS JetStream 上行同步           │
+└─────────┬──────────────────────────────┘   └───────────────────────────────────┘
+          │
+          ▼
+┌────────────────────────────────────────────────────────────────────────────────┐
+│                         Lurus 共享基础设施                                      │
+│  2l-svc-platform :18104  2b-svc-api/Hub  2b-svc-kova  2b-svc-memorus :8880   │
+│  PostgreSQL (schema:tally)  Redis DB5  NATS PSI_EVENTS  MinIO  Zitadel        │
+└────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+### 1.2 外部依赖
+
+| 系统 | 调用方向 | 协议 | 用途 |
+|------|----------|------|------|
+| Zitadel (auth.lurus.cn) | Tally ← | OIDC/PKCE | 用户认证、JWT、角色声明 |
+| 2l-svc-platform (:18104) | Tally → | HTTP REST (bearer key) | 租户账户验证、订阅、配额、计费 |
+| 2b-svc-api/Hub (:8850) | Tally → | HTTP (OpenAI 兼容) | LLM 查询、函数调用、流式 |
+| 2b-svc-kova | Tally → | HTTP REST | 补货/滞销 Agent 注册与触发 |
+| 2b-svc-memorus (:8880) | Tally → | HTTP REST | RAG 历史写入与检索 |
+| 2l-svc-platform/notification (:18900) | Tally → | HTTP POST (bearer) | 库存预警、单据通知推送 |
+| PostgreSQL lurus-pg-rw | Tally → | TCP/5432 | 业务数据持久化 (schema: tally) |
+| Redis DB 5 | Tally → | TCP/6379 | 会话、限流、乐观锁版本 |
+| NATS PSI_EVENTS | Tally ↔ | TCP/4222 | 库存变更事件发布与消费 |
+| NATS PSI_EVENTS (edge subjects) | Edge ↔ Cloud | TCP/4222 | 边缘同步上行队列 |
+| MinIO (user-uploads) | Tally → | HTTP S3 | 附件、商品图片 |
+| ExchangeRate-API / 央行汇率 | Tally ← | HTTPS | 多币种汇率（跨境 profile） |
+
+### 1.3 关键数据流
+
+1. **认证流**: 浏览器 → Zitadel OIDC → Next.js BFF `/api/auth/callback` → session cookie → 后续请求携带 JWT → tally-backend
+2. **Profile 注入流**: JWT 解析 tenant_id → 读取 `tenant_profile` 表 → ProfileResolver 注入 ctx → 所有下游 use case/handler 按 profile 行为
+3. **业务操作流**: 前端 → Next.js BFF `/api/v1/*` → Go Backend → PostgreSQL/Redis → 返回响应
+4. **库存事件流**: Go Backend 审核单据 → 更新 `stock_snapshot` → 发布 `psi.stock.changed` 到 NATS → tally-worker 消费 → 预警/AI分析
+5. **边缘同步上行流**: 边缘 binary → 写本地 SQLite → 发布 `tally.edge.sync.bill` 到 NATS JetStream → cloud tally-worker 消费 → 写云端 PostgreSQL → 冲突写 `sync_conflict` 表
+6. **边缘同步下行流**: tally-backend 配置变更 → 写 `edge_sync_queue` → 边缘 binary 定时 HTTP polling 拉取（ETag 比对）
 
 ---
 
-## 3. Backend Project Structure (Go)
+## 2. Profile 机制
 
-```
-2b-svc-psi/
-├── cmd/
-│   └── server/
-│       └── main.go                    # 启动入口，DI 组装
-├── internal/
-│   ├── domain/
-│   │   └── entity/
-│   │       ├── tenant.go              # 租户本地缓存模型
-│   │       ├── product.go             # 商品主档 (含 embedding/ai_metadata)
-│   │       ├── product_sku.go         # SKU/多单位/多价格
-│   │       ├── product_category.go    # 商品分类树
-│   │       ├── product_attribute.go   # 属性组（颜色/尺码）
-│   │       ├── unit.go                # 多单位换算
-│   │       ├── partner.go             # 供应商/客户统一主档
-│   │       ├── partner_bank.go        # 银行账户
-│   │       ├── warehouse.go           # 仓库主档
-│   │       ├── warehouse_bin.go       # 货位（库位）
-│   │       ├── bill_head.go           # 单据主表（通用：采购/销售/调拨/盘点）
-│   │       ├── bill_item.go           # 单据明细
-│   │       ├── stock_snapshot.go      # 库存快照（实时）
-│   │       ├── stock_initial.go       # 期初库存/安全库存
-│   │       ├── stock_lot.go           # 批次台账
-│   │       ├── stock_serial.go        # 序列号台账
-│   │       ├── finance_account.go     # 资金账户
-│   │       ├── payment_head.go        # 收付款主表
-│   │       ├── payment_item.go        # 收付款明细
-│   │       ├── finance_category.go    # 收支项目分类
-│   │       ├── org_department.go      # 部门
-│   │       ├── org_user_rel.go        # 部门-用户关系
-│   │       ├── audit_log.go           # 操作审计日志
-│   │       ├── system_config.go       # 租户级系统配置
-│   │       ├── dict_type.go           # 数据字典类型
-│   │       ├── dict_data.go           # 数据字典值
-│   │       └── bill_sequence.go       # 单据编号生成器
-│   ├── app/
-│   │   ├── product/
-│   │   │   ├── create_product.go      # 创建商品
-│   │   │   ├── update_product.go      # 更新商品
-│   │   │   ├── delete_product.go      # 删除商品（软删）
-│   │   │   ├── query_product.go       # 查询/搜索（含向量搜索）
-│   │   │   └── import_product.go      # 批量导入（Excel/CSV）
-│   │   ├── stock/
-│   │   │   ├── query_stock.go         # 库存查询（多维度）
-│   │   │   ├── adjust_stock.go        # 手动调整（非单据）
-│   │   │   ├── alert_stock.go         # 预警检查 + 推送
-│   │   │   └── reorder_suggestion.go  # 补货建议查询
-│   │   ├── purchase/
-│   │   │   ├── create_purchase.go     # 创建采购单/采购订单
-│   │   │   ├── submit_purchase.go     # 提交审核
-│   │   │   ├── approve_purchase.go    # 审核（库存 +）
-│   │   │   ├── reject_purchase.go     # 驳回
-│   │   │   ├── cancel_purchase.go     # 取消（红冲）
-│   │   │   ├── receive_purchase.go    # 确认入库（部分收货支持）
-│   │   │   └── query_purchase.go      # 查询/列表
-│   │   ├── sales/
-│   │   │   ├── create_sales.go        # 创建销售单/销售订单
-│   │   │   ├── submit_sales.go        # 提交审核
-│   │   │   ├── approve_sales.go       # 审核（库存预扣）
-│   │   │   ├── ship_sales.go          # 确认发货（库存 -）
-│   │   │   ├── cancel_sales.go        # 取消（红冲）
-│   │   │   └── query_sales.go         # 查询/列表
-│   │   ├── transfer/
-│   │   │   ├── create_transfer.go     # 创建调拨单
-│   │   │   ├── approve_transfer.go    # 审核（跨仓库存变动）
-│   │   │   └── query_transfer.go      # 查询/列表
-│   │   ├── stocktake/
-│   │   │   ├── create_stocktake.go    # 创建盘点任务
-│   │   │   ├── record_stocktake.go    # 录入实盘数量
-│   │   │   ├── finalize_stocktake.go  # 盘点完成（差异写入）
-│   │   │   └── query_stocktake.go     # 查询/列表
-│   │   ├── finance/
-│   │   │   ├── create_payment.go      # 创建收付款单
-│   │   │   ├── query_payment.go       # 查询台账
-│   │   │   └── reconcile.go          # 应收应付对账
-│   │   ├── report/
-│   │   │   ├── stock_report.go        # 库存报表（周转/ABC/滞销）
-│   │   │   ├── purchase_report.go     # 采购报表
-│   │   │   ├── sales_report.go        # 销售报表
-│   │   │   └── finance_report.go      # 财务报表（应收应付）
-│   │   └── ai_agent/
-│   │       ├── chat.go                # Hub LLM 自然语言查询（含 RAG）
-│   │       ├── function_registry.go   # 工具调用函数注册表
-│   │       ├── reorder_agent.go       # Kova 补货 Agent 交互
-│   │       ├── deadstock_agent.go     # 滞销预警 Agent 交互
-│   │       └── prompts/               # Prompt 模板目录
-│   │           ├── chat_system.txt    # 系统角色 prompt
-│   │           ├── stock_query.txt    # 库存查询 prompt
-│   │           └── reorder.txt        # 补货分析 prompt
-│   ├── adapter/
-│   │   ├── handler/
-│   │   │   ├── router.go              # Gin 路由注册总表
-│   │   │   ├── v1/
-│   │   │   │   ├── product.go         # /api/v1/products
-│   │   │   │   ├── sku.go             # /api/v1/skus
-│   │   │   │   ├── warehouse.go       # /api/v1/warehouses
-│   │   │   │   ├── stock.go           # /api/v1/stocks
-│   │   │   │   ├── purchase.go        # /api/v1/purchases
-│   │   │   │   ├── sales.go           # /api/v1/sales
-│   │   │   │   ├── transfer.go        # /api/v1/transfers
-│   │   │   │   ├── stocktake.go       # /api/v1/stocktakes
-│   │   │   │   ├── partner.go         # /api/v1/partners
-│   │   │   │   ├── finance.go         # /api/v1/finance
-│   │   │   │   ├── report.go          # /api/v1/reports
-│   │   │   │   └── ai.go              # /api/v1/ai (chat + suggestions)
-│   │   │   ├── internal/
-│   │   │   │   └── stock_query.go     # /internal/v1/tally/...
-│   │   │   ├── agent/
-│   │   │   │   └── tools.go           # /agent/v1/tools (Kova 工具调用)
-│   │   │   └── ws/
-│   │   │       └── hub.go             # WebSocket Hub (实时推送)
-│   │   ├── middleware/
-│   │   │   ├── auth.go                # JWT 验证 (Zitadel OIDC)
-│   │   │   ├── tenant_rls.go          # SET app.tenant_id (PostgreSQL RLS)
-│   │   │   ├── ratelimit.go           # Redis 滑动窗口限流
-│   │   │   └── audit.go              # 写操作自动记录 audit_log
-│   │   ├── repo/
-│   │   │   ├── product_repo.go        # GORM ProductRepo
-│   │   │   ├── product_sku_repo.go
-│   │   │   ├── warehouse_repo.go
-│   │   │   ├── stock_repo.go          # stock_snapshot + stock_lot CRUD
-│   │   │   ├── bill_repo.go           # bill_head + bill_item CRUD
-│   │   │   ├── partner_repo.go
-│   │   │   ├── payment_repo.go
-│   │   │   ├── audit_repo.go
-│   │   │   └── config_repo.go
-│   │   ├── nats/
-│   │   │   ├── publisher.go           # PSI_EVENTS 发布
-│   │   │   └── subscriber.go          # PSI_EVENTS 消费（worker）
-│   │   ├── platform/
-│   │   │   ├── client.go              # 2l-svc-platform HTTP client
-│   │   │   ├── tenant.go              # 租户信息同步
-│   │   │   └── billing.go             # 配额检查 + 计费事件
-│   │   ├── hub/
-│   │   │   ├── client.go              # Hub LLM HTTP client (OpenAI 兼容)
-│   │   │   └── streaming.go           # SSE 流式转发
-│   │   ├── kova/
-│   │   │   ├── client.go              # Kova REST client
-│   │   │   └── agent.go               # Agent 注册/触发/状态
-│   │   ├── memorus/
-│   │   │   ├── client.go              # Memorus HTTP client
-│   │   │   ├── write.go               # 事件写入记忆
-│   │   │   └── search.go              # RAG 语义检索
-│   │   ├── notification/
-│   │   │   └── client.go              # platform/notification POST /internal/v1/notify
-│   │   └── tax/
-│   │       └── stub.go                # 金税四期 ISV stub（v2 实现）
-│   ├── lifecycle/
-│   │   ├── app.go                     # Application struct (DI root)
-│   │   ├── start.go                   # 启动序列（DB连接→NATS→HTTP→Worker）
-│   │   ├── stop.go                    # 优雅停机（drain → close）
-│   │   ├── migrate.go                 # 启动时运行 golang-migrate
-│   │   └── worker.go                  # 后台 Worker goroutine 管理
-│   └── pkg/
-│       ├── config/
-│       │   └── config.go              # 环境变量解析（启动即校验）
-│       ├── logger/
-│       │   └── logger.go              # 结构化 JSON 日志（zerolog）
-│       ├── common/
-│       │   ├── response.go            # 统一响应格式
-│       │   ├── errors.go              # 错误码枚举
-│       │   ├── pagination.go          # cursor-based 分页
-│       │   └── validator.go           # 入参校验工具
-│       ├── dto/
-│       │   ├── product_dto.go         # 商品 Request/Response DTO
-│       │   ├── bill_dto.go            # 单据 DTO
-│       │   ├── stock_dto.go           # 库存 DTO
-│       │   └── report_dto.go          # 报表 DTO
-│       ├── types/
-│       │   ├── bill_status.go         # 单据状态枚举
-│       │   ├── bill_type.go           # 单据类型/子类型常量
-│       │   └── partner_type.go        # 合作伙伴类型枚举
-│       ├── metrics/
-│       │   └── metrics.go             # Prometheus 指标注册
-│       └── tracing/
-│           └── tracing.go             # OpenTelemetry 初始化
-├── web/                               # Next.js 14 前端（详见 §4）
-├── migrations/                        # golang-migrate SQL 文件
-│   ├── 000001_init_extensions.up.sql
-│   ├── 000002_init_tenant.up.sql
-│   ├── 000003_init_org.up.sql
-│   ├── 000004_init_partner.up.sql
-│   ├── 000005_init_product.up.sql
-│   ├── 000006_init_stock.up.sql
-│   ├── 000007_init_bill.up.sql
-│   ├── 000008_init_finance.up.sql
-│   ├── 000009_init_audit.up.sql
-│   ├── 000010_init_config.up.sql
-│   ├── 000011_init_views.up.sql
-│   └── 000012_init_rls.up.sql        # 所有 RLS policy
-├── deploy/
-│   └── k8s/
-│       ├── base/                      # Kustomize base
-│       └── overlays/
-│           ├── stage/
-│           └── prod/
-├── tests/
-│   ├── integration/
-│   └── e2e/
-├── THIRD_PARTY_LICENSES/
-│   ├── jshERP-LICENSE                 # Apache-2.0 (数据模型来源)
-│   └── GreaterWMS-LICENSE             # Apache-2.0 (WMS 模型来源)
-└── CLAUDE.md
-```
+### 2.1 设计原则
 
-**文件数量估计**: 约 80+ Go 文件（domain 27 个 entity、app 35+ use case、adapter 25+ 文件、pkg 15+ 文件）。
+核心 Kernel（所有业务逻辑）共享一套代码路径。Profile 注入差异行为，不分叉代码路径。Profile 影响的范围：
 
----
+- UI 渲染：哪些字段/模块可见
+- 字段默认值：成本算法、税率字段、单位
+- 业务规则：库存计算策略（FIFO / WAC）、必填字段
+- 功能开关：多币种、HS Code、称重秤、收银 POS
 
-## 4. Frontend Project Structure (Next.js)
-
-```
-2b-svc-psi/web/
-├── app/
-│   ├── (auth)/
-│   │   ├── login/
-│   │   │   └── page.tsx               # 登录入口（跳转 Zitadel）
-│   │   └── callback/
-│   │       └── page.tsx               # OIDC callback 处理
-│   ├── (dashboard)/
-│   │   ├── layout.tsx                 # 主布局：Sidebar + Topbar + AI Drawer
-│   │   ├── page.tsx                   # 仪表盘首页
-│   │   ├── products/
-│   │   │   ├── page.tsx               # 商品列表（TanStack Table，虚拟滚动）
-│   │   │   ├── new/
-│   │   │   │   └── page.tsx           # 新建商品表单
-│   │   │   └── [id]/
-│   │   │       └── page.tsx           # 商品详情（Slide-over 入口）
-│   │   ├── stock/
-│   │   │   ├── page.tsx               # 库存总览（按仓库/商品维度）
-│   │   │   └── [warehouseId]/
-│   │   │       └── page.tsx           # 单仓库库存详情
-│   │   ├── purchases/
-│   │   │   ├── page.tsx               # 采购单列表
-│   │   │   ├── new/
-│   │   │   │   └── page.tsx           # 创建采购单（Stepper）
-│   │   │   └── [id]/
-│   │   │       └── page.tsx           # 采购单详情
-│   │   ├── sales/
-│   │   │   ├── page.tsx               # 销售单列表
-│   │   │   ├── new/
-│   │   │   │   └── page.tsx           # 创建销售单（Stepper）
-│   │   │   └── [id]/
-│   │   │       └── page.tsx           # 销售单详情
-│   │   ├── transfers/
-│   │   │   ├── page.tsx               # 调拨单列表
-│   │   │   └── new/
-│   │   │       └── page.tsx           # 创建调拨单
-│   │   ├── stocktakes/
-│   │   │   ├── page.tsx               # 盘点任务列表
-│   │   │   └── [id]/
-│   │   │       └── page.tsx           # 盘点操作页（进度条 + 行内录入）
-│   │   ├── partners/
-│   │   │   ├── page.tsx               # 供应商/客户列表
-│   │   │   └── [id]/
-│   │   │       └── page.tsx           # 合作伙伴详情（应收应付台账）
-│   │   ├── finance/
-│   │   │   ├── page.tsx               # 财务总览
-│   │   │   ├── accounts/
-│   │   │   │   └── page.tsx           # 资金账户列表
-│   │   │   └── payments/
-│   │   │       └── page.tsx           # 收付款记录
-│   │   ├── reports/
-│   │   │   ├── page.tsx               # 报表总览（KPI 卡 + 图表）
-│   │   │   ├── stock/
-│   │   │   │   └── page.tsx           # 库存报表（周转/ABC/滞销）
-│   │   │   ├── purchases/
-│   │   │   │   └── page.tsx           # 采购分析报表
-│   │   │   ├── sales/
-│   │   │   │   └── page.tsx           # 销售分析报表
-│   │   │   └── finance/
-│   │   │       └── page.tsx           # 财务报表（应收应付账龄）
-│   │   └── settings/
-│   │       ├── page.tsx               # 系统配置
-│   │       └── warehouses/
-│   │           └── page.tsx           # 仓库管理
-│   ├── api/
-│   │   ├── auth/
-│   │   │   ├── [...nextauth]/
-│   │   │   │   └── route.ts           # NextAuth OIDC handler
-│   │   │   └── callback/
-│   │   │       └── route.ts
-│   │   └── proxy/
-│   │       └── [...path]/
-│   │           └── route.ts           # BFF 代理转发到 Go Backend :18200
-│   └── layout.tsx                     # Root layout（ThemeProvider + QueryProvider）
-├── components/
-│   ├── ui/                            # shadcn/ui 组件（Button/Input/Sheet/Dialog/...）
-│   │   ├── button.tsx
-│   │   ├── sheet.tsx                  # Slide-over Sheet (侧滑详情)
-│   │   ├── dialog.tsx
-│   │   ├── badge.tsx                  # 状态 Badge（success/warning/danger）
-│   │   ├── skeleton.tsx               # 骨架屏
-│   │   ├── tooltip.tsx                # 含快捷键提示
-│   │   ├── dropdown-menu.tsx
-│   │   ├── command.tsx                # cmdk 封装
-│   │   └── ...（其余 shadcn 组件）
-│   ├── ai-drawer/
-│   │   ├── ai-drawer.tsx              # 右侧固定 AI Drawer（非遮罩）
-│   │   ├── chat-message.tsx           # 消息气泡（含内联操作按钮）
-│   │   └── use-ai-chat.ts             # 流式输出 hook (useChat)
-│   ├── command-palette/
-│   │   ├── command-palette.tsx        # ⌘K 全局命令面板
-│   │   └── commands.ts                # 命令定义表（导航/操作/搜索分组）
-│   ├── data-table/
-│   │   ├── data-table.tsx             # TanStack Table 通用封装（含虚拟滚动）
-│   │   ├── data-table-toolbar.tsx     # 搜索框 + 过滤器 chip
-│   │   ├── data-table-pagination.tsx  # 分页控件
-│   │   └── column-helpers.ts          # 列定义工具函数
-│   ├── form-builder/
-│   │   ├── form-field.tsx             # React Hook Form + Zod 通用字段
-│   │   ├── stepper.tsx                # 多步表单 Stepper 组件
-│   │   └── product-search.tsx         # 商品搜索输入（combobox）
-│   ├── bill/
-│   │   ├── bill-detail-sheet.tsx      # 单据详情 Slide-over
-│   │   ├── bill-item-table.tsx        # 单据明细行内可编辑表格
-│   │   └── bill-status-badge.tsx      # 单据状态颜色 Badge
-│   ├── charts/                        # 所有图表组件（强制 "use client"）
-│   │   ├── kpi-card.tsx               # KPI 卡片 (Tremor + CountUp)
-│   │   ├── stock-trend-chart.tsx      # 库存趋势 (Recharts AreaChart)
-│   │   ├── sales-bar-chart.tsx        # 销售 BarChart
-│   │   └── abc-pie-chart.tsx          # ABC 分析 PieChart
-│   ├── layout/
-│   │   ├── sidebar.tsx                # 可折叠侧边栏（Zustand 持久化）
-│   │   ├── topbar.tsx                 # 顶栏（搜索 + 通知 + AI 按钮）
-│   │   └── empty-state.tsx            # 空状态组件（主动引导 CTA）
-│   └── slide-over/
-│       └── slide-over.tsx             # 通用 Slide-over 封装（Framer Motion）
-├── lib/
-│   ├── api-client.ts                  # fetch 封装（自动携带 JWT）
-│   ├── query-keys.ts                  # TanStack Query key factory
-│   ├── utils.ts                       # cn() + formatCNY() + dayjs helpers
-│   └── auth.ts                        # NextAuth 配置（Zitadel provider）
-├── hooks/
-│   ├── use-debounce.ts                # 搜索 debounce
-│   ├── use-media-query.ts             # Sheet ↔ Dialog 响应式切换
-│   ├── use-table-density.ts           # 表格密度（localStorage 持久化）
-│   └── use-command-palette.ts         # ⌘K 全局监听
-├── stores/
-│   ├── sidebar-store.ts               # Zustand: 侧边栏折叠状态
-│   ├── ai-drawer-store.ts             # Zustand: AI Drawer 开关
-│   └── table-store.ts                 # Zustand: 表格密度/列显示
-└── styles/
-    ├── globals.css                    # OKLCH 主题变量（亮色 + 暗色）
-    └── print.css                      # 打印样式（隐藏导航，显示公司抬头）
-```
-
-**关键配置**: `package.json` 使用 Bun，`next.config.ts` 启用 `output: "standalone"`，字体使用 `next/font` 加载 Noto Sans SC（见 ux-benchmarks.md §7）。
-
----
-
-## 5. PostgreSQL Schema (核心章节)
-
-**数据库连接**: `lurus-pg-rw.database.svc:5432`，schema: `tally`（已在 lurus.yaml 注册）。
-**License 声明**: 所有带注释 "Derived from jshERP/GreaterWMS (Apache-2.0)" 的表结构源自 code-borrowing-plan.md §2 的分析，并在 `THIRD_PARTY_LICENSES/` 保存原始 LICENSE 文件。
-
-### 5.1 前置扩展
+### 2.2 数据库侧
 
 ```sql
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-CREATE EXTENSION IF NOT EXISTS "vector";   -- pgvector，需运维确认已部署（见 §18 Open Questions）
-```
-
-### 5.2 完整 DDL（27 张核心表）
-
-```sql
--- =====================================================
--- 域 1: tenant — 租户本地缓存
--- =====================================================
-CREATE TABLE tally.tenant (
-    id            UUID PRIMARY KEY,           -- 与 2l-svc-platform 同 ID
-    name          VARCHAR(200) NOT NULL,
-    status        SMALLINT NOT NULL DEFAULT 1,-- 1启用 0禁用
-    plan_type     VARCHAR(30),                -- free/pro/enterprise
-    expire_at     TIMESTAMPTZ,
-    settings      JSONB NOT NULL DEFAULT '{}',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- =====================================================
--- 域 2: org_* — 组织架构
--- =====================================================
--- Derived from jshERP jsh_organization + jsh_orga_user_rel (Apache-2.0)
-CREATE TABLE tally.org_department (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   UUID NOT NULL REFERENCES tally.tenant(id),
-    parent_id   UUID REFERENCES tally.org_department(id),
-    name        VARCHAR(100) NOT NULL,
-    sort        INT NOT NULL DEFAULT 0,
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at  TIMESTAMPTZ
-);
-CREATE INDEX idx_org_dept_tenant ON tally.org_department(tenant_id);
-
-CREATE TABLE tally.org_user_rel (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id    UUID NOT NULL,
-    dept_id      UUID REFERENCES tally.org_department(id),
-    user_id      UUID NOT NULL,
-    sort         INT DEFAULT 0,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
--- =====================================================
--- 域 3: partner_* — 供应商/客户
--- =====================================================
--- Derived from jshERP jsh_supplier (Apache-2.0)
-CREATE TABLE tally.partner (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID NOT NULL,
-    partner_type    VARCHAR(20) NOT NULL CHECK (partner_type IN ('supplier','customer','both','member')),
-    name            VARCHAR(255) NOT NULL,
-    code            VARCHAR(100),
-    contact_name    VARCHAR(100),
-    phone           VARCHAR(30),
-    mobile          VARCHAR(30),
-    email           VARCHAR(100),
-    address         TEXT,
-    tax_no          VARCHAR(100),
-    default_tax_rate NUMERIC(8,4),
-    credit_limit    NUMERIC(18,4),
-    advance_balance NUMERIC(18,4) NOT NULL DEFAULT 0,
-    ar_balance      NUMERIC(18,4) NOT NULL DEFAULT 0,
-    ap_balance      NUMERIC(18,4) NOT NULL DEFAULT 0,
-    enabled         BOOLEAN NOT NULL DEFAULT true,
-    remark          TEXT,
-    ai_metadata     JSONB NOT NULL DEFAULT '{}',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at      TIMESTAMPTZ
-);
-CREATE INDEX idx_partner_tenant ON tally.partner(tenant_id) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX idx_partner_code ON tally.partner(tenant_id, code)
-    WHERE deleted_at IS NULL AND code IS NOT NULL;
-ALTER TABLE tally.partner ENABLE ROW LEVEL SECURITY;
-CREATE POLICY partner_rls ON tally.partner
-    USING (tenant_id = current_setting('app.tenant_id')::UUID);
-
-CREATE TABLE tally.partner_bank (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id    UUID NOT NULL,
-    partner_id   UUID NOT NULL REFERENCES tally.partner(id),
-    bank_name    VARCHAR(100),
-    account_no   VARCHAR(100),
-    account_name VARCHAR(100),
-    is_default   BOOLEAN DEFAULT false
-);
-
--- =====================================================
--- 域 4: product_* — 商品/SKU/分类
--- =====================================================
--- Derived from jshERP jsh_material_category (Apache-2.0)
-CREATE TABLE tally.product_category (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id    UUID NOT NULL,
-    parent_id    UUID REFERENCES tally.product_category(id),
-    name         VARCHAR(100) NOT NULL,
-    code         VARCHAR(50),
-    sort         INT NOT NULL DEFAULT 0,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at   TIMESTAMPTZ
-);
-CREATE INDEX idx_product_cat_tenant ON tally.product_category(tenant_id);
-
--- Derived from jshERP jsh_material (Apache-2.0)
--- Added: embedding vector(1536), ai_metadata JSONB, predicted_* (Lurus 独有)
-CREATE TABLE tally.product (
-    id                        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id                 UUID NOT NULL,
-    category_id               UUID REFERENCES tally.product_category(id),
-    code                      VARCHAR(100) NOT NULL,
-    name                      VARCHAR(200) NOT NULL,
-    manufacturer              VARCHAR(100),
-    model                     VARCHAR(100),
-    spec                      VARCHAR(200),
-    brand                     VARCHAR(100),
-    mnemonic                  VARCHAR(100),
-    color                     VARCHAR(50),
-    unit_id                   UUID,
-    expiry_days               INT,
-    weight_kg                 NUMERIC(18,4),
-    enabled                   BOOLEAN NOT NULL DEFAULT true,
-    enable_serial_no          BOOLEAN NOT NULL DEFAULT false,
-    enable_lot_no             BOOLEAN NOT NULL DEFAULT false,
-    shelf_position            VARCHAR(100),
-    img_urls                  TEXT[],
-    custom_field1             VARCHAR(500),
-    custom_field2             VARCHAR(500),
-    custom_field3             VARCHAR(500),
-    remark                    TEXT,
-    -- AI 专属字段 (Lurus 独有)
-    embedding                 vector(1536),
-    ai_metadata               JSONB NOT NULL DEFAULT '{}',
-    predicted_monthly_demand  NUMERIC(18,4),
-    predicted_stockout_at     TIMESTAMPTZ,
-    recommendation_notes      TEXT,
-    created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at                TIMESTAMPTZ
-);
-CREATE INDEX idx_product_tenant ON tally.product(tenant_id) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX idx_product_code ON tally.product(tenant_id, code) WHERE deleted_at IS NULL;
-CREATE INDEX idx_product_embedding ON tally.product
-    USING ivfflat (embedding vector_cosine_ops) WITH (lists = 100);
-ALTER TABLE tally.product ENABLE ROW LEVEL SECURITY;
-CREATE POLICY product_rls ON tally.product
-    USING (tenant_id = current_setting('app.tenant_id')::UUID);
-
--- Derived from jshERP jsh_material_extend (Apache-2.0)
-CREATE TABLE tally.product_sku (
+-- migration 000013
+CREATE TABLE tally.tenant_profile (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id        UUID NOT NULL,
-    product_id       UUID NOT NULL REFERENCES tally.product(id),
-    bar_code         VARCHAR(100),
-    unit_name        VARCHAR(50),
-    sku_attrs        VARCHAR(200),
-    purchase_price   NUMERIC(18,6) NOT NULL DEFAULT 0,
-    retail_price     NUMERIC(18,6) NOT NULL DEFAULT 0,
-    wholesale_price  NUMERIC(18,6) NOT NULL DEFAULT 0,
-    min_price        NUMERIC(18,6),
-    is_default       BOOLEAN NOT NULL DEFAULT false,
+    tenant_id        UUID NOT NULL REFERENCES tally.tenant(id) ON DELETE CASCADE,
+    profile_type     VARCHAR(20) NOT NULL CHECK (profile_type IN ('cross_border','retail','hybrid')),
+    inventory_method VARCHAR(20) NOT NULL DEFAULT 'wac'
+                     CHECK (inventory_method IN ('fifo','wac','by_weight','batch','bulk_merged')),
+    custom_overrides JSONB NOT NULL DEFAULT '{}',
+    -- custom_overrides 示例:
+    -- {"default_tax_rate": 0.13, "currency": "USD", "enable_pos": true,
+    --  "enable_scale": false, "enable_hs_code": true}
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at       TIMESTAMPTZ
+    UNIQUE (tenant_id)
 );
-CREATE INDEX idx_sku_product ON tally.product_sku(product_id);
-CREATE INDEX idx_sku_barcode ON tally.product_sku(tenant_id, bar_code) WHERE deleted_at IS NULL;
+CREATE INDEX idx_tenant_profile_tenant ON tally.tenant_profile(tenant_id);
+```
 
--- Derived from jshERP jsh_material_attribute (Apache-2.0)
-CREATE TABLE tally.product_attribute (
+### 2.3 Go 侧 ProfileResolver
+
+```go
+// internal/app/profile/resolver.go
+
+type Profile interface {
+    Type() ProfileType
+    InventoryMethod() InventoryMethod
+    IsEnabled(feature string) bool          // "multi_currency","hs_code","pos","scale"
+    DefaultTaxRate() decimal.Decimal
+    DefaultCurrency() string                // "CNY" / "USD" / ...
+    RequiredBillFields() []string           // cross_border: ["hs_code","origin_country"]
+    UIFeatures() UIFeatureSet               // 前端按此渲染
+}
+
+type CrossBorderProfile struct { overrides JSONB }
+type RetailProfile      struct { overrides JSONB }
+type HybridProfile      struct { overrides JSONB }
+
+// ProfileResolver 从 ctx 中读取 tenant_id，查询 tenant_profile（有缓存）
+type ProfileResolver struct {
+    repo   ProfileRepository
+    cache  *sync.Map  // tenant_id -> Profile（TTL 5min）
+}
+
+func (r *ProfileResolver) Resolve(ctx context.Context) (Profile, error)
+```
+
+### 2.4 中间件注入
+
+```go
+// internal/adapter/middleware/profile.go
+func ProfileMiddleware(resolver *ProfileResolver) gin.HandlerFunc {
+    return func(c *gin.Context) {
+        p, err := resolver.Resolve(c.Request.Context())
+        if err != nil {
+            c.AbortWithStatusJSON(500, ...)
+            return
+        }
+        c.Set("profile", p)
+        c.Next()
+    }
+}
+// 所有 authenticated 路由挂载顺序：auth → tenant_rls → profile → handler
+```
+
+### 2.5 前端 Profile 感知
+
+Next.js BFF 在用户登录后从后端 `/api/v1/me/profile` 拉取 `UIFeatureSet`，存入 Zustand `profile-store.ts`。组件通过 `useProfile()` hook 判断是否渲染特定功能。不使用 URL 分叉（同一端点返回 profile 感知字段），避免 endpoint 爆炸。
+
+---
+
+## 3. 核心数据模型 (32 张表 + 1 MV + 2 View)
+
+**数据库连接**: `lurus-pg-rw.database.svc:5432`，schema: `tally`。
+**金额精度不变约束**: 所有货币金额字段使用 `NUMERIC(18,4)`，数量字段 `NUMERIC(18,4)`，汇率 `NUMERIC(20,8)`，禁止 float。
+**License 声明**: jshERP/GreaterWMS 衍生表保留注释 + `THIRD_PARTY_LICENSES/`。
+
+### 3.1 域 1: tenant + profile
+
+```sql
+-- 保持 v1 tenant 表不变（migration 000002）
+
+-- migration 000013: profile 表
+CREATE TABLE tally.tenant_profile (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id        UUID NOT NULL,
-    attribute_name   VARCHAR(100) NOT NULL,
-    attribute_values TEXT[],
-    sort             INT DEFAULT 0
-);
-
--- Derived from jshERP jsh_unit (Apache-2.0)
-CREATE TABLE tally.unit (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   UUID NOT NULL,
-    name        VARCHAR(100) NOT NULL,
-    base_unit   VARCHAR(50),
-    sub_units   JSONB DEFAULT '[]',
-    enabled     BOOLEAN DEFAULT true
-);
-
--- =====================================================
--- 域 5: warehouse_* / stock_* — 仓库与库存
--- =====================================================
--- Derived from jshERP jsh_depot (Apache-2.0)
-CREATE TABLE tally.warehouse (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   UUID NOT NULL,
-    name        VARCHAR(100) NOT NULL,
-    address     VARCHAR(200),
-    manager_id  UUID,
-    enabled     BOOLEAN DEFAULT true,
-    is_default  BOOLEAN DEFAULT false,
-    sort        INT DEFAULT 0,
-    remark      VARCHAR(200),
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at  TIMESTAMPTZ
-);
-ALTER TABLE tally.warehouse ENABLE ROW LEVEL SECURITY;
-CREATE POLICY warehouse_rls ON tally.warehouse
-    USING (tenant_id = current_setting('app.tenant_id')::UUID);
-
--- Derived from GreaterWMS binset/models.py (Apache-2.0)
-CREATE TABLE tally.warehouse_bin (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id    UUID NOT NULL,
-    warehouse_id UUID NOT NULL REFERENCES tally.warehouse(id),
-    bin_code     VARCHAR(100) NOT NULL,
-    bin_zone     VARCHAR(50),
-    bin_size     VARCHAR(50),     -- S/M/L/XL
-    bin_property VARCHAR(50),     -- 常温/冷藏/危品
-    is_empty     BOOLEAN DEFAULT true,
-    bar_code     VARCHAR(100),
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at   TIMESTAMPTZ
-);
-
--- Derived from jshERP jsh_material_initial_stock (Apache-2.0)
-CREATE TABLE tally.stock_initial (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID NOT NULL,
-    product_id      UUID NOT NULL REFERENCES tally.product(id),
-    warehouse_id    UUID NOT NULL REFERENCES tally.warehouse(id),
-    qty             NUMERIC(18,4) NOT NULL DEFAULT 0,
-    low_safe_qty    NUMERIC(18,4),
-    high_safe_qty   NUMERIC(18,4),
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX idx_stock_initial_unique
-    ON tally.stock_initial(tenant_id, product_id, warehouse_id);
-
--- Derived from jshERP jsh_material_current_stock (Apache-2.0)
--- Extended with GreaterWMS multi-status stock concept (Apache-2.0)
-CREATE TABLE tally.stock_snapshot (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id       UUID NOT NULL,
-    product_id      UUID NOT NULL REFERENCES tally.product(id),
-    warehouse_id    UUID NOT NULL REFERENCES tally.warehouse(id),
-    on_hand_qty     NUMERIC(18,4) NOT NULL DEFAULT 0,
-    available_qty   NUMERIC(18,4) NOT NULL DEFAULT 0,
-    reserved_qty    NUMERIC(18,4) NOT NULL DEFAULT 0,
-    in_transit_qty  NUMERIC(18,4) NOT NULL DEFAULT 0,
-    damage_qty      NUMERIC(18,4) NOT NULL DEFAULT 0,
-    hold_qty        NUMERIC(18,4) NOT NULL DEFAULT 0,
-    avg_cost_price  NUMERIC(18,6) NOT NULL DEFAULT 0,   -- 移动加权平均 (WAC)
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX idx_stock_snapshot_unique
-    ON tally.stock_snapshot(tenant_id, product_id, warehouse_id);
-ALTER TABLE tally.stock_snapshot ENABLE ROW LEVEL SECURITY;
-CREATE POLICY stock_snapshot_rls ON tally.stock_snapshot
-    USING (tenant_id = current_setting('app.tenant_id')::UUID);
-
--- NEW — OFBiz Lot 设计借鉴（批次独立追踪）
-CREATE TABLE tally.stock_lot (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id        UUID NOT NULL,
-    product_id       UUID NOT NULL REFERENCES tally.product(id),
-    lot_no           VARCHAR(100) NOT NULL,
-    manufacture_date DATE,
-    expiry_date      DATE,
-    qty              NUMERIC(18,4) NOT NULL DEFAULT 0,
-    cost_price       NUMERIC(18,6),
-    remark           TEXT,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE UNIQUE INDEX idx_lot_no ON tally.stock_lot(tenant_id, product_id, lot_no);
-
--- Derived from jshERP jsh_serial_number (Apache-2.0)
-CREATE TABLE tally.stock_serial (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id    UUID NOT NULL,
-    product_id   UUID NOT NULL REFERENCES tally.product(id),
-    warehouse_id UUID,
-    serial_no    VARCHAR(100) NOT NULL,
-    is_sold      BOOLEAN NOT NULL DEFAULT false,
-    cost_price   NUMERIC(18,6),
-    in_bill_no   VARCHAR(50),
-    out_bill_no  VARCHAR(50),
-    creator_id   UUID,
-    remark       TEXT,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at   TIMESTAMPTZ
-);
-CREATE UNIQUE INDEX idx_serial_no
-    ON tally.stock_serial(tenant_id, serial_no) WHERE deleted_at IS NULL;
-
--- =====================================================
--- 域 6: bill_head + bill_item — 核心通用单据
--- =====================================================
--- Derived from jshERP jsh_depot_head (Apache-2.0)
--- Extended: UUID PK, JSONB attachments, UUID[] salesperson_ids, amendment_of_id
--- bill_type: '入库'/'出库'/'其它'
--- sub_type: 采购/销售退货/销售/调拨/盘点录入/盘点复盘/采购订单/销售订单/...
-CREATE TABLE tally.bill_head (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id           UUID NOT NULL,
-    bill_no             VARCHAR(50) NOT NULL,
-    bill_no_draft       VARCHAR(50),
-    bill_type           VARCHAR(30) NOT NULL,
-    sub_type            VARCHAR(30) NOT NULL,
-    status              SMALLINT NOT NULL DEFAULT 0,
-    -- 0草稿 1已提交 2已审核 3部分完成 4完成 9取消
-    purchase_status     SMALLINT DEFAULT 0,
-    partner_id          UUID REFERENCES tally.partner(id),
-    operator_id         UUID,
-    creator_id          UUID NOT NULL,
-    account_id          UUID,
-    bill_date           TIMESTAMPTZ NOT NULL,
-    total_amount        NUMERIC(18,4) NOT NULL DEFAULT 0,
-    paid_amount         NUMERIC(18,4) NOT NULL DEFAULT 0,
-    discount_rate       NUMERIC(8,4),
-    discount_amount     NUMERIC(18,4),
-    other_amount        NUMERIC(18,4),
-    deposit_amount      NUMERIC(18,4),
-    pay_type            VARCHAR(30),
-    remark              TEXT,
-    attachments         JSONB DEFAULT '[]',
-    salesperson_ids     UUID[],
-    link_bill_id        UUID REFERENCES tally.bill_head(id),
-    source              VARCHAR(10) DEFAULT 'web',
-    amendment_of_id     UUID REFERENCES tally.bill_head(id),
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at          TIMESTAMPTZ
-);
-CREATE INDEX idx_bill_head_tenant ON tally.bill_head(tenant_id) WHERE deleted_at IS NULL;
-CREATE UNIQUE INDEX idx_bill_head_no
-    ON tally.bill_head(tenant_id, bill_no) WHERE deleted_at IS NULL;
-CREATE INDEX idx_bill_head_type
-    ON tally.bill_head(tenant_id, bill_type, sub_type, bill_date);
-CREATE INDEX idx_bill_head_partner ON tally.bill_head(tenant_id, partner_id);
-ALTER TABLE tally.bill_head ENABLE ROW LEVEL SECURITY;
-CREATE POLICY bill_head_rls ON tally.bill_head
-    USING (tenant_id = current_setting('app.tenant_id')::UUID);
-
--- Derived from jshERP jsh_depot_item (Apache-2.0)
--- Extended: serial_nos TEXT[], lot_id FK, bin_id FK
-CREATE TABLE tally.bill_item (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id           UUID NOT NULL,
-    head_id             UUID NOT NULL REFERENCES tally.bill_head(id) ON DELETE CASCADE,
-    product_id          UUID NOT NULL REFERENCES tally.product(id),
-    product_sku_id      UUID REFERENCES tally.product_sku(id),
-    warehouse_id        UUID REFERENCES tally.warehouse(id),
-    target_warehouse_id UUID REFERENCES tally.warehouse(id),
-    unit_name           VARCHAR(20),
-    sku_attrs           VARCHAR(200),
-    qty                 NUMERIC(18,4) NOT NULL,
-    base_qty            NUMERIC(18,4),
-    unit_price          NUMERIC(18,6),
-    purchase_price      NUMERIC(18,6),
-    tax_rate            NUMERIC(8,4),
-    tax_amount          NUMERIC(18,4),
-    line_amount         NUMERIC(18,4),
-    lot_id              UUID REFERENCES tally.stock_lot(id),
-    serial_nos          TEXT[],
-    expiry_date         DATE,
-    link_item_id        UUID REFERENCES tally.bill_item(id),
-    bin_id              UUID REFERENCES tally.warehouse_bin(id),
-    remark              VARCHAR(500),
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at          TIMESTAMPTZ
-);
-CREATE INDEX idx_bill_item_head ON tally.bill_item(head_id);
-CREATE INDEX idx_bill_item_product ON tally.bill_item(tenant_id, product_id);
-ALTER TABLE tally.bill_item ENABLE ROW LEVEL SECURITY;
-CREATE POLICY bill_item_rls ON tally.bill_item
-    USING (tenant_id = current_setting('app.tenant_id')::UUID);
-
--- =====================================================
--- 域 7: finance_* — 资金账户/收付款
--- =====================================================
--- Derived from jshERP jsh_account (Apache-2.0)
-CREATE TABLE tally.finance_account (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id        UUID NOT NULL,
-    name             VARCHAR(100) NOT NULL,
-    code             VARCHAR(50),
-    initial_balance  NUMERIC(18,4) NOT NULL DEFAULT 0,
-    current_balance  NUMERIC(18,4) NOT NULL DEFAULT 0,
-    is_default       BOOLEAN DEFAULT false,
-    enabled          BOOLEAN DEFAULT true,
-    sort             INT DEFAULT 0,
-    remark           VARCHAR(200),
+    tenant_id        UUID NOT NULL REFERENCES tally.tenant(id) ON DELETE CASCADE,
+    profile_type     VARCHAR(20) NOT NULL
+                     CHECK (profile_type IN ('cross_border','retail','hybrid')),
+    inventory_method VARCHAR(20) NOT NULL DEFAULT 'wac'
+                     CHECK (inventory_method IN ('fifo','wac','by_weight','batch','bulk_merged')),
+    custom_overrides JSONB NOT NULL DEFAULT '{}',
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at       TIMESTAMPTZ
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (tenant_id)
 );
-
--- Derived from jshERP jsh_account_head (Apache-2.0)
-CREATE TABLE tally.payment_head (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id        UUID NOT NULL,
-    pay_type         VARCHAR(30) NOT NULL,
-    partner_id       UUID REFERENCES tally.partner(id),
-    operator_id      UUID,
-    creator_id       UUID NOT NULL,
-    bill_no          VARCHAR(50),
-    pay_date         TIMESTAMPTZ NOT NULL,
-    amount           NUMERIC(18,4) NOT NULL,
-    discount_amount  NUMERIC(18,4) DEFAULT 0,
-    total_amount     NUMERIC(18,4) NOT NULL,
-    account_id       UUID REFERENCES tally.finance_account(id),
-    related_bill_id  UUID REFERENCES tally.bill_head(id),
-    remark           TEXT,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deleted_at       TIMESTAMPTZ
-);
-CREATE INDEX idx_payment_head_tenant ON tally.payment_head(tenant_id) WHERE deleted_at IS NULL;
-ALTER TABLE tally.payment_head ENABLE ROW LEVEL SECURITY;
-CREATE POLICY payment_head_rls ON tally.payment_head
+CREATE INDEX idx_tenant_profile_tenant ON tally.tenant_profile(tenant_id);
+ALTER TABLE tally.tenant_profile ENABLE ROW LEVEL SECURITY;
+CREATE POLICY tenant_profile_rls ON tally.tenant_profile
     USING (tenant_id = current_setting('app.tenant_id')::UUID);
+```
 
--- Derived from jshERP jsh_account_item (Apache-2.0)
-CREATE TABLE tally.payment_item (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id           UUID NOT NULL,
-    head_id             UUID NOT NULL REFERENCES tally.payment_head(id),
-    finance_category_id UUID,
-    amount              NUMERIC(18,4) NOT NULL,
-    remark              VARCHAR(500)
-);
+### 3.2 域 2: org（不变，migration 000003）
 
--- Derived from jshERP jsh_in_out_item (Apache-2.0)
-CREATE TABLE tally.finance_category (
-    id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id UUID NOT NULL,
-    name      VARCHAR(100) NOT NULL,
-    cat_type  VARCHAR(20) NOT NULL CHECK (cat_type IN ('income','expense')),
-    enabled   BOOLEAN DEFAULT true,
-    sort      INT DEFAULT 0
-);
+### 3.3 域 3: partner（不变，migration 000004）
 
--- =====================================================
--- 域 8: audit_log — 操作审计
--- =====================================================
--- Derived from jshERP jsh_log (Apache-2.0), extended with changes JSONB
-CREATE TABLE tally.audit_log (
+跨境 profile 追加字段在 partner 的 `attributes JSONB`（tax_no 已有；可扩展 swift_code、bank_country）。
+
+### 3.4 域 4: 商品模型升级
+
+```sql
+-- migration 000014: unit + product_unit（替换旧 unit 表的 JSONB sub_units 方案）
+-- 旧 tally.unit 表保留（其 sub_units JSONB 废弃，不迁移，由 product_unit 接管）
+
+CREATE TABLE tally.unit_def (
+    -- 明确命名 unit_def 避免与旧 unit 表冲突
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id   UUID NOT NULL,
-    user_id     UUID,
-    action      VARCHAR(50) NOT NULL,
-    resource    VARCHAR(50) NOT NULL,
-    resource_id UUID,
-    changes     JSONB,
-    client_ip   VARCHAR(100),
+    code        VARCHAR(50) NOT NULL,   -- "kg", "jin", "box", "pcs"
+    name        VARCHAR(100) NOT NULL,  -- 显示名称
+    unit_type   VARCHAR(20) NOT NULL    -- 'weight'|'length'|'volume'|'count'|'custom'
+                CHECK (unit_type IN ('weight','length','volume','count','custom')),
+    enabled     BOOLEAN NOT NULL DEFAULT true,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_audit_log_tenant ON tally.audit_log(tenant_id, created_at DESC);
-CREATE INDEX idx_audit_log_resource ON tally.audit_log(resource, resource_id);
+CREATE UNIQUE INDEX idx_unit_def_code ON tally.unit_def(tenant_id, code);
+ALTER TABLE tally.unit_def ENABLE ROW LEVEL SECURITY;
+CREATE POLICY unit_def_rls ON tally.unit_def
+    USING (tenant_id = current_setting('app.tenant_id')::UUID);
 
--- =====================================================
--- 域 9: 系统配置与字典
--- =====================================================
--- Derived from jshERP jsh_system_config (Apache-2.0)
-CREATE TABLE tally.system_config (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id    UUID NOT NULL,
-    key          VARCHAR(100) NOT NULL,
-    value        TEXT,
-    description  VARCHAR(500),
-    UNIQUE (tenant_id, key)
+CREATE TABLE tally.product_unit (
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id         UUID NOT NULL,
+    product_id        UUID NOT NULL REFERENCES tally.product(id) ON DELETE CASCADE,
+    unit_id           UUID NOT NULL REFERENCES tally.unit_def(id),
+    is_base           BOOLEAN NOT NULL DEFAULT false,  -- 有且只有一行 is_base=true
+    conversion_factor NUMERIC(20,8) NOT NULL DEFAULT 1,
+    -- conversion_factor: 该单位 = factor × base_unit
+    -- base_unit 行 factor=1，包(1包=5斤) factor=5，箱(1箱=100斤) factor=100
+    barcode           VARCHAR(100),
+    purchase_price    NUMERIC(18,4),   -- 该单位的采购价（可选）
+    sale_price        NUMERIC(18,4),   -- 该单位的售价（可选）
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX idx_product_unit_base
+    ON tally.product_unit(product_id) WHERE is_base = true;
+CREATE INDEX idx_product_unit_product ON tally.product_unit(product_id);
 
--- Derived from jshERP jsh_sys_dict_type + jsh_sys_dict_data (Apache-2.0)
-CREATE TABLE tally.dict_type (
-    id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id UUID,
-    type_code VARCHAR(100) NOT NULL UNIQUE,
-    type_name VARCHAR(100) NOT NULL,
-    remark    VARCHAR(500)
-);
+-- migration 000015: 升级 product 表
+ALTER TABLE tally.product
+    ADD COLUMN measurement_strategy VARCHAR(20) NOT NULL DEFAULT 'individual'
+        CHECK (measurement_strategy IN
+               ('individual','weight','length','volume','batch','serial')),
+    ADD COLUMN default_unit_id UUID REFERENCES tally.unit_def(id),
+    ADD COLUMN attributes JSONB NOT NULL DEFAULT '{}';
+    -- attributes 示例（cross_border）:
+    -- {"hs_code": "6104.43", "origin_country": "CN",
+    --  "name_en": "Women Knit Dress", "name_zh": "女款针织连衣裙",
+    --  "customs_value_usd": "12.50", "brand_en": "NoLabel"}
+    -- attributes 示例（retail/称重）:
+    -- {"tare_weight_kg": 0.05, "price_per_kg": 28.00}
 
-CREATE TABLE tally.dict_data (
-    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id  UUID,
-    type_id    UUID NOT NULL REFERENCES tally.dict_type(id),
-    label      VARCHAR(100) NOT NULL,
-    value      VARCHAR(100) NOT NULL,
-    sort       INT DEFAULT 0,
-    enabled    BOOLEAN DEFAULT true
-);
-
--- Derived from jshERP jsh_sequence (Apache-2.0)
--- 单据编号生成器
-CREATE TABLE tally.bill_sequence (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id   UUID NOT NULL,
-    prefix      VARCHAR(20) NOT NULL,
-    current_val BIGINT NOT NULL DEFAULT 0,
-    UNIQUE (tenant_id, prefix)
-);
+CREATE INDEX idx_product_attributes_gin ON tally.product USING GIN (attributes);
+-- GIN 索引覆盖任意 JSONB key 查询，例如 attributes @> '{"hs_code":"6104.43"}'
 ```
 
-### 5.3 物化视图
+**库存表统一用 base_unit 存储数量**。显示和录入时，前端按用户选择的单位换算（除以 conversion_factor）。换算在 Go 应用层完成，不在数据库触发器。
+
+### 3.5 域 5: warehouse + stock（增加离线字段）
 
 ```sql
--- 库存汇总报表（取代实时计算）
-CREATE MATERIALIZED VIEW tally.report_stock_summary AS
-SELECT
-    ss.tenant_id,
-    p.id          AS product_id,
-    p.code        AS product_code,
-    p.name        AS product_name,
-    w.id          AS warehouse_id,
-    w.name        AS warehouse_name,
-    ss.on_hand_qty,
-    ss.available_qty,
-    ss.avg_cost_price,
-    ss.on_hand_qty * ss.avg_cost_price AS stock_value,
-    si.low_safe_qty,
-    si.high_safe_qty,
-    CASE WHEN ss.available_qty < COALESCE(si.low_safe_qty, 0)
-         THEN true ELSE false END AS is_low_stock
-FROM tally.stock_snapshot ss
-JOIN tally.product p ON p.id = ss.product_id
-JOIN tally.warehouse w ON w.id = ss.warehouse_id
-LEFT JOIN tally.stock_initial si
-    ON si.product_id = ss.product_id AND si.warehouse_id = ss.warehouse_id;
+-- warehouse 表不变（migration 000006）
 
-CREATE UNIQUE INDEX idx_report_stock_summary
-    ON tally.report_stock_summary(tenant_id, product_id, warehouse_id);
+-- migration 000016: 所有单据相关表加离线字段
+-- 影响: bill_head, bill_item, payment_head, stock_initial, stock_snapshot
+-- 以 bill_head 为代表展示模式，其余同理
 
--- AI 补货建议视图（供 Kova Agent 消费）
-CREATE VIEW tally.ai_reorder_suggestions AS
-SELECT
-    ss.tenant_id,
-    p.id          AS product_id,
-    p.name        AS product_name,
-    ss.available_qty,
-    p.predicted_monthly_demand,
-    p.predicted_stockout_at,
-    si.low_safe_qty,
-    GREATEST(0, COALESCE(si.low_safe_qty, 0) * 2 - ss.available_qty) AS suggested_order_qty,
-    p.recommendation_notes
-FROM tally.stock_snapshot ss
-JOIN tally.product p ON p.id = ss.product_id
-LEFT JOIN tally.stock_initial si
-    ON si.product_id = ss.product_id AND si.warehouse_id = ss.warehouse_id
-WHERE p.predicted_stockout_at < now() + interval '30 days'
-   OR ss.available_qty < COALESCE(si.low_safe_qty, 0);
+ALTER TABLE tally.bill_head
+    ADD COLUMN origin       VARCHAR(10) NOT NULL DEFAULT 'cloud'
+        CHECK (origin IN ('cloud','edge')),
+    ADD COLUMN sync_status  VARCHAR(20) NOT NULL DEFAULT 'synced'
+        CHECK (sync_status IN ('synced','pending','conflict')),
+    ADD COLUMN edge_node_id UUID NULL,    -- FK to edge_node.id（延迟约束，edge_node 在 000017）
+    ADD COLUMN edge_timestamp TIMESTAMPTZ NULL;
+    -- edge_timestamp: 边缘节点本地时间（UTC），用于冲突解决
+
+CREATE INDEX idx_bill_head_sync ON tally.bill_head(tenant_id, sync_status)
+    WHERE sync_status != 'synced';
+
+-- 同样为以下表加相同 4 列（migration 000016 统一）:
+-- bill_item: ADD COLUMN origin, sync_status, edge_node_id, edge_timestamp
+-- payment_head: ADD COLUMN origin, sync_status, edge_node_id, edge_timestamp
+-- stock_initial: ADD COLUMN origin, sync_status (edge_node_id, edge_timestamp 可选)
+-- 注: stock_snapshot 不加 origin/sync（快照由服务端聚合计算，不来自边缘直写）
+
+-- migration 000017: edge_node 表
+CREATE TABLE tally.edge_node (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id       UUID NOT NULL,
+    name            VARCHAR(100) NOT NULL,   -- "仓库A门店终端"
+    location        VARCHAR(200),            -- 物理地址描述
+    api_key_hash    VARCHAR(128) NOT NULL,   -- SHA-256(api_key)，用于边缘认证
+    last_seen_at    TIMESTAMPTZ,             -- 最近心跳时间
+    last_synced_at  TIMESTAMPTZ,             -- 最近成功同步时间
+    schema_version  INT NOT NULL DEFAULT 1, -- 边缘 schema 版本
+    status          VARCHAR(20) NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active','inactive','suspended')),
+    settings        JSONB NOT NULL DEFAULT '{}',
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_edge_node_tenant ON tally.edge_node(tenant_id);
+ALTER TABLE tally.edge_node ENABLE ROW LEVEL SECURITY;
+CREATE POLICY edge_node_rls ON tally.edge_node
+    USING (tenant_id = current_setting('app.tenant_id')::UUID);
+
+-- 补全 bill_head.edge_node_id 外键（延迟到 000017 表存在后）
+ALTER TABLE tally.bill_head
+    ADD CONSTRAINT fk_bill_head_edge_node
+    FOREIGN KEY (edge_node_id) REFERENCES tally.edge_node(id) DEFERRABLE;
+
+-- migration 000018: sync_conflict 表
+CREATE TABLE tally.sync_conflict (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id       UUID NOT NULL,
+    edge_node_id    UUID NOT NULL REFERENCES tally.edge_node(id),
+    resource_type   VARCHAR(50) NOT NULL,   -- 'bill_head'|'payment_head'|...
+    resource_id     UUID NOT NULL,          -- 边缘端的记录 ID
+    edge_payload    JSONB NOT NULL,         -- 边缘端完整数据快照
+    cloud_payload   JSONB NOT NULL,         -- 冲突时云端已有数据快照
+    conflict_reason VARCHAR(200),           -- 冲突说明（e.g. "cloud version updated_at newer"）
+    resolved        BOOLEAN NOT NULL DEFAULT false,
+    resolved_by     UUID,                   -- 解决人 user_id
+    resolved_at     TIMESTAMPTZ,
+    resolution      VARCHAR(20)             -- 'use_edge'|'use_cloud'|'manual'
+                    CHECK (resolution IN ('use_edge','use_cloud','manual')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_sync_conflict_tenant ON tally.sync_conflict(tenant_id, resolved);
+CREATE INDEX idx_sync_conflict_resource ON tally.sync_conflict(resource_type, resource_id);
+ALTER TABLE tally.sync_conflict ENABLE ROW LEVEL SECURITY;
+CREATE POLICY sync_conflict_rls ON tally.sync_conflict
+    USING (tenant_id = current_setting('app.tenant_id')::UUID);
 ```
 
-### 5.4 触发器
+### 3.6 域 6: bill_head + bill_item（v1 保留，加离线字段见上）
+
+`bill_head.source` 字段已有（v1 默认 `'web'`），边缘来源写 `'edge'`，`origin` 字段补充来源类型，二者语义不同。
+
+### 3.7 域 7: finance（增加多币种支持）
 
 ```sql
--- 自动更新 updated_at
-CREATE OR REPLACE FUNCTION tally.touch_updated_at()
-RETURNS TRIGGER LANGUAGE plpgsql AS $$
-BEGIN NEW.updated_at = now(); RETURN NEW; END;
-$$;
+-- migration 000019: currency + exchange_rate（跨境 profile 专用）
+CREATE TABLE tally.currency (
+    code        VARCHAR(10) PRIMARY KEY,    -- 'CNY'|'USD'|'EUR'|'GBP'|'JPY'|...
+    name        VARCHAR(100) NOT NULL,
+    symbol      VARCHAR(10),               -- '¥'|'$'|'€'
+    enabled     BOOLEAN NOT NULL DEFAULT true
+);
 
--- 为所有主表挂载 trigger
-CREATE TRIGGER trg_product_updated_at
-    BEFORE UPDATE ON tally.product
-    FOR EACH ROW EXECUTE FUNCTION tally.touch_updated_at();
+INSERT INTO tally.currency (code, name, symbol) VALUES
+    ('CNY','人民币','¥'),
+    ('USD','美元','$'),
+    ('EUR','欧元','€'),
+    ('GBP','英镑','£'),
+    ('JPY','日元','¥'),
+    ('HKD','港币','HK$');
 
--- 库存快照联动（审核单据后由 Go 应用层调用，非 trigger，保持业务逻辑在应用层）
+CREATE TABLE tally.exchange_rate (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    from_currency VARCHAR(10) NOT NULL REFERENCES tally.currency(code),
+    to_currency   VARCHAR(10) NOT NULL REFERENCES tally.currency(code),
+    rate          NUMERIC(20,8) NOT NULL,   -- 1 from_currency = rate to_currency
+    source        VARCHAR(50) NOT NULL DEFAULT 'manual',
+    -- source: 'manual'|'exchangerate_api'|'pboc'（央行）
+    effective_at  TIMESTAMPTZ NOT NULL,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX idx_exchange_rate_pair ON tally.exchange_rate(from_currency, to_currency, effective_at DESC);
+
+-- 多币种扩展 partner（追加字段，migration 000019 一并）
+ALTER TABLE tally.partner
+    ADD COLUMN IF NOT EXISTS default_currency VARCHAR(10) DEFAULT 'CNY'
+        REFERENCES tally.currency(code);
+
+-- 多币种扩展 bill_head（追加字段，migration 000019 一并）
+ALTER TABLE tally.bill_head
+    ADD COLUMN IF NOT EXISTS currency       VARCHAR(10) DEFAULT 'CNY'
+        REFERENCES tally.currency(code),
+    ADD COLUMN IF NOT EXISTS exchange_rate  NUMERIC(20,8) DEFAULT 1,
+    -- exchange_rate: 单据货币 → CNY 的汇率（CNY 单据 rate=1）
+    ADD COLUMN IF NOT EXISTS amount_local   NUMERIC(18,4);
+    -- amount_local: 以单据货币计的金额（total_amount 始终为 CNY）
 ```
 
-### 5.5 迁移文件约定
+### 3.8 JSONB GIN 索引
 
-文件命名: `{6位序号}_{snake_case_desc}.{up|down}.sql`，工具: `golang-migrate`。
-
-```
-migrations/
-├── 000001_init_extensions.up.sql    # pgcrypto, vector
-├── 000002_init_tenant.up.sql
-├── 000003_init_org.up.sql
-├── 000004_init_partner.up.sql
-├── 000005_init_product.up.sql
-├── 000006_init_stock.up.sql
-├── 000007_init_bill.up.sql
-├── 000008_init_finance.up.sql
-├── 000009_init_audit.up.sql
-├── 000010_init_config.up.sql
-├── 000011_init_views.up.sql
-└── 000012_init_rls.up.sql
+```sql
+-- migration 000020: GIN 索引统一补建
+CREATE INDEX idx_product_attributes_gin ON tally.product USING GIN (attributes);
+CREATE INDEX idx_tenant_profile_overrides_gin ON tally.tenant_profile USING GIN (custom_overrides);
+CREATE INDEX idx_edge_node_settings_gin ON tally.edge_node USING GIN (settings);
 ```
 
----
+### 3.9 新表 RLS（migration 000021）
 
-## 6. API Design
+```sql
+-- 补全所有 migration 000013-019 新增表的 RLS（集中在 000021 管理）
+-- tenant_profile: 已在 000013 中含 RLS（见 §3.1）
+-- unit_def, product_unit: 加 RLS
+ALTER TABLE tally.unit_def ENABLE ROW LEVEL SECURITY;
+-- （CREATE POLICY 已在 000014）
 
-### 6.1 REST API（面向前端 + 第三方）
+ALTER TABLE tally.product_unit ENABLE ROW LEVEL SECURITY;
+CREATE POLICY product_unit_rls ON tally.product_unit
+    USING (tenant_id = current_setting('app.tenant_id')::UUID);
 
-**约定**:
-- 基础路径: `/api/v1/`
-- 认证: `Authorization: Bearer <zitadel-jwt>`
-- 分页: cursor-based（`cursor` + `limit`），列表接口统一支持 `?search=&sort=&order=`
-- 错误格式:
-
-```json
-{
-  "code": "STOCK_INSUFFICIENT",
-  "message": "商品 TD-A001 库存不足，当前 5 件，需要 10 件",
-  "detail": { "sku_id": "uuid", "available": 5, "required": 10 }
-}
-```
-
-**核心端点表**:
-
-| 资源 | 端点 | 方法 | 说明 |
-|------|------|------|------|
-| 商品 | `/api/v1/products` | GET/POST | 列表/创建 |
-| | `/api/v1/products/:id` | GET/PATCH/DELETE | 详情/更新/删除 |
-| | `/api/v1/products/import` | POST | 批量导入（Excel/CSV） |
-| | `/api/v1/products/:id/skus` | GET/POST | SKU 列表/创建 |
-| SKU | `/api/v1/skus/:id` | GET/PATCH/DELETE | SKU 详情/更新/删除 |
-| 仓库 | `/api/v1/warehouses` | GET/POST | 列表/创建 |
-| | `/api/v1/warehouses/:id` | GET/PATCH/DELETE | 详情/更新/删除 |
-| | `/api/v1/warehouses/:id/bins` | GET/POST | 货位列表/创建 |
-| 库存 | `/api/v1/stocks` | GET | 库存查询（多维度） |
-| | `/api/v1/stocks/alerts` | GET | 低库存预警列表 |
-| | `/api/v1/stocks/snapshot` | GET | 库存快照（报表用） |
-| 采购 | `/api/v1/purchases` | GET/POST | 列表/创建草稿 |
-| | `/api/v1/purchases/:id` | GET/PATCH | 详情/更新草稿 |
-| | `/api/v1/purchases/:id/submit` | POST | 提交审核 |
-| | `/api/v1/purchases/:id/approve` | POST | 审核通过（库存 +） |
-| | `/api/v1/purchases/:id/reject` | POST | 驳回 |
-| | `/api/v1/purchases/:id/cancel` | POST | 取消（红冲） |
-| | `/api/v1/purchases/:id/receive` | POST | 确认入库（支持部分） |
-| 销售 | `/api/v1/sales` | GET/POST | 列表/创建草稿 |
-| | `/api/v1/sales/:id` | GET/PATCH | 详情/更新草稿 |
-| | `/api/v1/sales/:id/submit` | POST | 提交审核 |
-| | `/api/v1/sales/:id/approve` | POST | 审核（锁定库存） |
-| | `/api/v1/sales/:id/ship` | POST | 确认发货（库存 -） |
-| | `/api/v1/sales/:id/cancel` | POST | 取消（红冲） |
-| 调拨 | `/api/v1/transfers` | GET/POST | 列表/创建 |
-| | `/api/v1/transfers/:id/approve` | POST | 审核（跨仓库存变动） |
-| 盘点 | `/api/v1/stocktakes` | GET/POST | 列表/创建任务 |
-| | `/api/v1/stocktakes/:id/records` | POST | 录入实盘数量 |
-| | `/api/v1/stocktakes/:id/finalize` | POST | 完成盘点 |
-| 合作伙伴 | `/api/v1/partners` | GET/POST | 供应商/客户列表/创建 |
-| | `/api/v1/partners/:id` | GET/PATCH/DELETE | 详情/更新/删除 |
-| | `/api/v1/partners/:id/ar_ap` | GET | 应收应付台账 |
-| 财务 | `/api/v1/finance/accounts` | GET/POST | 资金账户 |
-| | `/api/v1/finance/payments` | GET/POST | 收付款单据 |
-| 报表 | `/api/v1/reports/stock` | GET | 库存报表（周转/ABC/滞销） |
-| | `/api/v1/reports/purchase` | GET | 采购分析 |
-| | `/api/v1/reports/sales` | GET | 销售分析 |
-| | `/api/v1/reports/finance` | GET | 财务报表 |
-| AI | `/api/v1/ai/chat` | POST | LLM 自然语言查询（SSE 流式） |
-| | `/api/v1/ai/suggestions` | GET | AI 补货建议列表 |
-| | `/api/v1/ai/embeddings/refresh` | POST | 刷新商品 embedding |
-
-### 6.2 Internal API（面向 Lurus 其他服务）
-
-认证: `Authorization: Bearer <INTERNAL_API_KEY>`，路由前缀: `/internal/v1/tally/`。
-
-| 端点 | 方法 | 用途 | 消费方 |
-|------|------|------|--------|
-| `/internal/v1/tally/sku/:id/stock` | GET | 查询 SKU 库存（用于 Lucrum/其他服务）| 待定 |
-| `/internal/v1/tally/tenant/sync` | POST | 租户状态同步（platform 回调）| 2l-svc-platform |
-| `/internal/v1/tally/health` | GET | 健康探针 | K8s liveness |
-| `/internal/v1/tally/metrics` | GET | Prometheus 指标 | Prometheus |
-
-### 6.3 Agent API（面向 Kova Agent + Hub 函数调用）
-
-当 Hub LLM 发起 function calling 时，tally-backend 作为工具提供方。
-
-```json
-// 工具注册列表（Go 函数对应的 JSON schema）
-[
-  {
-    "name": "query_stock",
-    "description": "查询商品或 SKU 的当前库存数量",
-    "parameters": {
-      "product_code": "string?",
-      "sku_id": "string?",
-      "warehouse_id": "string?"
-    }
-  },
-  {
-    "name": "query_low_stock",
-    "description": "查询低于安全库存的商品列表",
-    "parameters": { "threshold_ratio": "number (0-1, default 1.0)" }
-  },
-  {
-    "name": "suggest_reorder",
-    "description": "为指定 SKU 生成补货建议（数量+供应商+预计成本）",
-    "parameters": { "sku_id": "string" }
-  },
-  {
-    "name": "forecast_stockout",
-    "description": "预测指定 SKU 的缺货时间",
-    "parameters": { "sku_id": "string", "lookback_days": "int (default 30)" }
-  },
-  {
-    "name": "query_sales_trend",
-    "description": "查询商品/SKU 的销售趋势数据",
-    "parameters": { "sku_id": "string", "days": "int" }
-  },
-  {
-    "name": "create_purchase_draft",
-    "description": "创建采购单草稿（需用户在 UI 确认）",
-    "parameters": {
-      "partner_id": "string",
-      "items": [{ "sku_id": "string", "qty": "number", "unit_price": "number" }]
-    }
-  }
-]
-```
-
-### 6.4 WebSocket
-
-端点: `/ws`，认证: query param `?token=<jwt>`
-
-| 事件 | 方向 | payload | 用途 |
-|------|------|---------|------|
-| `stock.changed` | server→client | `{ sku_id, qty_delta, available_qty }` | 实时库存变更推送 |
-| `ai.stream` | server→client | `{ message_id, delta, done }` | AI 流式输出 |
-| `alert.low_stock` | server→client | `{ sku_id, name, available_qty }` | 低库存预警实时通知 |
-| `bill.status_changed` | server→client | `{ bill_id, bill_no, old_status, new_status }` | 单据状态变更通知 |
-| `ping` | client→server | — | 保活 |
-
----
-
-## 7. AI Integration Architecture
-
-### 7.1 Hub LLM 集成
-
-**调用路径**: tally-backend → Hub (`api.lurus.cn`, OpenAI 兼容协议)
-
-```go
-// internal/adapter/hub/client.go
-type HubClient struct {
-    baseURL    string  // api.lurus.cn/v1
-    apiKey     string  // Hub token (from env HUB_TOKEN)
-    httpClient *http.Client  // 带 timeout 的 client
-}
-
-// 模型选择策略（不硬编码，从 system_config 读取）
-// 简单查询（库存余量、单价查询）: claude-haiku-4 (低成本)
-// 复杂分析（ABC分析、滞销分析）: claude-sonnet-4-5
-// 长上下文报告生成: claude-opus 系列
-```
-
-**流式输出链路**:
-```
-前端 AI Drawer → POST /api/v1/ai/chat → Go handler
-→ Memorus search (RAG上下文) → Hub /v1/chat/completions (SSE)
-→ Go handler 转发 SSE → WebSocket → 前端 useChat hook 渲染
-```
-
-**失败降级策略**:
-- Hub 不可用（503/timeout）→ 返回 `{"error": "AI 助手暂时不可用，请稍后重试"}`，不 panic
-- Memorus 不可用 → 跳过 RAG 增强，直接调用 Hub（降级但不中断）
-
-**Prompt 模板存储**: `internal/app/ai_agent/prompts/` 纯文本文件，编译时嵌入（`//go:embed`）。
-
-### 7.2 Kova Agent 集成
-
-**补货 Agent 工作流**:
-```
-触发条件:
-  1. 定时: tally-worker 每日 00:30 扫描 ai_reorder_suggestions 视图
-  2. 事件: PSI_EVENTS psi.alert.low_stock 触发即时分析
-
-执行流程:
-  tally-worker → POST kova-rest/v1/agents/reorder/run
-  → Kova 执行 Agent (调用 tally /agent/v1/tools 获取数据)
-  → Agent 输出补货建议 JSON
-  → tally-worker 写入 product.recommendation_notes + predicted_stockout_at
-  → 发布 psi.agent.suggestion.created 事件
-  → WebSocket 推送到在线用户
-```
-
-**滞销预警 Agent**: 每周日 02:00 运行，分析 30/60/90 天滞销 SKU，更新 `ai_metadata`。
-
-### 7.3 Memorus RAG 集成
-
-**写入时机**（tally-worker 异步处理，不阻塞主链路）:
-- 采购单审核通过 → 写入 `{event: "purchase_received", sku_id, qty, partner_name, price}`
-- 销售单发货 → 写入 `{event: "sale_shipped", sku_id, qty, customer_name, price}`
-- 库存盘点完成 → 写入差异记录
-
-**读取时机**（AI chat 前）:
-```go
-// internal/adapter/memorus/search.go
-func (c *MemClient) SearchRelevantHistory(ctx context.Context, query string) ([]Memory, error) {
-    // POST /v1/memory/search { query, top_k: 5 }
-    // 超时 2s，失败则返回空列表（降级）
-}
+-- edge_node, sync_conflict: 已在 000017/000018 中含 RLS
 ```
 
 ---
 
-## 8. NATS Event Catalog
+## 4. 库存计算 Strategy Pattern
 
-**Stream**: `PSI_EVENTS`（已在 lurus.yaml 注册）
-**Subject 前缀**: `psi.`
-**消费者**: tally-worker（lurus-tally 内部），Kova Agent，2l-svc-platform/notification
+### 4.1 设计
 
-### 8.1 事件定义
+所有库存变动（采购入库、销售出库、调拨、盘点差异）统一通过 `InventoryCalculator` 接口处理，Profile 在初始化时决定使用哪个实现。
 
 ```go
-// internal/pkg/types/events.go
+// internal/app/stock/calculator.go
 
-type PSIEvent struct {
-    EventID   string    `json:"event_id"`  // UUID
-    EventType string    `json:"event_type"` // 见下表
-    TenantID  string    `json:"tenant_id"`
-    Timestamp time.Time `json:"timestamp"`
-    Payload   any       `json:"payload"`
+// StockMovement 表示一次库存变动请求（所有数量均以 base_unit 计）
+type StockMovement struct {
+    TenantID    uuid.UUID
+    ProductID   uuid.UUID
+    WarehouseID uuid.UUID
+    Qty         decimal.Decimal  // 正=入库，负=出库
+    UnitID      uuid.UUID        // 本次操作用的单位（换算到 base 后才进 calculator）
+    LotID       *uuid.UUID       // 批次 ID（batch/fifo 需要）
+    BillNo      string
+    Reason      string           // 'purchase'|'sale'|'transfer'|'stocktake'|'adjust'
 }
 
-// psi.product.created / psi.product.updated / psi.product.deleted
-type ProductEventPayload struct {
-    ProductID string `json:"product_id"`
-    Name      string `json:"name"`
-    Code      string `json:"code"`
+// StockSnapshot 计算后的库存快照增量
+type StockSnapshot struct {
+    OnHandDelta   decimal.Decimal
+    AvgCostPrice  decimal.Decimal  // WAC 算法输出；FIFO 输出 nil
+    LotUpdates    []LotUpdate      // FIFO/batch 需要更新的批次
 }
 
-// psi.stock.changed
-type StockChangedPayload struct {
-    SKUID       string          `json:"sku_id"`
-    WarehouseID string          `json:"warehouse_id"`
-    QtyDelta    decimal.Decimal `json:"qty_delta"`
-    Reason      string          `json:"reason"`  // 采购/销售/调拨/盘点
-    BillNo      string          `json:"bill_no"`
-    AfterQty    decimal.Decimal `json:"after_qty"`
-}
-
-// psi.purchase.submitted / psi.purchase.approved / psi.purchase.received / psi.purchase.cancelled
-type PurchaseEventPayload struct {
-    BillID    string `json:"bill_id"`
-    BillNo    string `json:"bill_no"`
-    PartnerID string `json:"partner_id"`
-    Amount    string `json:"amount"`
-}
-
-// psi.sales.submitted / psi.sales.approved / psi.sales.shipped / psi.sales.cancelled
-type SalesEventPayload struct {
-    BillID     string `json:"bill_id"`
-    BillNo     string `json:"bill_no"`
-    CustomerID string `json:"customer_id"`
-    Amount     string `json:"amount"`
-}
-
-// psi.stocktake.completed
-type StocktakeCompletedPayload struct {
-    TaskID      string `json:"task_id"`
-    WarehouseID string `json:"warehouse_id"`
-    DiffCount   int    `json:"diff_count"`
-}
-
-// psi.alert.low_stock
-type LowStockAlertPayload struct {
-    ProductID   string          `json:"product_id"`
-    ProductName string          `json:"product_name"`
-    SKUID       string          `json:"sku_id"`
-    WarehouseID string          `json:"warehouse_id"`
-    Available   decimal.Decimal `json:"available_qty"`
-    SafeQty     decimal.Decimal `json:"safe_qty"`
-}
-
-// psi.alert.dead_stock
-type DeadStockAlertPayload struct {
-    ProductID   string `json:"product_id"`
-    SKUID       string `json:"sku_id"`
-    StagnantDays int   `json:"stagnant_days"`
-}
-
-// psi.agent.suggestion.created
-type AgentSuggestionPayload struct {
-    ProductID        string `json:"product_id"`
-    SuggestionType   string `json:"suggestion_type"` // reorder/dead_stock
-    SuggestionText   string `json:"suggestion_text"`
-    SuggestedQty     string `json:"suggested_qty,omitempty"`
+type InventoryCalculator interface {
+    // ApplyMovement 在事务内原子更新 stock_snapshot，返回更新后快照
+    ApplyMovement(ctx context.Context, m StockMovement) (StockSnapshot, error)
+    // ValidateMovement 出库前检查库存充足（不修改库存）
+    ValidateMovement(ctx context.Context, m StockMovement) error
 }
 ```
 
-### 8.2 事件消费者表
+### 4.2 各策略实现
 
-| 事件 | 消费者 | 处理逻辑 |
-|------|--------|----------|
-| `psi.stock.changed` | tally-worker | 检查 low_safe_qty → 触发 psi.alert.low_stock |
-| `psi.stock.changed` | Memorus (未来) | 写入历史记忆 |
-| `psi.purchase.received` | tally-worker | 触发 Memorus 写入 |
-| `psi.sales.shipped` | tally-worker | 触发 Memorus 写入 |
-| `psi.alert.low_stock` | tally-worker | 调 notification 推送 + 触发 Kova 补货 Agent |
-| `psi.agent.suggestion.created` | tally-worker | WebSocket 推送到在线用户 |
+```go
+// internal/app/stock/calc_wac.go
+// WeightedAvgCalculator: 移动加权平均 (WAC)
+// avg_cost = (current_value + new_qty * new_price) / (on_hand + new_qty)
+// Profile: retail (default), hybrid
+
+// internal/app/stock/calc_fifo.go
+// FIFOCalculator: 先进先出，依赖 stock_lot 批次队列
+// 出库时按 lot.created_at ASC 消费
+// Profile: cross_border (default, 因跨境有明确批次追溯需求)
+
+// internal/app/stock/calc_weight.go
+// ByWeightCalculator: 散装称重商品
+// 数量精度到 0.001 kg；零头合并（bulk_merge）逻辑
+// measurement_strategy = 'weight' 时激活
+
+// internal/app/stock/calc_batch.go
+// BatchCalculator: 批次独立追踪（FEFO: first-expired-first-out）
+// 出库时按 lot.expiry_date ASC 消费（食品/医药）
+// measurement_strategy = 'batch' 时激活
+
+// internal/app/stock/calc_bulk.go
+// BulkMergedCalculator: 散装商品跨批次合并
+// 用于五金散件（螺丝/线缆）：多批次入库合并为一个 pool
+```
+
+### 4.3 Profile 与默认 Calculator 映射
+
+| Profile | 默认 Calculator | 可切换为 |
+|---------|----------------|---------|
+| `cross_border` | `FIFOCalculator` | `WeightedAvgCalculator`（custom_overrides） |
+| `retail` | `WeightedAvgCalculator` | `BatchCalculator`（食品/医药子场景） |
+| `hybrid` | `WeightedAvgCalculator` | 任意 |
+
+Calculator 选择逻辑在 `internal/app/stock/calculator_factory.go`，根据 `Profile.InventoryMethod()` 和商品 `measurement_strategy` 两个维度决定。
+
+### 4.4 浮点精度规则
+
+**全程使用 `github.com/shopspring/decimal`**，禁止 `float64`。PostgreSQL 侧 `NUMERIC(18,4)` 与 Go `decimal.Decimal` 通过 GORM 自定义类型映射。汇率字段使用 `NUMERIC(20,8)` / `decimal.Decimal`（8 位小数）。
 
 ---
 
-## 9. Multi-Tenant Architecture
+## 5. 多单位换算引擎
 
-### 9.1 租户接入流程
+### 5.1 数据模型
+
+用例：商品"牛腱子"，base_unit=斤(jin)，sale_units=[包(1包=5斤), 箱(1箱=20包=100斤)]
 
 ```
-用户访问 tally.lurus.cn
-→ Zitadel OIDC 认证（auth.lurus.cn）
-→ JWT claim 携带 tenant_id（organization claim）
-→ tally-backend middleware/auth.go 解析 JWT
-→ middleware/tenant_rls.go 执行 SET LOCAL app.tenant_id = '<uuid>'
-→ 所有 GORM 查询自动经 RLS 过滤（无需手动 WHERE tenant_id = ?）
+product_unit 表:
+  (product_id=X, unit_id=jin, is_base=true,  conversion_factor=1)
+  (product_id=X, unit_id=bao, is_base=false, conversion_factor=5)
+  (product_id=X, unit_id=xiang, is_base=false, conversion_factor=100)
 ```
 
-**平台账户验证**（启动时 + 登录时）:
+### 5.2 换算规则
+
+所有库存数量在数据库以 base_unit 存储。
+
 ```go
-// 调 2l-svc-platform /internal/v1/tenants/:id 验证租户状态和订阅级别
-// 失败时拒绝登录，返回 "账户已过期，请续费"
+// internal/pkg/unitconv/converter.go
+
+// ToBase: 将用户输入数量（按 unitID）换算为 base_unit 数量
+func ToBase(qty decimal.Decimal, unitID uuid.UUID, units []ProductUnit) (decimal.Decimal, error)
+
+// FromBase: 将 base_unit 数量换算为显示单位
+func FromBase(baseQty decimal.Decimal, unitID uuid.UUID, units []ProductUnit) (decimal.Decimal, error)
+
+// 换算精度：decimal.NewFromString，round half-up 到 4 位小数
+// 换算失败（单位未注册）→ 返回 error，不 panic
 ```
 
-### 9.2 RLS 实现细节
+### 5.3 录入与显示流程
 
-每张业务表都执行:
+1. 前端：用户选择操作单位（包/箱/斤），输入数量
+2. BFF 代理传递 `{unit_id, qty}` 到 Go backend
+3. Go handler 调用 `unitconv.ToBase()` 换算为 base_unit 数量
+4. 所有业务逻辑和库存计算使用 base_unit 数量
+5. 响应返回时：后端带回 `{on_hand_qty, unit: "jin"}`，前端按用户偏好显示单位再换算
+
+---
+
+## 6. 离线优先架构（Edge）
+
+### 6.1 边缘 Binary
+
+边缘端用同一个 Go 代码库编译，通过 build tag 切换行为：
+
+```bash
+# 云端编译
+CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o tally-cloud ./cmd/server
+
+# 边缘编译（启用 edge build tag）
+CGO_ENABLED=0 GOOS=linux go build -tags edge -ldflags="-s -w" -trimpath -o tally-edge ./cmd/server
+# 或 Windows/macOS 桌面
+GOOS=windows go build -tags edge -o tally-edge.exe ./cmd/server
+```
+
+`edge` build tag 的差异：
+
+| 能力 | 云端 binary | 边缘 binary |
+|------|------------|-------------|
+| 数据库驱动 | pgx (PostgreSQL) | `modernc.org/sqlite`（纯 Go，无 CGO） |
+| 多租户 RLS | 完整 RLS | 无（单 tenant，固定 tenant_id） |
+| NATS 发布 | 立即发布 | 本地 SQLite queue，断网时累积 |
+| NATS 订阅 | tally-worker | edge-sync-worker（仅接收下行配置变更） |
+| AI 功能 | 完整（Hub/Kova/Memorus） | 降级：只提供本地报表，无 AI |
+| 称重秤 | 不支持 | 支持（`go.bug.st/serial` 串口读取） |
+| ESC/POS 打印 | 不支持 | 支持（USB/网络小票打印） |
+
+### 6.2 边缘 Schema
+
+边缘 SQLite schema 是云端 PostgreSQL schema 的子集：
+
+- 移除：所有 RLS policy、pgvector 扩展、exchange_rate（边缘不做汇率拉取）、org_department（简化组织）
+- 保留：product、product_unit、unit_def、partner、warehouse、stock_snapshot、stock_lot、bill_head、bill_item、payment_head、audit_log、system_config、tenant_profile（只有 1 行）、edge_node（只有 1 行，自己的注册信息）
+- 离线字段（origin/sync_status/edge_node_id/edge_timestamp）完整保留
+- 边缘 schema 通过单独的 migration 集管理（`migrations/edge/` 目录，不与云端混用）
+
+### 6.3 同步协议
+
+#### 上行（边缘→云）
+
+```
+边缘操作（审核单据/收付款）
+  → 写本地 SQLite（sync_status='pending'）
+  → 发布到本地 SQLite 临时队列（edge_sync_queue 表）
+
+edge-sync-worker（每 30s polling）:
+  → 读取 pending 记录
+  → 若网络可达：POST https://tally.lurus.cn/internal/v1/edge/sync
+    body: { edge_node_id, records: [{resource_type, resource_id, payload, edge_timestamp}] }
+    auth: edge API Key（Bearer）
+  → 云端 tally-backend edge-sync handler:
+    1. 检查 cloud 侧是否存在该 resource_id（edge 生成的 UUID）
+    2. 若不存在 → 直接写入（origin='edge', sync_status='synced'）
+    3. 若已存在且 cloud.updated_at > edge_timestamp → 写入 sync_conflict 表
+    4. 若已存在且 cloud.updated_at <= edge_timestamp → 覆盖（last-write-wins）
+    5. 金额/库存相关（bill_head.total_amount / stock_snapshot）→ 强制走 sync_conflict（不自动覆盖）
+  → 云端返回 {synced: [...], conflicts: [...]}
+  → 边缘更新本地记录 sync_status='synced'|'conflict'
+
+断网时：记录停留在 pending；网络恢复后 edge-sync-worker 重试（指数退避，最长 5min）
+```
+
+#### 下行（云→边缘）
+
+```
+触发条件：云端管理员修改 tenant_profile、system_config、product（主档变更）
+
+云端：写 edge_sync_downstream 表（edge_node_id, resource_type, payload, version）
+边缘 edge-sync-worker（每 60s）：
+  GET https://tally.lurus.cn/internal/v1/edge/downstream?since=<last_synced_at>&edge_node_id=X
+  Response-Header: ETag（版本号，边缘存储，下次带 If-None-Match）
+  → 若 304 Not Modified → 跳过
+  → 若 200 → 解析 payload 写入本地 SQLite（强制覆盖，下行无冲突）
+```
+
+#### PWA 最后防线
+
+边缘 backend 不可达时（边缘机器故障），PWA service worker + IndexedDB 支持：
+- 查看（离线读）：本地 IndexedDB 缓存最近 7 天数据
+- 写操作：暂存到 IndexedDB sync queue，edge backend 恢复后上传
+- 不支持：库存计算、单据审核（需要 edge backend 参与）
+
+### 6.4 冲突解决规则
+
+| 场景 | 处理方式 |
+|------|---------|
+| 商品主档/配置变更 | last-write-wins by edge_timestamp |
+| 单据（bill_head/item）金额字段 | 强制 sync_conflict → 人工裁决 |
+| 库存数量（stock_snapshot） | 强制 sync_conflict → 人工裁决 |
+| 收付款记录 | 强制 sync_conflict → 人工裁决 |
+| 审计日志 | 追加，不冲突 |
+
+人工裁决界面：云端 `/app/(dashboard)/sync-conflicts/page.tsx`，显示 edge/cloud 数据对比，支持"采用边缘版本"/"采用云端版本"/"手动编辑"三选一。
+
+---
+
+## 7. 跨境专属服务集成（cross_border profile）
+
+### 7.1 多币种引擎
+
+汇率定时任务（`tally-worker/exchange_rate_job.go`）：
+
+```go
+// 每日 09:00 UTC 拉取汇率
+// 优先：央行（PBoC）API；降级：ExchangeRate-API（https://api.exchangerate-api.com）
+// 失败：保留最近一次有效汇率，告警（Grafana alert）
+// 写入 exchange_rate 表，source='pboc'|'exchangerate_api'
+```
+
+所有金额字段存 CNY（`total_amount`），`amount_local` 存原币金额，`exchange_rate` 存汇率记录历史。
+
+### 7.2 HS Code 管理
+
+HS Code 存储在 `product.attributes JSONB`（`{"hs_code": "6104.43", "origin_country": "CN"}`）。
+
+前端：商品表单在 cross_border profile 下显示 HS Code 搜索框（combobox），内置 6 位 HS Code 树（约 5000 条，编译时嵌入 `//go:embed`）。查询走 `attributes @> '{"hs_code":...}'`，命中 GIN 索引。
+
+### 7.3 报关单生成
+
+```go
+// internal/adapter/handler/v1/customs.go (cross_border profile only)
+// POST /api/v1/customs-declaration/generate
+// 输入: bill_id（出库销售单）
+// 输出: PDF/XLSX（Go html/template → wkhtmltopdf 或 excelize）
+// 字段: HS Code、品名（中英）、原产地、数量、单价(USD)、总价、重量
+```
+
+### 7.4 外汇 API 对账
+
+```go
+// internal/app/finance/fx_reconcile.go
+// 月末对账：将所有外币单据按当日汇率折算 CNY，与 total_amount 对比差异
+// 差异写入 finance_category 的"汇兑损益"科目下的 payment_item
+```
+
+---
+
+## 8. 零售专属服务集成（retail profile）
+
+### 8.1 POS 收银
+
+```go
+// internal/adapter/pos/pos_handler.go (retail profile only, build tag: pos)
+// 快速收银流程：商品条码扫描 → 库存扣减 → 收款（现金/微信/支付宝）→ 出小票
+// 调 sales use case，sale type='pos_sale'，状态直接跳到"已完成"（跳过审核流程）
+// POS 模式下 bill_head.sub_type = 'pos_sale'
+```
+
+### 8.2 ESC/POS 小票打印
+
+```go
+// internal/adapter/printer/escpos.go
+// 使用 github.com/mike42/escpos （或自实现 ESC/POS 命令集）
+// 支持：USB（/dev/usb/lp0）/ 网络打印（TCP:9100）/ 串口
+// 边缘 binary 编译时包含；云端 binary 不包含（build tag: pos）
+```
+
+### 8.3 称重秤集成（边缘 binary 专属）
+
+```go
+// internal/adapter/scale/serial_scale.go (edge + build tag: scale)
+// 依赖: go.bug.st/serial
+// 协议: 大多数电子秤输出 ASCII 格式如 "ST,+002.350kg\r\n"
+// 支持波特率: 1200/2400/4800/9600 bps（配置化）
+// 称重结果推到前端 WebSocket /ws，前端 UI 自动填入数量字段
+```
+
+### 8.4 移动支付面对面收款
+
+```go
+// internal/adapter/payment/wechat_qr.go, alipay_qr.go
+// SaaS 端代理调用（云端 binary），边缘端通过云端转发
+// 微信：统一下单 API (native pay)，生成 QR 码
+// 支付宝：预授权码收款或面对面 QR
+// 回调写 payment_head，sync_status='synced'（云端发起，无离线问题）
+```
+
+---
+
+## 9. 多租户 RLS 设计
+
+### 9.1 不变约束
+
+Profile 不影响 RLS 隔离粒度（仍按 `tenant_id` 隔离）。所有新增表均启用 RLS（见 migration 000021）。边缘端无 RLS（单 tenant，固定）。边缘上传时，云端 edge-sync handler 使用 `SET LOCAL app.tenant_id` 写入，与正常请求路径一致。
+
+### 9.2 RLS 模板（标准）
+
 ```sql
 ALTER TABLE tally.<table> ENABLE ROW LEVEL SECURITY;
 CREATE POLICY <table>_rls ON tally.<table>
     USING (tenant_id = current_setting('app.tenant_id')::UUID);
 ```
 
-Go 中间件在每次请求处理前:
+### 9.3 RLS 危险点
+
+`current_setting('app.tenant_id')` 未设置时，PostgreSQL 抛出异常，GORM 返回错误（不会静默返回全表）。确保每次请求都经过 `TenantRLS` middleware。edge-sync handler 是唯一需要手动管理 `SET LOCAL` 的非标准路径。
+
+---
+
+## 10. API 契约
+
+### 10.1 Profile 感知策略
+
+同一端点按 Profile 返回字段差异（不分叉 URL）。`/api/v1/products/:id` 在 cross_border profile 下额外返回 `attributes.hs_code`、`attributes.origin_country`；在 retail profile 下额外返回 `attributes.tare_weight_kg`。前端通过 `UIFeatureSet` 决定渲染哪些字段，不依赖字段是否存在（避免 undefined 错误）。
+
+### 10.2 核心 REST 端点（在 v1 基础上的增量）
+
+| 资源 | 端点 | 方法 | 新增说明 |
+|------|------|------|---------|
+| Profile | `/api/v1/me/profile` | GET | 返回当前 tenant profile + UIFeatureSet |
+| | `/api/v1/admin/profile` | PUT | 管理员设置 profile_type + custom_overrides |
+| 单位定义 | `/api/v1/unit-defs` | GET/POST | 租户级单位定义 CRUD |
+| | `/api/v1/products/:id/units` | GET/POST/DELETE | 商品多单位换算配置 |
+| 汇率 | `/api/v1/exchange-rates` | GET | 当日汇率（cross_border only） |
+| 边缘节点 | `/api/v1/edge-nodes` | GET/POST | 注册/列出边缘节点（管理员） |
+| | `/api/v1/edge-nodes/:id` | GET/PATCH/DELETE | 边缘节点管理 |
+| | `/api/v1/edge-nodes/:id/revoke` | POST | 吊销 edge API Key |
+| 同步冲突 | `/api/v1/sync-conflicts` | GET | 列出未解决冲突 |
+| | `/api/v1/sync-conflicts/:id/resolve` | POST | 裁决冲突 |
+| 报关单 | `/api/v1/customs-declaration/generate` | POST | 生成报关文件（cross_border only） |
+| 称重 | `/ws/scale` | WS | 称重秤实时读数（edge only，通过 edge WS） |
+
+**边缘专用 Internal 端点**:
+
+| 端点 | 方法 | 用途 |
+|------|------|------|
+| `/internal/v1/edge/sync` | POST | 边缘上传同步记录 |
+| `/internal/v1/edge/downstream` | GET | 边缘拉取下行配置变更 |
+| `/internal/v1/edge/heartbeat` | POST | 边缘心跳（更新 last_seen_at） |
+
+认证：`Authorization: Bearer <edge_api_key>`（明文 API Key，与 INTERNAL_API_KEY 不同，存在 edge_node.api_key_hash 验证）。
+
+### 10.3 v1 端点全保留
+
+v1 所有端点（§6 of v1 architecture）全保留，无破坏性变更。新字段通过 JSONB `attributes` 扩展，不改现有 Response 结构。
+
+---
+
+## 11. NATS Event 扩展
+
+**Stream**: `PSI_EVENTS`（保留 v1 所有 subjects）
+
+**新增 subjects（边缘同步）**:
+
+| Subject | 方向 | Payload | 消费者 |
+|---------|------|---------|--------|
+| `tally.edge.sync.bill` | edge→cloud | `EdgeSyncRecord` | cloud tally-worker edge-sync handler |
+| `tally.edge.sync.payment` | edge→cloud | `EdgeSyncRecord` | cloud tally-worker edge-sync handler |
+| `tally.edge.downstream.config` | cloud→edge | `DownstreamConfigPayload` | edge-sync-worker |
+| `tally.edge.heartbeat` | edge→cloud | `HeartbeatPayload` | cloud（更新 edge_node.last_seen_at） |
+| `psi.exchange_rate.updated` | cloud internal | `ExchangeRatePayload` | tally-worker（通知在线用户） |
+
 ```go
-// adapter/middleware/tenant_rls.go
-func TenantRLS(db *gorm.DB) gin.HandlerFunc {
-    return func(c *gin.Context) {
-        tenantID := c.GetString("tenant_id") // 从 JWT 解析
-        if tenantID == "" {
-            c.AbortWithStatus(401)
-            return
-        }
-        // 在本次事务中设置 tenant_id
-        db.Exec("SET LOCAL app.tenant_id = ?", tenantID)
-        c.Next()
-    }
+// internal/pkg/types/events.go (新增)
+
+type EdgeSyncRecord struct {
+    EdgeNodeID     string    `json:"edge_node_id"`
+    ResourceType   string    `json:"resource_type"`
+    ResourceID     string    `json:"resource_id"`
+    Payload        any       `json:"payload"`
+    EdgeTimestamp  time.Time `json:"edge_timestamp"`
+    SchemaVersion  int       `json:"schema_version"`
+}
+
+type HeartbeatPayload struct {
+    EdgeNodeID    string    `json:"edge_node_id"`
+    TenantID      string    `json:"tenant_id"`
+    SchemaVersion int       `json:"schema_version"`
+    Timestamp     time.Time `json:"timestamp"`
 }
 ```
 
-### 9.3 资源配额（基于 platform 订阅）
+---
 
-| 订阅级别 | SKU 上限 | 单据/日上限 | AI 查询/月上限 |
-|----------|----------|-------------|----------------|
-| Free | 100 | 20 | 50 |
-| Pro | 10,000 | 1,000 | 5,000 |
-| Enterprise | 不限 | 不限 | 按量计费 |
+## 12. Backend 目录结构（增量更新）
 
-配额检查在 `adapter/platform/billing.go` 中实现，每次创建单据前调用。
+在 v1 目录基础上新增/修改：
+
+```
+internal/
+├── app/
+│   ├── profile/
+│   │   ├── resolver.go              # ProfileResolver + cache
+│   │   ├── cross_border.go          # CrossBorderProfile{}
+│   │   ├── retail.go                # RetailProfile{}
+│   │   └── hybrid.go                # HybridProfile{}
+│   ├── stock/
+│   │   ├── calculator.go            # InventoryCalculator interface + StockMovement
+│   │   ├── calc_wac.go              # WeightedAvgCalculator
+│   │   ├── calc_fifo.go             # FIFOCalculator
+│   │   ├── calc_weight.go           # ByWeightCalculator
+│   │   ├── calc_batch.go            # BatchCalculator
+│   │   ├── calc_bulk.go             # BulkMergedCalculator
+│   │   └── calculator_factory.go    # 按 Profile + measurement_strategy 选策略
+│   ├── edge/
+│   │   ├── sync_handler.go          # 云端接收边缘上传的同步记录
+│   │   ├── conflict_resolver.go     # 冲突检测 + 写 sync_conflict
+│   │   └── downstream.go            # 生成边缘下行配置快照
+│   └── finance/
+│       ├── fx_rate_job.go           # 汇率定时拉取
+│       └── fx_reconcile.go          # 月末汇兑损益对账
+├── adapter/
+│   ├── middleware/
+│   │   └── profile.go               # ProfileMiddleware（新增）
+│   ├── handler/v1/
+│   │   ├── profile.go               # /api/v1/me/profile, /api/v1/admin/profile
+│   │   ├── unit_def.go              # /api/v1/unit-defs, /api/v1/products/:id/units
+│   │   ├── edge_node.go             # /api/v1/edge-nodes
+│   │   ├── sync_conflict.go         # /api/v1/sync-conflicts
+│   │   ├── exchange_rate.go         # /api/v1/exchange-rates
+│   │   └── customs.go               # /api/v1/customs-declaration/generate
+│   ├── handler/internal/
+│   │   └── edge_sync.go             # /internal/v1/edge/sync|downstream|heartbeat
+│   ├── pos/
+│   │   └── pos_handler.go           # POS 收银（retail profile，build tag: pos）
+│   ├── printer/
+│   │   └── escpos.go                # ESC/POS 打印（build tag: pos）
+│   ├── scale/
+│   │   └── serial_scale.go          # 称重秤串口（build tag: scale，edge only）
+│   └── payment/
+│       ├── wechat_qr.go             # 微信面对面收款
+│       └── alipay_qr.go             # 支付宝面对面收款
+├── domain/entity/
+│   ├── tenant_profile.go            # TenantProfile entity
+│   ├── unit_def.go                  # UnitDef entity
+│   ├── product_unit.go              # ProductUnit entity
+│   ├── edge_node.go                 # EdgeNode entity
+│   └── sync_conflict.go             # SyncConflict entity
+└── pkg/
+    └── unitconv/
+        └── converter.go             # 单位换算工具函数
+```
+
+**cmd/ 入口分化**:
+
+```
+cmd/
+├── server/
+│   └── main.go          # 云端 binary（默认）
+└── edge/
+    └── main.go          # 边缘 binary（build tag: edge）
+    -- 共享 95% 代码，差异通过 build tag 隔离
+```
 
 ---
 
-## 10. Security
+## 13. 前端 Profile 感知
 
-### 10.1 认证流程
+### 13.1 Store
+
+```typescript
+// web/stores/profile-store.ts
+interface ProfileStore {
+  profileType: 'cross_border' | 'retail' | 'hybrid' | null
+  features: UIFeatureSet
+  isEnabled: (feature: string) => boolean
+  // feature 枚举: 'multi_currency'|'hs_code'|'pos'|'scale'|'customs_doc'
+  //               |'exchange_rate'|'serial_scale_ws'|'sync_conflicts'
+}
+```
+
+### 13.2 条件渲染规则
+
+- `useProfile().isEnabled('hs_code')` → 商品表单显示 HS Code 字段
+- `useProfile().isEnabled('pos')` → 侧边栏显示"收银台"菜单项
+- `useProfile().isEnabled('multi_currency')` → 单据表单显示货币选择器
+- `useProfile().isEnabled('sync_conflicts')` → 顶栏显示冲突通知 Badge
+- `useProfile().profileType === 'cross_border'` → 合作伙伴表单显示"默认收款货币"字段
+
+### 13.3 新增页面
 
 ```
-浏览器 → Zitadel OIDC (auth.lurus.cn) → ID Token (JWT)
-→ Next.js BFF (/api/auth) → session cookie
-→ BFF 代理请求: Authorization: Bearer <JWT> → tally-backend
-→ middleware/auth.go: JWKS 验证签名 + 提取 tenant_id/user_id/roles
+web/app/(dashboard)/
+├── sync-conflicts/
+│   ├── page.tsx              # 同步冲突列表（edge 租户可见）
+│   └── [id]/
+│       └── page.tsx          # 冲突裁决详情（edge/cloud 数据对比）
+├── edge-nodes/
+│   └── page.tsx              # 边缘节点管理（管理员）
+└── pos/
+    └── page.tsx              # 收银台（retail profile）
 ```
-
-### 10.2 权限模型（RBAC）
-
-| 角色 | 商品管理 | 采购 | 销售 | 库存调整 | 财务 | 报表 | 系统设置 |
-|------|----------|------|------|----------|------|------|----------|
-| 超级管理员 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
-| 财务 | 只读 | 只读 | 只读 | ✗ | ✓ | ✓ | ✗ |
-| 仓库管理员 | ✓ | 审核/入库 | 审核/出库 | ✓ | ✗ | 库存 | ✗ |
-| 业务员 | 只读 | 创建/提交 | 创建/提交 | ✗ | ✗ | 只读 | ✗ |
-| 只读查看者 | 只读 | 只读 | 只读 | ✗ | 只读 | ✓ | ✗ |
-
-角色存储在 Zitadel 的 Organization Role，通过 JWT claim 传入，tally 不维护独立用户系统。
-
-### 10.3 审计日志
-
-所有写操作（CREATE/UPDATE/DELETE/APPROVE/CANCEL）由 `middleware/audit.go` 自动记录到 `audit_log`，包含:
-- `changes`: before/after diff（JSONB）
-- `client_ip`: 客户端 IP（透传 X-Forwarded-For）
-- `user_id`: 操作人
-- `action`: create/update/delete/approve/cancel/reverse
-
-### 10.4 防御性编码要点（引用全局 CLAUDE.md §3）
-
-- 所有外部输入在 handler 层 Zod/Gin-binding 校验，内部信任已校验数据
-- 金额字段全部使用 `NUMERIC(18,4)`，禁止 float
-- SQL 注入防护: 全程 GORM parameterized query，禁止 `Raw` 拼接字符串
-- 启动即校验所有必需环境变量（`lifecycle/app.go`），缺失则 fast-fail
 
 ---
 
-## 11. Observability
+## 14. 部署架构
 
-### 11.1 业务指标（Prometheus）
+### 14.1 云端（不变 + 新增边缘 API）
+
+- SaaS：R6 STAGE（43.226.38.244） / R1 PROD（100.98.57.55）
+- K8s namespace: `lurus-tally`
+- 镜像：`ghcr.io/hanmahong5-arch/lurus-tally-backend:main-<sha7>`（云端 backend）
+- 新增镜像：`ghcr.io/hanmahong5-arch/lurus-tally-edge:main-<sha7>`（边缘 binary，Linux/Windows/macOS 多架构）
+
+### 14.2 边缘节点部署
+
+```
+边缘节点安装流程:
+1. 管理员在云端 /app/edge-nodes 注册节点，获得 edge_api_key
+2. 下载 tally-edge binary（或 Tauri 安装包）
+3. 配置环境变量:
+   CLOUD_URL=https://tally.lurus.cn
+   EDGE_API_KEY=<key>
+   EDGE_NODE_ID=<uuid>
+   SQLITE_PATH=/data/tally-edge.db
+   NATS_URL=nats://nats.messaging.svc:4222  # 若网络可达
+4. 运行: ./tally-edge（前台）或 systemctl enable tally-edge（Linux 服务）
+5. 边缘 Web: http://localhost:18300（内置 Next.js standalone）
+```
+
+边缘 binary 不在 K8s 管理，由用户自行部署到本地机器（Linux PC、Windows 工作站、树莓派）。
+
+自动更新：边缘 binary 定时（每日）检查 `https://tally.lurus.cn/internal/v1/edge/latest-version`，若版本不匹配，下载新 binary 并热重启（SIGTERM + exec 替换）。
+
+### 14.3 新增 K8s 资源
+
+```yaml
+# deploy/k8s/base/backend-deployment.yaml 新增环境变量
+- name: EXCHANGE_RATE_API_KEY       # ExchangeRate-API key
+  valueFrom:
+    secretKeyRef:
+      name: tally-secrets
+      key: EXCHANGE_RATE_API_KEY
+- name: EDGE_SYNC_ENABLED
+  value: "true"
+- name: EDGE_API_KEY_SECRET         # 用于验证边缘 Bearer token 的 HMAC secret
+  valueFrom:
+    secretKeyRef:
+      name: tally-secrets
+      key: EDGE_API_KEY_SECRET
+```
+
+---
+
+## 15. Migration 增量计划（000013–000021）
+
+现状 head=12（27 张表 + 1 MV + RLS）。
+
+| Migration | 内容 | 影响 | Down SQL 要点 |
+|-----------|------|------|--------------|
+| `000013_add_tenant_profile` | `tenant_profile` 表 + RLS | 新表 | DROP TABLE |
+| `000014_add_unit_def_product_unit` | `unit_def` + `product_unit` + RLS | 新表 | DROP TABLE（先 product_unit，再 unit_def） |
+| `000015_upgrade_product` | `product` 加 3 列 + GIN 索引 | ALTER TABLE | DROP INDEX; ALTER TABLE DROP COLUMN（3 次） |
+| `000016_add_offline_cols` | `bill_head/bill_item/payment_head` 各加 4 列（origin/sync_status/edge_node_id/edge_timestamp） + 索引 | ALTER TABLE × 3 | ALTER TABLE DROP COLUMN × 12；DROP INDEX × 3 |
+| `000017_add_edge_node` | `edge_node` 表 + RLS + `bill_head` FK | 新表 + ALTER | DROP CONSTRAINT；DROP TABLE |
+| `000018_add_sync_conflict` | `sync_conflict` 表 + RLS | 新表 | DROP TABLE |
+| `000019_add_currency` | `currency` 表 + `exchange_rate` 表 + `partner.default_currency` + `bill_head` 3 列 | 新表 + ALTER | DROP TABLE × 2；ALTER TABLE DROP COLUMN |
+| `000020_add_gin_indexes` | 3 个 GIN 索引（product.attributes，tenant_profile.custom_overrides，edge_node.settings） | 纯索引 | DROP INDEX × 3 |
+| `000021_complete_rls` | 补全 product_unit、unit_def 等漏出 RLS policy | 纯 RLS | DROP POLICY |
+
+每个 migration 下行 SQL (`.down.sql`) 必须能完整还原，不允许 "no-op down"。
+
+---
+
+## 16. NFR 实现路径
+
+| NFR | 目标 | 实现机制 |
+|-----|------|---------|
+| 离线可用率 | 99%（边缘功能） | 边缘 SQLite WAL + service worker IndexedDB 双重冗余 |
+| 同步延迟 | 60s | edge-sync-worker 每 30s polling；NATS JetStream 推送另一路 |
+| 首次开单 | < 5 分钟（五金店） | Profile='retail' 默认值大量预填；商品快速添加（扫码直接创建）；向导引导 |
+| API P95 | < 200ms（常规）| 同 v1；profile 解析有内存缓存（TTL 5min），不每次查 DB |
+| 金额精度 | 无精度丢失 | 全程 decimal.Decimal + NUMERIC(18,4)；汇率 NUMERIC(20,8) |
+| 冲突裁决 | 财务类 100% 人工 | sync_conflict 表强制写入；界面裁决 |
+
+---
+
+## 17. ADR（v2 新增）
+
+### ADR-009: Profile 注入 vs URL 分叉
+
+**背景**: 双 Persona 带来 UI/逻辑差异，需要决定如何在 API 层表达。
+**决策**: 同一 endpoint，Profile 感知返回字段 + 条件校验。不做 `/cross-border/` vs `/retail/` URL 分叉。
+**理由**: endpoint 分叉会导致客户端路由逻辑翻倍，前端维护成本指数增长；Profile 驻留在 ctx 中，应用层可无缝使用；前端 `useProfile()` hook 统一管理渲染差异。
+**权衡**: 同一 endpoint Response schema 含两个 Profile 的字段超集；前端需要 null-safe 处理。
+
+### ADR-010: 边缘 SQLite 驱动选 modernc.org/sqlite（纯 Go）而非 mattn/go-sqlite3（CGO）
+
+**背景**: 边缘 binary 需要交叉编译（Windows、Linux amd64/arm64），CGO 阻碍交叉编译。
+**决策**: `modernc.org/sqlite`（CGO_ENABLED=0，纯 Go 实现）。
+**理由**: 交叉编译零成本；与云端 PostgreSQL 接口对齐（通过 database/sql）；mattn/go-sqlite3 需要目标平台 GCC 工具链，CI 复杂度高。
+**风险**: modernc.org/sqlite 性能略低于 mattn；边缘场景单用户访问，吞吐不是瓶颈。
+
+### ADR-011: 边缘同步协议选 NATS JetStream + HTTP Polling 双轨
+
+**背景**: 边缘网络不稳定（门店网络），需要可靠同步。
+**决策**: 上行走 NATS JetStream（持久队列），断网时降级为本地 SQLite queue + HTTP Polling 重试；下行走 HTTP Polling（不用 NATS 推送，减少边缘长连接依赖）。
+**理由**: NATS JetStream 提供 at-least-once 语义；边缘断网时 NATS 不可达，SQLite queue 兜底；下行配置变更频率低（每日一次量级），Polling 足够。
+
+### ADR-012: 冲突解决策略选人工裁决（财务相关）+ last-write-wins（非财务）
+
+**背景**: 离线冲突不可避免（边缘和云端同时修改同一单据）。
+**决策**: 金额/库存字段强制 sync_conflict 表人工裁决；商品主档/配置走 last-write-wins by edge_timestamp。
+**理由**: 财务数据错误代价极高（账目不平）；商品主档错误代价低（可重改）；last-write-wins by edge_timestamp 足够简单，五金店老板能理解。
+
+### ADR-013: 库存计算 Strategy Pattern
+
+**背景**: v1 只有 WAC；v2 需要 FIFO/称重/批次，且不同 Profile 需要不同默认。
+**决策**: Strategy Pattern（interface + 多实现），Profile 决定默认，measurement_strategy 做二次选择。
+**理由**: 不同算法行为差异大，if/else 嵌套会失控；Strategy Pattern 使各算法独立测试；factory 函数集中路由逻辑，handler 层无感知。
+
+---
+
+## 18. 安全
+
+v1 §10 全保留（RBAC、审计日志、RLS、JWT 验证）。
+
+**新增**:
+- 边缘 API Key：128 位随机串，SHA-256 哈希存库，明文只在注册时返回一次（类 GitHub Personal Token 模式）
+- 边缘通信必须 HTTPS（tally.lurus.cn 有通配符 TLS）
+- 边缘 API Key 吊销端点：`POST /api/v1/edge-nodes/:id/revoke`，立即失效（不依赖 token 过期）
+
+---
+
+## 19. 性能
+
+v1 §12 全保留（API P95 < 200ms、LCP < 1.5s 等）。
+
+**新增影响点**:
+- GIN 索引（product.attributes）：索引写放大约 1.3x；查询 `attributes @> '{"hs_code":"..."}'` 扫描量大幅降低
+- Profile 缓存（`sync.Map` TTL 5min）：每次请求节省 1 次 DB 往返（~5ms）
+- 边缘同步 handler（`/internal/v1/edge/sync`）：批量写（一次最多 100 条记录），用 DB 事务包裹
+
+---
+
+## 20. 可观测性（v1 基础上补充）
 
 ```go
-// pkg/metrics/metrics.go
+// pkg/metrics/metrics.go 新增
 var (
-    BillCreatedTotal    = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "tally_bill_created_total",
-        Help: "Number of bills created",
-    }, []string{"tenant_id", "sub_type"})
+    EdgeSyncTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+        Name: "tally_edge_sync_total",
+    }, []string{"tenant_id", "edge_node_id", "result"})  // result: synced|conflict|error
 
-    AIQueryTotal = promauto.NewCounterVec(prometheus.CounterOpts{
-        Name: "tally_ai_query_total",
-        Help: "Number of AI chat queries",
-    }, []string{"tenant_id", "model"})
+    SyncConflictOpenGauge = promauto.NewGaugeVec(prometheus.GaugeOpts{
+        Name: "tally_sync_conflict_open",
+    }, []string{"tenant_id"})
 
-    ActiveTenantsGauge = promauto.NewGauge(prometheus.GaugeOpts{
-        Name: "tally_active_tenants",
-        Help: "Number of active tenants",
-    })
+    ExchangeRateFetchTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+        Name: "tally_exchange_rate_fetch_total",
+    }, []string{"source", "result"})  // source: pboc|exchangerate_api; result: ok|error
 
-    StockAlertTotal = promauto.NewCounter(prometheus.CounterOpts{
-        Name: "tally_stock_alert_total",
-        Help: "Number of low-stock alerts triggered",
-    })
+    ProfileType = promauto.NewCounterVec(prometheus.CounterOpts{
+        Name: "tally_request_by_profile",
+    }, []string{"profile_type", "endpoint"})
 )
 ```
 
-### 11.2 技术指标
+---
 
-- HTTP P50/P95/P99 延迟（gin-prometheus 中间件）
-- 错误率（4xx/5xx 分类）
-- NATS 消息处理延迟
-- Hub LLM 调用延迟（从 adapter/hub 记录）
+## 21. 风险与缓解
 
-### 11.3 日志与链路
-
-- **日志**: zerolog JSON 格式 → Loki（每条关键操作含 `tenant_id` / `bill_no` / `user_id`）
-- **链路**: OpenTelemetry → Jaeger（trace_id 在 HTTP response header `X-Trace-Id` 透传）
-- **告警**: Grafana Alertmanager（低库存触发次数异常、API 错误率 > 1%）
+| 风险 | 等级 | 缓解措施 |
+|------|------|---------|
+| 双 Persona UI 复杂度导致回归 | 高 | Profile 参数化 e2e 测试（每个 profile 独立 Playwright 测试套） |
+| 离线冲突积压（用户不处理 sync_conflict）| 高 | Dashboard 红色 Badge 强提示；超 10 条冲突则阻止新的边缘单据审核 |
+| modernc.org/sqlite 与 PostgreSQL 行为差异 | 中 | 单元测试用 SQLite，集成测试必须用 PostgreSQL；DDL 差异由 build tag 隔离 |
+| 边缘 binary 自动更新失败导致版本碎片 | 中 | 强制版本检查（schema_version 不匹配则拒绝同步，提示升级） |
+| 汇率 API 不可达（财务数据依赖）| 中 | 保留最近一次有效汇率 + Grafana 告警；单据允许手动输入汇率 |
+| GIN 索引写放大（高频商品更新）| 低 | 监控 `pg_stat_user_indexes.idx_blks_hit`；可降级为 btree 索引特定字段 |
+| ESC/POS 打印机驱动兼容（Windows 设备路径差异）| 低 | 网络打印（TCP:9100）作为首选；USB 作为降级；文档化已验证型号列表 |
+| 边缘 API Key 泄露（门店人员离职）| 低 | 提供吊销端点；API Key 不存明文；吊销后旧 Key 立即失效 |
 
 ---
 
-## 12. Performance Budget
-
-引用 ux-benchmarks.md §7 前端预算，后端补充:
-
-| 指标 | 目标 | 测量方式 |
-|------|------|----------|
-| 常规 API P95 | < 200ms | Prometheus histogram |
-| 复杂报表 API P99 | < 500ms | Prometheus histogram |
-| 表格首屏（1000行）| < 1s | Lighthouse LCP |
-| JS Bundle（首屏）| < 150kb gzip | Bundle Analyzer |
-| LCP | < 1.5s | Lighthouse |
-| FID / INP | < 100ms | Web Vitals |
-| 大表格 60 FPS | 虚拟滚动（>1000行）| Chrome DevTools |
-| 单租户单据 | 1000+/日不卡 | 压测（k6）|
-| 并发租户（MVP）| 100+ | 压测（k6）|
-| AI 查询 P95 | < 3s（含 Hub 延迟）| 自定义 histogram |
-
-**虚拟滚动**: 超过 1000 行启用 `@tanstack/react-virtual`（见 ux-benchmarks.md §7）。
-
-**WAC 成本计算**: 增量更新（审核单据时只更新该商品快照），不做 jshERP 式全量重算，避免性能瓶颈（见 code-borrowing-plan.md §7.2）。
-
----
-
-## 13. Deployment Architecture
-
-### 13.1 K8s 资源清单
-
-**Namespace**: `lurus-tally`（已在 lurus.yaml 注册）
-
-```yaml
-# deploy/k8s/base/backend-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: tally-backend
-  namespace: lurus-tally
-spec:
-  replicas: 1  # MVP
-  selector:
-    matchLabels:
-      app: tally-backend
-  template:
-    spec:
-      containers:
-        - name: tally-backend
-          image: ghcr.io/hanmahong5-arch/lurus-tally:main-<sha7>
-          ports:
-            - containerPort: 18200
-          resources:
-            requests:
-              cpu: 100m
-              memory: 256Mi
-            limits:
-              cpu: 500m
-              memory: 512Mi
-          env:
-            - name: DATABASE_DSN
-              valueFrom:
-                secretKeyRef:
-                  name: tally-secrets
-                  key: DATABASE_DSN
-            # 其他 env 见 §13.3
-
-# deploy/k8s/base/web-deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: tally-web
-  namespace: lurus-tally
-spec:
-  replicas: 1  # MVP
-  template:
-    spec:
-      containers:
-        - name: tally-web
-          image: ghcr.io/hanmahong5-arch/lurus-tally:main-<sha7>  # 多阶段构建同一镜像
-          ports:
-            - containerPort: 3000
-```
-
-### 13.2 IngressRoute（Traefik）
-
-```yaml
-# deploy/k8s/base/ingress.yaml
-apiVersion: traefik.io/v1alpha1
-kind: IngressRoute
-metadata:
-  name: tally-ingress
-  namespace: lurus-tally
-spec:
-  entryPoints:
-    - websecure
-  routes:
-    - match: Host(`tally.lurus.cn`)
-      kind: Rule
-      services:
-        - name: tally-web
-          port: 3000
-    - match: Host(`tally.lurus.cn`) && PathPrefix(`/api`)
-      kind: Rule
-      services:
-        - name: tally-backend
-          port: 18200
-  tls:
-    secretName: lurus-cn-wildcard-tls
-```
-
-### 13.3 环境变量与 Secret
-
-| 变量名 | 来源 | 说明 |
-|--------|------|------|
-| `DATABASE_DSN` | Secret | PostgreSQL DSN（schema: tally） |
-| `REDIS_URL` | Secret | `redis://redis.messaging.svc:6379/5`（DB 5） |
-| `NATS_URL` | Secret | `nats://nats.messaging.svc:4222` |
-| `HUB_TOKEN` | Secret | Hub API Key |
-| `PLATFORM_INTERNAL_KEY` | Secret | 2l-svc-platform Internal API Key |
-| `KOVA_URL` | ConfigMap | Kova REST endpoint |
-| `MEMORUS_URL` | ConfigMap | `http://memorus.lurus-system.svc:8880` |
-| `ZITADEL_DOMAIN` | ConfigMap | `auth.lurus.cn` |
-| `ZITADEL_CLIENT_ID` | Secret | OIDC Client ID |
-| `INTERNAL_API_KEY` | Secret | tally 对外暴露的 Internal API Key |
-| `JWT_AUDIENCE` | ConfigMap | OIDC audience 验证 |
-
-### 13.4 HPA
-
-```yaml
-apiVersion: autoscaling/v2
-kind: HorizontalPodAutoscaler
-metadata:
-  name: tally-backend-hpa
-  namespace: lurus-tally
-spec:
-  scaleTargetRef:
-    apiVersion: apps/v1
-    kind: Deployment
-    name: tally-backend
-  minReplicas: 1
-  maxReplicas: 5
-  metrics:
-    - type: Resource
-      resource:
-        name: cpu
-        target:
-          type: Utilization
-          averageUtilization: 70
-```
-
-### 13.5 ArgoCD 注册
-
-在根仓库 `deploy/argocd/appset-services.yaml` 追加 `lurus-tally` 条目，`targetRevision: main`，`prune: false`，`selfHeal: true`。
-
----
-
-## 14. CI/CD
-
-### 14.1 GitHub Actions 流水线
-
-```
-push/PR to main:
-  1. lint (golangci-lint + bun run lint)
-  2. typecheck (go vet + tsc --noEmit)
-  3. test (go test -race ./... + bun test)
-  4. build
-     - 后端: CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath ./cmd/server
-     - 前端: bun run build
-  5. docker build (多阶段构建: 后端 scratch + 前端 standalone)
-  6. trivy scan (Critical/High 漏洞阻断)
-  7. push to GHCR (Public): ghcr.io/hanmahong5-arch/lurus-tally:main-<sha7>
-  8. ArgoCD auto-sync（监听镜像 tag 变更）
-```
-
-**注意**: GHCR 仓库必须设为 Public（K3s 各 worker 节点无需单独配置 imagePullSecret）。
-
----
-
-## 15. Migration & Rollout
-
-### 15.1 首次部署流程
-
-1. 运维确认 `pgvector` 扩展已在 `lurus-pg-rw` 安装（见 §18 Open Questions）
-2. 创建 PostgreSQL schema: `CREATE SCHEMA tally;`
-3. 运行 golang-migrate: `migrate -path migrations -database $DATABASE_DSN up`
-4. 注册 Zitadel 资源: 创建 `lurus-tally` OIDC 客户端（confidential）
-5. 部署 ArgoCD Application → stage (R6: 43.226.38.244)
-
-### 15.2 数据导入支持
-
-MVP 支持以下批量导入（Excel/CSV）:
-- 商品/SKU 导入（`/api/v1/products/import`）
-- 合作伙伴（供应商/客户）导入
-- 期初库存导入（`stock_initial`）
-- 格式: Excel (.xlsx) 模板下载 → 填写 → 上传解析
-
-### 15.3 毕业标准（Stage → Prod）
-
-- Stage 稳定运行 30+ 天，0 数据事故
-- 5+ 早期客户完成核心流程（采购/销售/盘点）
-- 所有接口 P95 < 200ms（通过 Prometheus 确认）
-- 无 Critical/High 安全漏洞（Trivy 通过）
-
----
-
-## 16. Cost Estimation
-
-| 项目 | 估算 | 假设 |
-|------|------|------|
-| AI 调用（Hub，Pro 租户）| ~¥50/租户/月 | 每日 50 次查询，平均 1000 token/次 |
-| K8s 资源（MVP 3 Pod）| ~¥200/月（R6 算力）| 100m CPU + 256Mi 各 × 3 |
-| DB 存储（单租户 1 年）| ~2-5 GB | 10k SKU + 1000 单据/日 × 365 |
-| MinIO 存储（商品图）| ~1 GB/租户/年 | 100 MB/月上传 |
-
----
-
-## 17. Architectural Decision Records (ADR)
-
-### ADR-001: 为什么选 Go（而非 Java/Node/Python）
-
-**背景**: Lurus 全栈已是 Go，Hub/Platform/Lucrum 同栈。
-**决策**: Go 1.25 + Gin + GORM。
-**理由**: 全栈一致降低认知负担；CGO_ENABLED=0 scratch 镜像极简；性能远超 Java/Node 单线程；不引入 JVM 冷启动。
-**替代方案放弃原因**: Java（JVM 启动慢，镜像大，Lurus 无 Java 经验）；Node（GIL-less 但单线程，不适合 CPU 密集报表计算）。
-
-### ADR-002: 为什么用 PostgreSQL RLS 多租户（而非 Schema-per-tenant）
-
-**背景**: 多租户隔离是核心安全需求，需要与 `lurus-pg-rw` 共用集群。
-**决策**: 单 schema `tally` + PostgreSQL Row-Level Security。
-**理由**: Schema-per-tenant 需要动态 DDL，不适合 golang-migrate；100+ 租户时 schema 数量爆炸；RLS 在数据库层强制隔离，应用层无法绕过；与 2l-svc-platform 同模式，经过生产验证。
-**风险**: `current_setting` 未设置时 RLS 会阻止所有查询，需要确保每次请求都正确设置。
-
-### ADR-003: 为什么选 Next.js 14 App Router（而非 Pages Router / SPA）
-
-**背景**: 需要 SSR 提升首屏性能，同时需要复杂交互组件。
-**决策**: Next.js 14 App Router，Server Component 优先，只在需要交互的叶子节点使用 Client Component。
-**理由**: LCP < 1.5s 目标要求 SSR；App Router 支持流式渲染（Suspense）；BFF 层统一处理认证和 API 代理；`output: standalone` 简化容器化。
-
-### ADR-004: 为什么选 shadcn/ui（而非 Ant Design / Semi UI）
-
-**背景**: 需要顶级 SaaS 级别体验，对标 Linear/Vercel/Stripe Dashboard。
-**决策**: shadcn/ui + Radix Primitives + Tailwind CSS + Framer Motion。
-**理由**: Ant Design 视觉风格陈旧（B端企业感），与 Linear 级体验定位不符；shadcn/ui 是 Linear/Vercel 官方使用方案；代码所有权在本项目，无版本锁定风险；Tailwind v4 OKLCH 色彩空间支持精确暗黑模式（见 ux-benchmarks.md §8）。
-
-### ADR-005: 为什么选 NATS PSI_EVENTS（而非 Kafka/RabbitMQ）
-
-**背景**: 需要库存变更事件总线，与 Lurus 现有基础设施集成。
-**决策**: NATS JetStream，stream `PSI_EVENTS`（已在 lurus.yaml 注册）。
-**理由**: Lurus 全栈已有 NATS（LLM_EVENTS/LUCRUM_EVENTS/IDENTITY_EVENTS），无需引入新中间件；JetStream 提供持久化和 at-least-once 语义，满足库存事件可靠性要求；Kafka 运维复杂度远高于 NATS，对当前团队规模不合适。
-
-### ADR-006: 为什么选 Kova Agent（而非自建 Agent 引擎）
-
-**背景**: 需要补货 Agent、滞销预警 Agent 等自主 AI 决策能力。
-**决策**: 复用 2b-svc-kova（已有），通过 kova-rest HTTP 调用。
-**理由**: Kova 已实现 WAL 持久化、Agent 状态管理、工具调用注册，从零实现需要 3+ 个月；Lurus 战略是 Platform 产品组共用 AI 基础设施；Kova 已通过 1791 测试验证（见 memory RECENT MILESTONES）。
-
-### ADR-007: 为什么 v1 只做 WAC 不做 FIFO
-
-**背景**: 库存成本核算有 WAC（移动加权平均）和 FIFO（先进先出）两种主流方法。
-**决策**: v1 只实现 WAC。
-**理由**: jshERP 仅有 WAC，已被数十万中国 SMB 接受，说明 WAC 满足 MVP 需求；FIFO 需要 `stock_lot` 完整实现 + 复杂出库批次追踪逻辑；Karpathy 原则②：简单优先，只做解决问题所需最少代码。FIFO 预留数据模型（`stock_lot` 表 + `bill_item.lot_id`），v2 可实现。
-
-### ADR-008: 为什么 v1 不做小程序/移动端
-
-**背景**: 进销存有移动端（扫码入库、移动盘点）的真实需求。
-**决策**: v1 仅 Web 端（`decision-lock.md §1` 锁定）。
-**理由**: Web 端顶级体验是差异化核心，分散精力做小程序会导致两端都平庸；Web 端可在移动浏览器使用（响应式设计覆盖平板/手机查询需求）；条码枪通过 USB HID 在 PC 浏览器直接输入，覆盖仓库扫码场景；小程序需要微信审核和 AppID 注册，拖慢 MVP 速度。
-
----
-
-## 18. Open Questions / TBD
-
-| 问题 | 影响 | 负责人 | 截止 |
-|------|------|--------|------|
-| pgvector 是否已在 lurus-pg-rw 部署 | 商品 embedding 字段能否启用 | 运维 | W1（首次部署前） |
-| Temporal worker 是否需要独立 Deployment | 高峰期 worker 是否影响 API 延迟 | Arch | v1 流量评估后 |
-| 多租户并发上限（100+）的实际压测结果 | HPA 水位配置 | Dev | Stage 稳定后 |
-| Zitadel `lurus-tally` OIDC 客户端注册 | 阻塞首次部署 | 运维 | W1 |
-| Hub Token 是否需要独立申请 | AI 功能依赖 | PM | W1 |
-| 金税四期 ISV（v2）选型（航信/百望云/诺诺）| 合规差异化 | PM | v2 规划阶段 |
-
----
-
-## 附录：关键设计规则速查
+## 22. 关键不变约束（设计规则速查）
 
 | 规则 | 说明 |
 |------|------|
 | 所有金额字段 | `NUMERIC(18,4)`，禁止 float |
-| tenant_id 传递 | JWT → middleware → `SET LOCAL app.tenant_id` → RLS 自动过滤 |
-| 库存变更 | 只通过审核/反审核单据触发，禁止直接更新 stock_snapshot |
-| 反审核规则 | status=4（完成）的单据禁止反审核，只能走红冲（新建 amendment 单） |
-| 单据编号 | 格式 `{prefix}-{YYYYMMDD}-{sequence}`，通过 bill_sequence 生成 |
-| 所有 LLM 调用 | 必须走 Hub（api.lurus.cn），禁止直连 OpenAI/DeepSeek |
-| 所有 Agent 决策 | 必须走 Kova，禁止自建 Agent 逻辑 |
-| 所有 RAG 历史 | 必须走 Memorus，禁止自建向量库 |
-| License 合规 | jshERP/GreaterWMS 衍生代码必须保留 THIRD_PARTY_LICENSES/ 目录 |
+| 汇率字段 | `NUMERIC(20,8)`，Go 侧 `decimal.Decimal` |
+| 库存数量存储单位 | 统一 base_unit，换算在应用层 |
+| 库存变更唯一路径 | 只通过 `InventoryCalculator.ApplyMovement` 触发，禁止直接 UPDATE stock_snapshot |
+| Profile 不分叉 URL | 同一 endpoint，Profile 通过 ctx 注入，不通过 URL prefix |
+| 财务冲突强制人工 | 金额/库存字段离线冲突必须走 sync_conflict 表，禁止 auto-merge |
+| 边缘 binary 无 CGO | build tag `edge` 强制 `modernc.org/sqlite`（纯 Go），CI 验证 CGO_ENABLED=0 可通过 |
+| 所有 LLM 调用 | 必须走 Hub（api.lurus.cn），边缘端 AI 功能降级为本地报表 |
+| tenant_id 传递 | JWT → middleware → `SET LOCAL app.tenant_id` → RLS 自动过滤（云端）；边缘单 tenant，固定 |
+| 反审核规则 | status=4（完成）禁止反审核，只能走红冲 |
+| 单据编号格式 | `{prefix}-{YYYYMMDD}-{sequence}` |
+| License 合规 | jshERP/GreaterWMS 衍生代码保留注释 + THIRD_PARTY_LICENSES/ |

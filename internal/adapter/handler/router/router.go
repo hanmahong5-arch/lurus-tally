@@ -5,8 +5,10 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
+	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
 )
 
@@ -18,11 +20,11 @@ func notImplemented(c *gin.Context) {
 }
 
 // New creates and configures a Gin engine with all registered routes.
-// ph and uh may be nil in test environments; routes will still be registered
+// ph, uh, ah, sh may be nil in test environments; routes will still be registered
 // and respond with 501 instead of panicking.
 // The engine mode (release/debug) is controlled by the GIN_MODE environment variable
 // or by calling gin.SetMode before invoking New.
-func New(h *health.Handler, ph *handlerproduct.Handler, uh *handlerunit.Handler) *gin.Engine {
+func New(h *health.Handler, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, sh *handlerstock.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
@@ -33,9 +35,19 @@ func New(h *health.Handler, ph *handlerproduct.Handler, uh *handlerunit.Handler)
 	}
 
 	// API v1 — business endpoints.
-	// Story 2.1 TODO: add AuthMiddleware + ProfileMiddleware before these routes.
 	api := r.Group("/api/v1")
 	{
+		// Auth + tenant profile routes (Story 2.1).
+		// Production setup: AuthMiddleware is applied at the lifecycle layer before
+		// these routes are reached. In development, handlers accept X-Tenant-ID header.
+		if ah != nil {
+			ah.RegisterRoutes(api)
+		} else {
+			api.GET("/me", notImplemented)
+			api.POST("/tenant/profile", notImplemented)
+			api.POST("/auth/logout", notImplemented)
+		}
+
 		products := api.Group("/products")
 		{
 			products.GET("", productHandler(ph, (*handlerproduct.Handler).List))

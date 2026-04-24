@@ -10,14 +10,20 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
-	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
-	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
-	appunit "github.com/hanmahong5-arch/lurus-tally/internal/app/unit"
+	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
+	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
+	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
+	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
+	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
+	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
+	apptenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
+	appunit "github.com/hanmahong5-arch/lurus-tally/internal/app/unit"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/logger"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
@@ -70,8 +76,27 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appunit.NewDeleteUseCase(unitRepo),
 	)
 
+	// Wire tenant profile use cases.
+	tenantProfileRepo := repotenant.NewProfileRepo(db)
+	authHandler := handlerAuth.New(
+		apptenant.NewChooseProfileUseCase(tenantProfileRepo),
+		apptenant.NewGetMeUseCase(tenantProfileRepo),
+	)
+
+	// Wire stock use cases. MVP: single WAC calculator (FIFO routing per-tenant
+	// is deferred to V1.5 — a calculator factory keyed on profile.InventoryMethod()
+	// will be invoked inside the use case).
+	stockRepo := repostock.New(db)
+	stockCalculator := appstock.NewCalculator(nil, stockRepo) // nil profile → WAC default
+	stockHandler := handlerstock.New(
+		appstock.NewRecordMovementUseCase(stockRepo, stockCalculator, nil, l),
+		appstock.NewGetSnapshotUseCase(stockRepo),
+		appstock.NewListSnapshotsUseCase(stockRepo),
+		appstock.NewListMovementsUseCase(stockRepo),
+	)
+
 	h := health.New(cfg.ServiceVersion)
-	r := router.New(h, productHandler, unitHandler)
+	r := router.New(h, productHandler, unitHandler, authHandler, stockHandler)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

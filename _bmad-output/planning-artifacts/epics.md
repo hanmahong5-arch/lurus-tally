@@ -1,1251 +1,927 @@
-# Epics: Lurus Tally (2b-svc-psi)
+# Epics: Lurus Tally (2b-svc-psi) — v2 双 Persona + 行业 Profile + 边缘部署
 
-源 PRD: `./prd.md` (版本: 1.0, 2026-04-23)
-源架构: `./architecture.md` (版本: 1.0, 2026-04-23)
+源 PRD: `./prd.md` (版本: 1.0, 2026-04-23, 单 persona 草稿; 新 PRD 双 persona 版并行重写中)
+源架构: `./architecture.md` (版本: 1.0, 2026-04-23; 新架构双 persona 版并行重写中)
+旧 Epics 备份: `./_archive/epics-v1-single-persona-2026-04-23.md`
 生成时间: 2026-04-23
 
 ---
 
-## 1. Executive Summary
+## 已锁定决策（Decision Lock 路 B）
 
-| 维度 | 数量 |
+| 决策 | 内容 |
 |------|------|
-| Epic 总数 | 11 |
-| Story 总数 | 68 |
-| 预估工期（单人全力）| 约 26 个 sprint 周（2 周/sprint = 13 个 sprint） |
-| 预估工期（双人并行）| 约 16 个 sprint 周（8 个 sprint） |
+| DL-1 | 单产品 + 行业 Profile（cross_border / retail / hybrid）；profile 存独立表 `tenant_profile.profile_type`（不加在 tenant 表） |
+| DL-2 | 双 Persona 并列：跨境企业 + 线下五金店 |
+| DL-3 | 商品模型升级：measurement_strategy / alt_units / attributes JSONB |
+| DL-4 | 库存策略 Strategy Pattern：FIFO / 加权平均 / 按重 / 按批次 |
+| DL-5 | V1 建 origin/sync_status 字段（离线容器），V2 再实施边缘部署 |
+| DL-6 | 高级 AI（补货 Agent / 动态定价 / NL 查询）延后到 V3 |
 
-**关键里程碑映射**:
+## Profile 说明
 
-| PRD §12 Milestone | 对应完成 Epic | 目标日期 |
-|-------------------|--------------|---------|
-| MVP α — 骨架可运行 | Epic 1 完成 | M1 W2 |
-| MVP α — 核心进销存跑通 | Epic 1-7 完成 | M3 |
-| MVP β — AI 差异化功能 + 付费 | Epic 8-10 完成 | M5 |
-| MVP β — Kova Agent 上线 | Epic 11 完成 | M6 |
-
-**MVP α 达标条件（Lighthouse 客户可开始真实业务）**:
-Epic 1-7 全部完成，即 Story 1.1-7.5 全部通过 acceptance criteria，部署到 Stage 环境。
+每个 Story 必须标注以下之一：
+- `Profile: cross_border` — 仅适用跨境企业 persona
+- `Profile: retail` — 仅适用线下零售（五金店）persona
+- `Profile: both` — 双 persona 都需要
 
 ---
 
-## 2. Epic Dependency Graph
+## Executive Summary
 
-```mermaid
-graph TD
-    E1[Epic 1: 项目骨架与CI/CD] --> E2[Epic 2: 多租户与认证]
-    E1 --> E3[Epic 3: 设计系统基石]
-    E2 --> E4[Epic 4: 商品与SKU管理]
-    E3 --> E4
-    E4 --> E5[Epic 5: 仓库与库存基础]
-    E5 --> E6[Epic 6: 采购流程闭环]
-    E5 --> E7[Epic 7: 销售流程闭环]
-    E6 --> E8[Epic 8: 调拨与盘点]
-    E7 --> E8
-    E6 --> E9[Epic 9: 财务台账与对账]
-    E7 --> E9
-    E5 --> E10[Epic 10: 报表与仪表盘]
-    E6 --> E10
-    E7 --> E10
-    E9 --> E10
-    E10 --> E11[Epic 11: AI自然语言查询与Kova Agent]
+| 维度 | V1 | V2 | V3 | 合计 |
+|------|-----|-----|-----|------|
+| Epic 数 | 11 (E1-E11) | 5 (E12-E16) | 4 (E17-E20) | 20 |
+| Story 数 | 78 | 24 | 16 | 118 |
+| 预估工时（单人）| ~460h | ~170h | ~130h | ~760h |
+| Sprint 单人（2周/sprint，70%效率=56h）| ~8 sprint | ~3 sprint | ~2.5 sprint | ~14 sprint |
+| Sprint 双人并行 | ~5 sprint | ~2 sprint | ~1.5 sprint | ~8.5 sprint |
+
+### 关键里程碑
+
+| Milestone | 完成 Epic | 目标节点 |
+|-----------|----------|---------|
+| MVP α — 核心进销存跑通 (Lighthouse 客户) | E1-E7 | M3 |
+| MVP β — 双 Profile + Onboarding + AI 助手 | E8-E11 | M6 |
+| V2 — 边缘部署 & 离线同步 GA | E12-E16 | M9 |
+| V3 — 高级 AI | E17-E20 | M12+ |
+
+---
+
+## Epic 依赖图
+
+```
+V1 基础链路（单 Profile = both）:
+E1 → E2 → E3 → E4 → E5 → E6/E7 → E9 → E10
+             ↘ (商品中台) ↗
+E8 (Profile 机制) 在 E4 之后、E9 之前完成，供 E9/E10 消费
+
+跨境专属 / 零售专属:
+E4 → E9 (跨境能力，multi-currency / HS Code / 海运)
+E4 → E10 (零售能力，POS / 称重 / 支付)
+
+Onboarding:
+E11 依赖 E8 (Profile 选择向导) + E9/E10 (专属能力可用)
+
+V2 (边缘部署):
+E1 → E12 (edge binary) → E13 (sync engine) → E14 (冲突 UI)
+E13 → E15 (PWA 壳) → E16 (节点管理)
+
+V3 (AI):
+E10 + E11 → E17/E18/E19/E20 (AI 需要完整数据)
 ```
 
-**关键路径**: E1 → E2/E3 → E4 → E5 → E6/E7 → E9 → E10 → E11
-
-**风险优先说明**: Epic 2（RLS 多租户隔离）排在 Epic 3 之前，因为多租户安全是商业 SaaS 的生死线——一旦晚期发现 RLS 与 GORM 的兼容坑，会波及所有业务表。Epic 4 前置 Epic 3（设计系统）而非仅 Epic 2，是因为商品 CRUD 的 UX 组件（Sheet、DataTable、Stepper）是后续所有业务模块复用的基础，设计债不应累积到 Sprint 末期再还。
+**风险优先排序逻辑**: Epic 2 (RLS 多租户) 在 Epic 3 之前——多租户安全是 SaaS 生死线，晚期发现 GORM+RLS 坑会波及全表。Epic 8 (Profile 机制) 提前到 E8 而非 E11——Profile 感知的 UI 渲染框架是跨境/零售双 persona 差异化的技术底座，晚建设需大规模返工。Epic 12 (edge binary) 在 V2 首个 Epic——离线部署是五金店 persona 的核心差异需求，也是技术风险最高的假设（SQLite 与 PostgreSQL 兼容、build tag 隔离），必须最早验证。
 
 ---
 
-## 3. Per-Epic Detail
+## V1 — 双 Profile MVP（Web SaaS only，不含离线）
 
 ---
 
 ## Epic 1: 项目骨架与 CI/CD 管线
 
-**目标**: 开发者 `git clone` 后一条命令启动完整本地开发环境；GitHub Actions 流水线绿色通过；镜像可推送至 GHCR；ArgoCD App 已注册到 lurus-tally namespace。
+**目标**: 开发者 `git clone` 后一条命令启动完整本地开发环境；GitHub Actions 流水线绿色；ArgoCD App 注册到 lurus-tally namespace。
 
-**价值**: PRD §12 W1-W2 工程里程碑；确保后续所有 Epic 在正确的技术底座上构建。
+**PRD Requirements**: §12 W1-W2 工程里程碑；决策锁 §5
 
-**依赖**: 无（第一个 Epic）
+**Risk**: Go module 路径与 GHCR 私有镜像认证；Next.js standalone 与 Bun 在 Docker 多阶段构建的兼容性需实测。
 
-**风险**: Go module 路径与 GHCR 私有镜像认证设置是典型踩坑点；Next.js standalone 模式与 Bun 在 Docker 多阶段构建中的兼容性需要实测验证。
+**Acceptance**:
+- `make dev` 启动后端 :18200 + 前端 :3000，健康检查通过
+- CI 全部 job 绿色（lint → typecheck → test → build → push）
+- `migrate up` 后 tally schema 27 张表 + RLS policies 均已创建
+- ArgoCD application `lurus-tally` 指向 stage overlay
 
-**预估**: 7 个 Story × 平均 6 小时 = 42 小时
+**依赖**: 无（首 Epic）
 
-**Definition of Done**:
-- `make dev` 或等效命令启动后端 :18200 + 前端 :3000，均可访问健康检查端点
-- `go test ./...` 通过（初始 0 个测试也算，但 test harness 必须可运行）
-- GitHub Actions `ci.yml` 通过 lint → typecheck → test → build → push 全流程
-- ArgoCD application `lurus-tally` 已创建，指向 `deploy/k8s/overlays/stage`
-- `migrations/` 12 个文件在 `migrate up` 后 tally schema 所有 27 张表已创建
+**预估**: 7 Stories × 平均 5h = **35h**
 
 ### Stories
 
-| # | Story Title | 类型 | 工时 | 关键文件/模块 |
-|---|------------|------|------|--------------|
-| 1.1 | Go 服务可启动并通过健康检查 | infra | 6h | `cmd/server/main.go`, `lifecycle/`, `pkg/config/` |
-| 1.2 | Next.js 前端可访问登录页占位 | infra | 4h | `web/app/layout.tsx`, `web/app/(auth)/login/page.tsx` |
-| 1.3 | 数据库迁移脚本完整执行（全 27 张表） | infra | 6h | `migrations/000001~000012_*.up.sql`, `lifecycle/migrate.go` |
-| 1.4 | GitHub Actions CI 流水线（lint/typecheck/test/build） | infra | 5h | `.github/workflows/ci.yml` |
-| 1.5 | Docker 多阶段构建与 GHCR 镜像推送 | infra | 5h | `Dockerfile`, `.github/workflows/ci.yml` (push job) |
-| 1.6 | ArgoCD ApplicationSet 注册与 K8s 基础清单 | infra | 5h | `deploy/k8s/base/`, `deploy/argocd/` |
-| 1.7 | 本地开发 Makefile + 环境变量模板 | infra | 3h | `Makefile`, `.env.example` |
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 1.1 | Go 服务可启动并通过健康检查 | both | infra | 6h | `cmd/server/main.go`, `lifecycle/`, `pkg/config/` |
+| 1.2 | Next.js 前端可访问登录页占位 | both | infra | 4h | `web/app/(auth)/login/page.tsx` |
+| 1.3 | 数据库迁移脚本完整执行（全 27 张表 + V2 预留字段） | both | infra | 6h | `migrations/` |
+| 1.4 | GitHub Actions CI 流水线（lint/typecheck/test/build） | both | infra | 5h | `.github/workflows/ci.yml` |
+| 1.5 | Docker 多阶段构建与 GHCR 镜像推送 | both | infra | 5h | `Dockerfile` |
+| 1.6 | ArgoCD ApplicationSet 注册与 K8s 基础清单 | both | infra | 5h | `deploy/k8s/base/`, `deploy/argocd/` |
+| 1.7 | 本地开发 Makefile + 环境变量模板 | both | infra | 4h | `Makefile`, `.env.example` |
 
-### Story 大纲
-
-#### Story 1.1 — Go 服务可启动并通过健康检查
-- **As a** 开发者, **I want** Go 服务在配置正确时正常启动, **so that** 后续业务代码有可运行的宿主
-- **Acceptance Criteria**:
-  - Given 环境变量配置完整，When 执行 `go run ./cmd/server/`，Then `:18200/internal/v1/tally/health` 返回 `{"status":"ok"}`
-  - Given 缺少必填环境变量 `DATABASE_DSN`，When 启动，Then 进程以非零退出码退出并打印明确错误（启动即校验原则）
-- **Tech Notes**:
-  - 涉及表: 无（仅连接池 ping）
-  - 涉及组件: `lifecycle/app.go`（DI 根）, `lifecycle/start.go`, `pkg/config/config.go`
-  - 涉及 API: `GET /internal/v1/tally/health`
-- **Test Plan**:
-  - Unit: `pkg/config/` — 缺环境变量时 fast-fail 逻辑
-  - Integration: `TestHealthEndpoint_Returns200` (testcontainers-go, PostgreSQL)
-- **Out of Scope**: 业务路由、认证中间件
-
-#### Story 1.2 — Next.js 前端可访问登录页占位
-- **As a** 开发者, **I want** Next.js 前端在 :3000 可访问，**so that** 前端构建链路验证通过
-- **Acceptance Criteria**:
-  - Given Bun 环境就绪，When `bun run dev`，Then `localhost:3000/login` 返回 200，页面包含"登录"文案
-  - Given `bun run build`，Then 构建成功，无 TypeScript 错误
-- **Tech Notes**:
-  - 涉及组件: `web/app/(auth)/login/page.tsx`, `web/styles/globals.css`（OKLCH 主题变量），`web/app/layout.tsx`（ThemeProvider）
-  - next.config.ts 启用 `output: "standalone"`
-- **Test Plan**:
-  - `bun run typecheck && bun run lint` 通过
-- **Out of Scope**: Zitadel OIDC 实际集成（Epic 2 做）
-
-#### Story 1.3 — 数据库迁移脚本完整执行（全 27 张表）
-- **As a** 开发者, **I want** `golang-migrate up` 后 tally schema 所有表已创建，**so that** 后续 Story 可以直接写入数据
-- **Acceptance Criteria**:
-  - Given 空 PostgreSQL，When 运行迁移，Then `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='tally'` 返回 27+（含物化视图）
-  - Given 重复运行迁移，Then 幂等，无错误
-- **Tech Notes**:
-  - 涉及文件: `migrations/000001~000012_*.up.sql`（架构 §5.2 完整 DDL）
-  - `lifecycle/migrate.go` 在启动时自动执行 `migrate up`
-  - 包含 RLS policy（`000012_init_rls.up.sql`）、物化视图（`000011_init_views.up.sql`）
-- **Test Plan**:
-  - Integration: `TestMigration_AllTablesExist` (testcontainers-go)
-- **Out of Scope**: 种子数据
-
-#### Story 1.4 — GitHub Actions CI 流水线
-- **As a** 开发者, **I want** 每次 push 自动运行 lint/typecheck/test/build，**so that** 主干质量有保障
-- **Acceptance Criteria**:
-  - Given PR 提交，When CI 触发，Then lint (golangci-lint + ESLint) → typecheck (tsc --noEmit) → test (go test + bun test) → build 四个 job 全绿
-  - Given 任意 job 失败，Then PR 被阻止合并
-- **Tech Notes**:
-  - 涉及文件: `.github/workflows/ci.yml`
-  - Go CI: `golangci-lint run`, `go test -race ./...`
-  - Frontend CI: `bunx tsc --noEmit`, `bun run lint`, `bun run test`
-- **Out of Scope**: 镜像推送（Story 1.5）
-
-#### Story 1.5 — Docker 多阶段构建与 GHCR 镜像推送
-- **As a** 运维, **I want** 每次 main 分支合并后自动构建镜像并推送 GHCR，**so that** ArgoCD 可以自动拉取最新版本
-- **Acceptance Criteria**:
-  - Given main 分支合并，When CI 完成，Then `ghcr.io/hanmahong5-arch/lurus-tally:main-<sha7>` 可被 `docker pull`
-  - 后端 Dockerfile 使用 `FROM scratch` + CGO_ENABLED=0；前端使用 `output: standalone`
-- **Tech Notes**:
-  - 镜像命名: `ghcr.io/hanmahong5-arch/lurus-tally:main-<sha7>`（架构 §1 + decision-lock §5）
-  - Trivy 扫描作为 non-blocking 警告
-- **Out of Scope**: ArgoCD 自动同步（Story 1.6）
-
-#### Story 1.6 — ArgoCD ApplicationSet 注册与 K8s 基础清单
-- **As a** 运维, **I want** ArgoCD 能管理 lurus-tally 的部署，**so that** GitOps 闭环打通
-- **Acceptance Criteria**:
-  - Given ArgoCD app 已创建，When 推送新镜像 tag，Then Stage 环境的 Pod 自动更新
-  - `kubectl get pods -n lurus-tally` 显示 tally-backend 和 tally-web Pod Running
-- **Tech Notes**:
-  - 涉及文件: `deploy/k8s/base/` (Deployment/Service/ConfigMap), `deploy/k8s/overlays/stage/`
-  - Namespace: `lurus-tally`（decision-lock §5）
-  - backend port: 18200；前端通过 Next.js standalone 内嵌
-- **Out of Scope**: Prod overlay（Stage 先行）
+> **注**: Stories 1.1-1.6 已 DONE（`migration head: 12, 27 tables, 15 tests PASS`）。Story 1.7 未完成。
 
 #### Story 1.7 — 本地开发 Makefile + 环境变量模板
-- **As a** 新加入开发者, **I want** 一个 `.env.example` 和 `make dev` 命令快速启动本地环境，**so that** 减少首次上手摩擦
+- **As a** 新加入开发者, **I want** 一个 `.env.example` 和 `make dev` 命令快速启动本地环境, **so that** 减少首次上手摩擦。
 - **Acceptance Criteria**:
-  - `.env.example` 包含所有必填环境变量及说明注释
-  - `make dev` 启动 PostgreSQL（Docker Compose）+ Go 后端 + Next.js 前端，并在 health 通过后打印 URL
+  - `.env.example` 包含所有必填环境变量（含 `TENANT_PROFILE` 选项说明）及说明注释
+  - `make dev` 启动 PostgreSQL (Docker Compose) + Go 后端 + Next.js 前端，health 通过后打印 URL
+  - `make test` 运行 `go test ./...` + `cd web && bun run test`
+- **Tech Notes**: `Makefile` targets: `dev / test / build / migrate-up / migrate-down`
 - **Out of Scope**: Zitadel 本地模拟（用测试 tenant 绕过）
 
 ---
 
 ## Epic 2: 多租户与认证基础
 
-**目标**: 用户可以通过 Zitadel OIDC 登录；注册后自动创建 tenant 记录；所有 API 请求携带 JWT，经过 `tenant_rls.go` 中间件注入 `app.tenant_id`，PostgreSQL RLS 隔离生效；RBAC 四角色权限控制在 API 层生效。
+**目标**: 用户可用 Zitadel OIDC 登录；注册后自动创建 tenant 记录并同步 `tenant_profile`（cross_border/retail/hybrid）；PostgreSQL RLS 隔离生效；RBAC 四角色权限控制在 API 层生效。
 
-**价值**: PRD §4.1 模块1 (US-1.1, US-1.2)；PRD §7.3 安全合规；决策锁 §3 第1条
+**PRD Requirements**: US-1.1, US-1.2；PRD §7.3 安全合规；决策锁 §3 第1条
+
+**Risk**: GORM + PostgreSQL RLS 连接池复用——`SET LOCAL app.tenant_id` 必须在每个事务内生效，需要有跨租户 E2E 测试，一旦晚期发现问题会波及所有业务表。
+
+**Acceptance**:
+- Zitadel OIDC 登录全链路可跑通
+- `TestRLS_CrossTenantQueryReturnsEmpty` 集成测试通过
+- 四角色权限矩阵：仓管访问财务端点返回 403
+- `tenant_profile.profile_type` 字段存储并可从 API 读取
 
 **依赖**: Epic 1
 
-**风险**: GORM 与 PostgreSQL RLS 的结合——GORM 默认连接池会复用连接，`SET LOCAL app.tenant_id` 必须在每个事务内生效，需要实测并加 E2E 测试覆盖"跨租户查询返回空集"场景，否则数据泄露风险极高。
-
-**预估**: 6 个 Story × 平均 6 小时 = 36 小时
-
-**Definition of Done**:
-- Zitadel OIDC 登录 → 回调 → Session Cookie 全链路可跑通（可使用 tally-stage.lurus.cn 的 OIDC client）
-- `TestRLS_CrossTenantQueryReturnsEmpty` 集成测试通过
-- 四角色权限矩阵测试：仓管角色访问财务端点返回 403
+**预估**: 6 Stories × 平均 6h = **36h**
 
 ### Stories
 
-| # | Story Title | 类型 | 工时 | 关键文件/模块 |
-|---|------------|------|------|--------------|
-| 2.1 | 用户可用 Zitadel OIDC 完成登录与登出 | feat | 7h | `web/app/(auth)/`, `lib/auth.ts`, `adapter/middleware/auth.go` |
-| 2.2 | 登录后自动创建/同步租户记录 | feat | 5h | `app/tenant/`, `adapter/platform/tenant.go`, `migrations/000002` |
-| 2.3 | API 请求全局注入租户上下文（RLS 激活） | feat | 6h | `adapter/middleware/tenant_rls.go` |
-| 2.4 | 跨租户数据隔离 E2E 验证 | test | 4h | `tests/integration/rls_isolation_test.go` |
-| 2.5 | RBAC 四角色权限矩阵实施 | feat | 6h | `adapter/middleware/auth.go`, `pkg/types/role.go` |
-| 2.6 | 企业设置向导（新租户引导三步流程） | feat | 5h | `web/app/(dashboard)/settings/`, `components/form-builder/stepper.tsx` |
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 2.1 | 用户可用 Zitadel OIDC 完成登录与登出 | both | feat | 7h | `web/lib/auth.ts`, `adapter/middleware/auth.go` |
+| 2.2 | 登录后自动创建/同步租户记录（含 tenant_profile 字段） | both | feat | 5h | `app/tenant/`, `adapter/platform/tenant.go` |
+| 2.3 | API 请求全局注入租户上下文（RLS 激活） | both | feat | 6h | `adapter/middleware/tenant_rls.go` |
+| 2.4 | 跨租户数据隔离 E2E 验证 | both | test | 4h | `tests/integration/rls_isolation_test.go` |
+| 2.5 | RBAC 四角色权限矩阵实施 | both | feat | 6h | `adapter/middleware/auth.go`, `pkg/types/role.go` |
+| 2.6 | 企业设置向导（三步引导，含 Profile 选择） | both | feat | 6h | `web/app/(dashboard)/settings/`, `components/onboarding/` |
 
-### Story 大纲
-
-#### Story 2.1 — 用户可用 Zitadel OIDC 完成登录与登出
-- **As a** 新用户, **I want** 点击"登录"后跳转 Zitadel，完成认证后回到 Tally，**so that** 无需另外注册账号
+#### Story 2.2 — 登录后自动创建/同步租户记录（含 tenant_profile）
+- **As a** 新用户, **I want** 首次登录后系统自动创建企业空间并记录行业 Profile, **so that** 后续 UI 按行业定制。
 - **Acceptance Criteria**:
-  - Given 用户访问受保护页面，When 未登录，Then 自动跳转 `/login`
-  - Given 用户在 Zitadel 完成认证，When OIDC callback，Then Session 建立，跳转 Dashboard
-  - Given 用户点击"退出"，When 执行登出，Then Session 清除，重定向到登录页
-- **Tech Notes**:
-  - 涉及组件: `web/lib/auth.ts`（NextAuth Zitadel provider），`web/app/api/auth/[...nextauth]/route.ts`
-  - 后端: `adapter/middleware/auth.go`（JWT 签名验证，Zitadel JWKS endpoint）
-- **Test Plan**:
-  - Integration: mock Zitadel callback，验证 session cookie 写入
-  - E2E: Playwright 测试登录完整流程
+  - 首次登录时 `tally.tenant` 中 upsert 对应记录，`profile` 字段默认 `hybrid`
+  - Platform 同步回调 `/internal/v1/tally/tenant/sync` 能更新本地缓存
+- **Tech Notes**: `tenant_profile.profile_type` 类型 `VARCHAR(20) CHECK IN ('cross_border','retail','hybrid')`；独立表 `tally.tenant_profile`（migration 000013）；不在 `tenant` 表加字段
 
-#### Story 2.2 — 登录后自动创建/同步租户记录
-- **As a** 新用户, **I want** 首次登录后系统自动创建我的企业空间，**so that** 不需要额外的"开通"步骤
+#### Story 2.6 — 企业设置向导（三步引导 + Profile 选择）
+- **As a** 新注册老板, **I want** 首次登录后看到三步引导向导并选择行业 Profile, **so that** 系统界面按我的业务类型定制。
 - **Acceptance Criteria**:
-  - Given 首次登录，When JWT 中 `org_id` 存在，Then `tally.tenant` 中自动 upsert 对应记录
-  - Given Platform 同步回调 `/internal/v1/tally/tenant/sync`，When 租户状态变更，Then 本地缓存更新
-- **Tech Notes**:
-  - 涉及表: `tally.tenant`（`migrations/000002_init_tenant.up.sql`）
-  - 涉及组件: `adapter/platform/tenant.go`，`app/tenant/sync_tenant.go`
-- **Test Plan**:
-  - Unit: `TestSyncTenant_NewTenant_CreatesRecord`
-  - Integration: 验证 Platform bearer key 认证
-
-#### Story 2.3 — API 请求全局注入租户上下文（RLS 激活）
-- **As a** 系统, **I want** 每个 API 请求自动设置 `SET LOCAL app.tenant_id`，**so that** 所有数据库查询自动被 RLS 隔离
-- **Acceptance Criteria**:
-  - Given 已认证请求，When 进入 Gin handler，Then 当前连接执行 `SET LOCAL app.tenant_id = '<uuid>'`
-  - Given `app.tenant_id` 未设置，When 查询任意表，Then 返回空集（不返回所有租户数据）
-- **Tech Notes**:
-  - 涉及组件: `adapter/middleware/tenant_rls.go`（Gin middleware，使用 GORM BeforeCreate callback 注入）
-  - GORM 连接池注意：使用 `db.Exec("SET LOCAL app.tenant_id = ?", tenantID)` 在事务内
-- **Out of Scope**: 超级管理员绕过 RLS（另外用 admin 账户连接实现）
-
-#### Story 2.4 — 跨租户数据隔离 E2E 验证
-- **As a** 安全审计员, **I want** 有自动化测试证明租户 A 的数据不会被租户 B 读取，**so that** 多租户安全有客观证明
-- **Acceptance Criteria**:
-  - Given 租户 A 创建了 3 个商品，When 用租户 B 的 JWT 查询商品列表，Then 返回空数组
-  - Given 租户 B 尝试直接访问租户 A 的商品 ID，When `GET /api/v1/products/:id`，Then 返回 404（而非 403，不泄露存在性）
-- **Tech Notes**:
-  - 涉及文件: `tests/integration/rls_isolation_test.go`
-  - 使用 testcontainers-go 启动真实 PostgreSQL
-
-#### Story 2.5 — RBAC 四角色权限矩阵实施
-- **As a** 企业管理员, **I want** 邀请成员时分配角色，**so that** 不同角色只能访问其职责范围
-- **Acceptance Criteria**:
-  - 管理员: 全部权限
-  - 仓管: 可操作采购/销售/调拨/盘点/库存，不可访问财务台账 `/api/v1/finance/*`
-  - 业务员: 可读库存，可创建销售单，不可修改成本价字段
-  - 只读: GET 系列端点，POST/PATCH/DELETE 返回 403
-- **Tech Notes**:
-  - 角色信息从 Zitadel JWT claim 读取，或存 `tally.org_user_rel`
-  - 涉及组件: `adapter/middleware/auth.go`（`RequireRole(roles...)` helper）
-  - 涉及表: `tally.org_user_rel`, `tally.org_department`
-- **Test Plan**:
-  - Unit: `TestRBACMiddleware_WarehouseRole_BlocksFinance`
-
-#### Story 2.6 — 企业设置向导（新租户引导三步流程）
-- **As a** 新注册老板, **I want** 首次登录后看到三步引导向导，**so that** 快速完成企业基础配置
-- **Acceptance Criteria**:
-  - 步骤 1: 填写公司名称/行业/规模 → 存 `tally.tenant.settings` JSONB
-  - 步骤 2: 创建第一个仓库（调用 `POST /api/v1/warehouses`）
-  - 步骤 3: 选"演示数据"或"空白开始"（演示数据 seed 脚本）
-  - 完成后跳转 Dashboard，空状态引导 CTA 显示（ux-benchmarks P7）
-- **Tech Notes**:
-  - 涉及组件: `components/form-builder/stepper.tsx`，`web/app/(dashboard)/settings/page.tsx`
-  - 向导完成状态存 `tenant.settings.onboarding_done: true`，二次登录不再弹出
+  - 步骤 1: 公司名称/行业 → 行业选择包含"跨境贸易/外贸批发"和"线下零售/实体门店"选项 → 存 `tenant_profile.profile_type`
+  - 步骤 2: 创建第一个仓库
+  - 步骤 3: 演示数据（按 Profile 加载不同种子）或空白
+  - 完成后跳转 Dashboard，按 Profile 展示对应 CTA 引导
+- **Tech Notes**: `tenant.settings.onboarding_done: true` 二次登录不再弹出；Profile 选择触发后续 Epic 8 的 UI 适配逻辑
 
 ---
 
 ## Epic 3: 设计系统基石
 
-**目标**: 开发者可以从组件库中组装出任意业务页面；⌘K Command Palette、AI Drawer、暗黑模式、DataTable、Sheet 等核心组件均可独立 demo；新业务 Story 的前端开发时间中，UI 组件复用比例 ≥ 70%。
+**目标**: 开发者可从组件库组装任意业务页面；⌘K Command Palette、AI Drawer、暗黑模式、DataTable、Sheet 等核心组件均可独立 demo；Profile 感知的条件渲染 hook 就绪。
 
-**价值**: PRD §8（UX 原则 P1-P10 全部落地）；决策锁 §4 客户体验原则；架构 §4 前端组件树
+**PRD Requirements**: PRD §8 UX 原则 P1-P10；决策锁 §4
+
+**Risk**: shadcn/ui 2025 OKLCH 色彩空间与 TailwindCSS v4 可能有配置冲突；Framer Motion 与 Next.js App Router 服务端组件边界需仔细标注 "use client"。
+
+**Acceptance**:
+- 所有核心组件有可运行 demo 页
+- ⌘K 打开、AI Drawer 右侧滑出、暗黑/亮色切换无闪烁
+- `useProfile()` hook 在任意组件可读取当前租户 Profile
+- Profile 感知渲染：`<ProfileGate profile="cross_border">` 按 Profile 条件渲染
 
 **依赖**: Epic 1
 
-**风险**: shadcn/ui 2025 版本迁移 OKLCH 色彩空间时，与 TailwindCSS v4 结合可能有配置冲突；Framer Motion 动效与 Next.js App Router 服务端组件的边界需要仔细标注 "use client"。
-
-**预估**: 6 个 Story × 平均 5 小时 = 30 小时
-
-**Definition of Done**:
-- Storybook 或等效 demo 页可展示所有核心组件
-- ⌘K 打开 Command Palette，输入关键词可导航
-- AI Drawer 右侧滑出，展示流式文本输出占位
-- 暗黑/亮色模式切换无闪烁
+**预估**: 7 Stories × 平均 5h = **35h**
 
 ### Stories
 
-| # | Story Title | 类型 | 工时 | 关键文件/模块 |
-|---|------------|------|------|--------------|
-| 3.1 | 主题系统与暗黑模式（OKLCH 色彩空间） | feat | 4h | `styles/globals.css`, `components/ui/`, `stores/sidebar-store.ts` |
-| 3.2 | 可折叠侧边栏与顶栏主布局 | feat | 5h | `components/layout/sidebar.tsx`, `components/layout/topbar.tsx` |
-| 3.3 | DataTable 通用封装（TanStack Table + 骨架屏） | feat | 6h | `components/data-table/` |
-| 3.4 | ⌘K Command Palette 框架 | feat | 5h | `components/command-palette/`, `hooks/use-command-palette.ts` |
-| 3.5 | AI Drawer 框架（流式输出占位） | feat | 5h | `components/ai-drawer/`, `stores/ai-drawer-store.ts` |
-| 3.6 | Slide-over Sheet、空状态组件、Toast 系统 | feat | 4h | `components/slide-over/`, `components/layout/empty-state.tsx` |
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 3.1 | 主题系统与暗黑模式（OKLCH 色彩空间） | both | feat | 4h | `styles/globals.css` |
+| 3.2 | 可折叠侧边栏与顶栏主布局 | both | feat | 5h | `components/layout/sidebar.tsx` |
+| 3.3 | DataTable 通用封装（TanStack Table + 骨架屏） | both | feat | 6h | `components/data-table/` |
+| 3.4 | ⌘K Command Palette 框架 | both | feat | 5h | `components/command-palette/` |
+| 3.5 | AI Drawer 框架（流式输出占位） | both | feat | 5h | `components/ai-drawer/` |
+| 3.6 | Slide-over Sheet、空状态组件、Toast 系统 | both | feat | 4h | `components/slide-over/` |
+| 3.7 | Profile 感知渲染 hook 与条件组件 | both | feat | 4h | `hooks/use-profile.ts`, `components/profile-gate.tsx` |
 
-### Story 大纲
-
-#### Story 3.1 — 主题系统与暗黑模式
-- **As a** 用户, **I want** 界面默认深色主题，切换时无闪烁，**so that** 长时间工作不眼疲劳
+#### Story 3.7 — Profile 感知渲染 hook 与条件组件
+- **As a** 开发者, **I want** 一个 `useProfile()` hook 和 `<ProfileGate>` 组件, **so that** 跨境专属/零售专属 UI 能按租户 Profile 自动显隐，无需在每个页面手写判断逻辑。
 - **Acceptance Criteria**:
-  - 默认加载深色主题（decision-lock §4 第7条）
-  - 主题切换通过 `next-themes` 持久化 localStorage；页面刷新不闪白
-  - 所有 shadcn/ui 组件在亮色/暗色下均视觉一致
-- **Tech Notes**:
-  - `styles/globals.css` 使用 OKLCH 色彩变量（亮色 + 暗色两套）
-  - `web/app/layout.tsx` 包裹 `ThemeProvider`
-
-#### Story 3.2 — 可折叠侧边栏与顶栏主布局
-- **As a** 仓管, **I want** 侧边栏可折叠到 icon-only 模式，**so that** 在 1280px 屏幕上有更大操作区域
-- **Acceptance Criteria**:
-  - 展开 220px icon+文字；折叠 48px icon-only；Framer Motion 动效 200ms
-  - 折叠状态 hover icon 显示 Tooltip（含快捷键，ux-benchmarks P10）
-  - 状态通过 `sidebar-store.ts` 持久化 localStorage
-- **Tech Notes**:
-  - 涉及组件: `components/layout/sidebar.tsx`（Zustand），`components/layout/topbar.tsx`
-
-#### Story 3.3 — DataTable 通用封装
-- **As a** 开发者, **I want** 一个开箱即用的 TanStack Table 封装，**so that** 每个列表页不需要重复实现排序/分页/筛选
-- **Acceptance Criteria**:
-  - 支持 server-side 分页（cursor-based）、排序、关键词搜索
-  - 支持表格密度三档（Compact/Regular/Relaxed: 40/48/56px），localStorage 持久化（ux-benchmarks P3）
-  - 行 hover 显示操作按钮（ux-benchmarks P5）；首次加载显示骨架屏（ux-benchmarks P8）
-  - 数字列右对齐 + tabular-nums + 千分位（ux-benchmarks P4）
-- **Tech Notes**:
-  - 涉及组件: `components/data-table/data-table.tsx`（TanStack Table v8）
-  - 虚拟滚动（TanStack Virtual）v1 不开启，留 API 接口
-
-#### Story 3.4 — ⌘K Command Palette 框架
-- **As a** 任意用户, **I want** ⌘K 弹出命令面板，可搜索导航和操作，**so that** 无需记住菜单路径
-- **Acceptance Criteria**:
-  - 任意页面按 ⌘K（或 Ctrl+K）弹出；Escape 关闭
-  - 分组显示：导航类（页面跳转）、操作类（新建单据）、AI 查询入口
-  - 输入文字实时过滤；键盘 ↑↓ 选择，Enter 执行
-  - AI 查询：输入"？"前缀或选择"AI 助手"分组 → 触发 AI Drawer 打开（Epic 11 接入真实 API）
-- **Tech Notes**:
-  - 基于 `cmdk` 库；`components/command-palette/commands.ts` 定义命令表
-  - `hooks/use-command-palette.ts` 全局键盘监听（document level）
-
-#### Story 3.5 — AI Drawer 框架（流式输出占位）
-- **As a** 用户, **I want** 右侧 AI Drawer 滑出后展示流式 Markdown 输出，**so that** 不遮挡主内容的同时获得 AI 分析
-- **Acceptance Criteria**:
-  - Drawer 从右侧滑入，宽度 400px，不遮罩背景（ux-benchmarks P12）
-  - 支持 Markdown 表格、代码块渲染
-  - 流式输出时显示光标闪烁；消息中可嵌入操作按钮（点击跳转）
-  - v1 占位：输入任意文字返回 mock 流式响应（Epic 11 对接 Hub API）
-- **Tech Notes**:
-  - 涉及组件: `components/ai-drawer/ai-drawer.tsx`，`use-ai-chat.ts`（Vercel AI SDK `useChat`）
-  - `stores/ai-drawer-store.ts`（Zustand：开关状态 + 当前对话 ID）
-
-#### Story 3.6 — Slide-over Sheet、空状态组件与 Toast 系统
-- **As a** 开发者, **I want** 通用的 Slide-over Sheet、空状态引导组件和 Toast 通知，**so that** 业务 Story 可以直接复用
-- **Acceptance Criteria**:
-  - Sheet: 右侧滑入，背景主列表仍可见（ux-benchmarks P1）；支持 `size: sm/md/lg`
-  - 空状态: 接受 `icon/title/description/actions` props，actions 为 CTA 按钮（ux-benchmarks P7）
-  - Toast: 乐观更新场景支持 `[撤销]` 按钮（3s 超时，ux-benchmarks P6）；失败时变红
-- **Tech Notes**:
-  - Toast 使用 `sonner` 库；`components/slide-over/slide-over.tsx`（Framer Motion）
+  - `useProfile()` 返回 `{ profile: 'cross_border' | 'retail' | 'hybrid' }`，从 session 读取，无 API 额外请求
+  - `<ProfileGate profiles={['cross_border']}>` 仅在 cross_border 或 hybrid 租户下渲染子树
+  - `<ProfileGate profiles={['retail']}>` 仅在 retail 或 hybrid 下渲染
+  - Profile 变更后（设置页修改）无需刷新，Zustand store 实时更新
+- **Tech Notes**: `stores/tenant-store.ts` 存 profile；Profile 从 JWT claim 或 `/api/v1/tenant` 接口读取并缓存
 
 ---
 
-## Epic 4: 商品与 SKU 管理
+## Epic 4: 商品中台（升级版）
 
-**目标**: 管理员可以创建商品、定义 SKU 矩阵、批量导入 Excel；仓管可以用条码枪扫码定位 SKU；安全库存阈值可配置并触发预警状态。
+**目标**: 管理员可创建商品并定义 `measurement_strategy`（件/重量/散装/批次）、`alt_units`（多单位换算）、`attributes` JSONB（自由属性）；条码枪扫码定位 SKU < 300ms；安全库存阈值触发预警；V2 离线容器字段（`origin / sync_status`）在表结构中已预留。
 
-**价值**: PRD §4.1 模块2 (US-2.1~2.6)；PRD §6.1 商品模块 P0 功能全部落地
+**PRD Requirements**: US-2.1~2.6；PRD §6.1 商品模块 P0；决策锁 DL-3
 
-**依赖**: Epic 2（租户上下文）, Epic 3（DataTable/Sheet/组件库）
+**Risk**: `measurement_strategy` 枚举新增后影响采购/销售/库存模块的所有计量逻辑——必须在本 Epic 中锁定枚举值和计量接口合约，后续 Epic 直接调用，不允许各模块各自实现。
 
-**风险**: 批量 Excel 导入 500 行 < 5s 的性能目标——需要使用 excelize 流式读取而非全量加载内存，且需要并发写入 PostgreSQL（batch insert）；条码扫码 < 300ms 需要 Redis 缓存 barcode → SKU ID 映射，避免全表扫描。
+**Acceptance**:
+- 商品 CRUD 完整（含 measurement_strategy / alt_units / attributes JSONB）
+- Excel 导入 500 行 < 5s 集成测试通过
+- 条码扫码 < 300ms（Redis 缓存路径）
+- `origin` / `sync_status` 字段存在于 DDL（V2 预留，V1 不写入逻辑）
+- 商品查询 API 返回 `measurement_strategy` 和 `alt_units`
 
-**预估**: 8 个 Story × 平均 6 小时 = 48 小时
+**依赖**: Epic 2（租户上下文）, Epic 3（DataTable/Sheet）
 
-**Definition of Done**:
-- 商品 CRUD 完整（含 SKU 矩阵、批次/序列号开关）
-- Excel 导入 500 行 < 5s 验收通过（含集成测试）
-- 条码扫码 < 300ms（Redis 缓存路径测试）
-- `migrations/000005_init_product.up.sql` 中所有表均被测试覆盖
+**预估**: 9 Stories × 平均 5.5h = **50h**
 
 ### Stories
 
-| # | Story Title | 类型 | 工时 | 关键文件/模块 |
-|---|------------|------|------|--------------|
-| 4.1 | 商品列表与全文搜索 | feat | 5h | `app/product/query_product.go`, `handler/v1/product.go`, `web/app/products/page.tsx` |
-| 4.2 | 新建/编辑商品（Sheet 表单 + 分类树） | feat | 6h | `app/product/create_product.go`, `web/components/form-builder/` |
-| 4.3 | SKU 属性矩阵与多单位换算 | feat | 6h | `domain/entity/product_sku.go`, `domain/entity/unit.go`, `handler/v1/sku.go` |
-| 4.4 | 批次管理与序列号管理（商品级开关） | feat | 5h | `domain/entity/stock_lot.go`, `domain/entity/stock_serial.go` |
-| 4.5 | 条码扫码定位 SKU（< 300ms） | feat | 4h | `adapter/repo/product_sku_repo.go`（Redis 缓存），`pkg/` |
-| 4.6 | 安全库存阈值设置与预警状态 | feat | 4h | `domain/entity/stock_initial.go`, `app/stock/alert_stock.go` |
-| 4.7 | Excel 批量导入商品（500 行 < 5s） | feat | 7h | `app/product/import_product.go`, `handler/v1/product.go POST /import` |
-| 4.8 | 商品停售/下架与软删除 | feat | 3h | `app/product/delete_product.go`, `query_product.go`（过滤下架商品） |
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 4.1 | 商品列表与全文搜索 | both | feat | 5h | `app/product/query_product.go`, `web/app/products/page.tsx` |
+| 4.2 | 新建/编辑商品（Sheet 表单 + 分类树） | both | feat | 5h | `app/product/create_product.go` |
+| 4.3 | measurement_strategy 商品计量模型（件/重量/散装/批次） | both | feat | 7h | `domain/entity/product.go`, `pkg/types/measurement.go` |
+| 4.4 | alt_units 多单位换算（箱/件/托/kg/散装） | both | feat | 6h | `domain/entity/unit.go`, `handler/v1/sku.go` |
+| 4.5 | attributes JSONB 自由属性（五金规格/跨境 HS Code 预填） | both | feat | 5h | `domain/entity/product.go attributes JSONB` |
+| 4.6 | 批次管理与序列号管理（商品级开关） | both | feat | 5h | `domain/entity/stock_lot.go`, `stock_serial.go` |
+| 4.7 | 条码扫码定位 SKU（< 300ms，Redis 缓存） | both | feat | 4h | `adapter/repo/product_sku_repo.go` |
+| 4.8 | 安全库存阈值与预警状态 | both | feat | 4h | `app/stock/alert_stock.go` |
+| 4.9 | Excel 批量导入商品（含 measurement_strategy 列）+ 商品停售 | both | feat | 7h | `app/product/import_product.go` |
 
-### Story 大纲
-
-#### Story 4.1 — 商品列表与全文搜索
-- **As a** 管理员, **I want** 在商品列表页看到所有商品并能快速搜索，**so that** 快速定位目标商品
+#### Story 4.3 — measurement_strategy 商品计量模型
+- **As a** 管理员, **I want** 为每种商品选择计量策略（件数/重量/散装计量/批次管理）, **so that** 五金店散装螺丝和跨境标准箱都能准确记账。
 - **Acceptance Criteria**:
-  - 搜索框输入商品名/助记码/条码，实时过滤（debounce 300ms）
-  - 列表显示名称/SKU 数/库存状态 Badge/分类
-  - 首次加载骨架屏，无数据时显示引导 CTA
-- **Tech Notes**:
-  - 涉及表: `product`, `product_sku`, `product_category`
-  - API: `GET /api/v1/products?search=&category_id=&page=`（cursor 分页）
-  - 助记码 `mnemonic` 字段：服务端汉字转拼音首字母（`github.com/mozillazg/go-pinyin`）
+  - 枚举: `individual`（件数，默认）/ `weight`（按重量，kg/g）/ `length`（按长度）/ `volume`（按体积）/ `batch`（强制批次）/ `serial`（序列号）
+  - 选 `weight`/`length`/`volume` 时，开单数量字段为小数；选 `individual` 时为整数
+  - 计量策略影响采购单、销售单、库存查询的数量字段类型（后续 Epic 消费）
+- **Tech Notes**: `pkg/types/measurement.go` 定义 `MeasurementStrategy` 类型及业务规则；`product.measurement_strategy VARCHAR(20) NOT NULL DEFAULT 'individual'`（migration 000015）；后续 Epic 中所有数量字段使用 `NUMERIC(18,4)` 以兼容小数
+- **Profile**: `both`（五金店用 weight/volume，跨境用 individual/batch/serial，都需要）
 
-#### Story 4.2 — 新建/编辑商品
-- **As a** 管理员, **I want** 点击"新建商品"后从右侧 Sheet 滑入填写表单，**so that** 背景商品列表仍可见
+#### Story 4.5 — attributes JSONB 自由属性
+- **As a** 管理员, **I want** 为商品添加自由键值属性, **so that** 五金店可记录"材质/表面处理/规格型号"，跨境可记录"HS Code/原产地/申报价格"。
 - **Acceptance Criteria**:
-  - Sheet 内表单：必填字段（名称/分类/编码）校验；分类用树形下拉选择
-  - 乐观更新：提交后 Toast "商品已创建" + [撤销] 3s
-  - 编辑时支持修改除租户 ID 外所有字段；软删除不影响历史单据
-- **Tech Notes**:
-  - 涉及表: `product`, `product_category`（树形 CTE 查询）
-  - 涉及组件: `components/slide-over/slide-over.tsx`, `components/form-builder/form-field.tsx`
-
-#### Story 4.3 — SKU 属性矩阵与多单位换算
-- **As a** 管理员, **I want** 定义属性组（颜色 × 尺码）后自动生成 SKU 矩阵，**so that** 批量创建变体不需要逐条录入
-- **Acceptance Criteria**:
-  - 属性组：颜色[红/蓝/白] × 尺码[S/M/L] → 自动生成 9 个 SKU
-  - 每个 SKU 独立设置条码/采购价/零售价/最低价
-  - 多单位：基础单位"件"+ 辅助单位"箱（12 件/箱）"，开单时可选单位
-- **Tech Notes**:
-  - 涉及表: `product_attribute`, `product_sku`, `unit`
-  - API: `POST /api/v1/products/:id/skus`（批量创建 SKU）
-
-#### Story 4.4 — 批次管理与序列号管理
-- **As a** 管理员, **I want** 对食品类商品开启批次管理，**so that** 入库时强制录批号/有效期，先进先出出库
-- **Acceptance Criteria**:
-  - `product.enable_lot_no = true` 时，入库单明细必须填写 `lot_no` + `expiry_date`
-  - 出库时系统按 `expiry_date` 升序建议批次（先进先出）
-  - `product.enable_serial_no = true` 时，入库时录入序列号列表；出库后序列号可溯源到销售单
-- **Tech Notes**:
-  - 涉及表: `stock_lot`, `stock_serial`
-  - `bill_item.lot_id` FK 到 `stock_lot`；`bill_item.serial_nos TEXT[]`
-
-#### Story 4.5 — 条码扫码定位 SKU（< 300ms）
-- **As a** 仓管, **I want** 扫码枪扫码后立即定位到 SKU，**so that** 开单时不用手动搜索
-- **Acceptance Criteria**:
-  - HID 键盘模式：页面输入框自动捕获焦点，扫码枪输入 + Enter → 触发搜索
-  - Redis 缓存 `tally:sku:barcode:<tenantId>:<barcode>` → `sku_id`（5 分钟 TTL）
-  - 全链路（前端→后端→Redis→返回）< 300ms P99
-- **Tech Notes**:
-  - API: `GET /api/v1/skus?barcode=<code>`（优先 Redis 缓存，miss 时查 PostgreSQL 并回填）
-  - Redis DB 5（decision-lock §5）
-
-#### Story 4.6 — 安全库存阈值与预警状态
-- **As a** 管理员, **I want** 为每个 SKU 设置安全库存下限，**so that** 库存接近下限时系统自动标红
-- **Acceptance Criteria**:
-  - `stock_initial.low_safe_qty` 可在商品详情 → 仓库配置中设置
-  - 库存 < 50% 阈值：黄色 Badge；< 20%：红色 Badge
-  - Dashboard 待办卡片聚合低库存预警（预留接口，Epic 10 展示）
-- **Tech Notes**:
-  - 涉及表: `stock_initial`（`low_safe_qty`, `high_safe_qty`）
-  - 涉及组件: `app/stock/alert_stock.go`（每小时扫描，详见架构 §2 worker）
-
-#### Story 4.7 — Excel 批量导入商品（500 行 < 5s）
-- **As a** 管理员, **I want** 上传填好的 Excel 模板后批量创建商品，**so that** 从旧系统迁移不需要逐条手录
-- **Acceptance Criteria**:
-  - 提供 `.xlsx` 模板下载（含示例行 + 字段说明）
-  - 上传后解析：正确行实时预览绿色；错误行标红并显示原因（如"条码重复"）
-  - 确认导入 500 行 < 5s（并发 batch insert，PostgreSQL COPY 或 ON CONFLICT DO NOTHING）
-  - 错误行不阻断正确行入库
-- **Tech Notes**:
-  - 使用 `github.com/xuri/excelize/v2` 流式读取
-  - API: `POST /api/v1/products/import`（multipart form-data）
-  - 超 100 行时异步处理 + Toast 通知（WebSocket push）
-
-#### Story 4.8 — 商品停售与软删除
-- **As a** 管理员, **I want** 将不再销售的商品下架，**so that** 开单搜索时不再出现，但历史单据仍可查
-- **Acceptance Criteria**:
-  - 停售商品在 `/api/v1/products` 默认不返回（`WHERE enabled=true AND deleted_at IS NULL`）
-  - 历史 `bill_item` 中的商品记录保持完整（外键约束 + 软删除）
-  - 已下架商品可重新启用
+  - `product.attributes JSONB` 存任意键值对，最多 20 个字段
+  - 后台可定义"属性模板"：零售模板（材质/颜色/规格）、跨境模板（HS Code/原产地/海关申报单位）
+  - `attributes` 可在商品搜索中作为过滤条件（`attributes->>'hs_code' = '...'`）
+- **Profile**: `both`（内容不同，但机制共享）
 
 ---
 
 ## Epic 5: 仓库与库存基础
 
-**目标**: 管理员可以创建多个仓库；仓管可以查看任意 SKU 在任意仓库的六状态实时库存；WAC 成本算法在每次入库后自动重算；库存流水 `stock_ledger` 每笔变动可追溯。
+**目标**: 管理员可创建多个仓库；库存六状态实时查询；WAC + 库存策略 Strategy Pattern（FIFO / 加权平均 / 按重 / 按批次）框架就绪；`stock_ledger` 可追溯；V2 `sync_status` 字段预留。
 
-**价值**: PRD §4.1 模块3 (US-3.1~3.3)；PRD §6.2 仓库模块 P0；PRD §6.3 库存模块 P0
+**PRD Requirements**: US-3.1~3.3；PRD §6.2 仓库 P0；PRD §6.3 库存 P0；决策锁 DL-4
+
+**Risk**: 库存策略 Strategy Pattern——多策略共存时，WAC 计算代码路径必须在本 Epic 封装为 interface，否则采购/销售 Epic 会各自实现不一致的成本计算。并发更新 (`SELECT FOR UPDATE`) 也在本 Epic 明确。
+
+**Acceptance**:
+- 仓库 CRUD + 库存六状态查询 API 完整
+- `CostStrategy` interface 已定义，WAC 实现通过，FIFO 骨架通过（V1 WAC 默认）
+- `TestStockConcurrentUpdate_NoOversell` 并发测试通过
+- `stock_snapshot.sync_status` 字段存在（V2 预留，V1 不写逻辑）
 
 **依赖**: Epic 4（商品数据）
 
-**风险**: 库存六状态的并发更新——多张单据同时操作同一 SKU 时，`available_qty = on_hand_qty - reserved_qty` 的计算必须在数据库事务内原子完成，否则超卖。需要 PostgreSQL `SELECT FOR UPDATE` 或乐观锁（Redis 版本号），应在 Story 中明确使用哪种方案。
-
-**预估**: 5 个 Story × 平均 5 小时 = 25 小时
-
-**Definition of Done**:
-- 仓库 CRUD + 库存六状态查询 API 完整
-- WAC 成本重算逻辑有单元测试覆盖（≥ 4 种场景）
-- `TestStockConcurrentUpdate_NoOversell` 并发测试通过
+**预估**: 6 Stories × 平均 5h = **30h**
 
 ### Stories
 
-| # | Story Title | 类型 | 工时 | 关键文件/模块 |
-|---|------------|------|------|--------------|
-| 5.1 | 仓库创建与管理 | feat | 4h | `app/warehouse/`, `handler/v1/warehouse.go`, `migrations/000006` |
-| 5.2 | 库存六状态实时查询（多仓库视图） | feat | 5h | `app/stock/query_stock.go`, `domain/entity/stock_snapshot.go` |
-| 5.3 | WAC 移动加权平均成本算法 | feat | 6h | `app/stock/` WAC 计算逻辑 |
-| 5.4 | 库存流水追溯（stock_ledger） | feat | 5h | `domain/entity/stock_ledger.go`（新增），`adapter/repo/stock_repo.go` |
-| 5.5 | 库存快照物化视图刷新与报表用查询 | feat | 4h | `migrations/000011_init_views.up.sql`, Worker 定时刷新 |
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 5.1 | 仓库创建与管理 | both | feat | 4h | `app/warehouse/`, `handler/v1/warehouse.go` |
+| 5.2 | 库存六状态实时查询（多仓库视图） | both | feat | 5h | `app/stock/query_stock.go`, `domain/entity/stock_snapshot.go` |
+| 5.3 | 库存策略 Strategy Pattern（CostStrategy interface + WAC 实现） | both | feat | 7h | `app/stock/cost_strategy.go`, `wac_strategy.go`, `fifo_strategy.go` |
+| 5.4 | 库存流水追溯（stock_ledger） | both | feat | 5h | `domain/entity/stock_ledger.go`, `adapter/repo/stock_repo.go` |
+| 5.5 | 库存快照物化视图刷新与 Worker | both | feat | 4h | `lifecycle/worker.go`, `migrations/000011` |
+| 5.6 | 散装/按重计量库存（对接 measurement_strategy） | both | feat | 5h | `app/stock/` 小数库存逻辑 |
 
-### Story 大纲
-
-#### Story 5.1 — 仓库创建与管理
-- **As a** 管理员, **I want** 创建多个仓库并设置名称/地址/负责人，**so that** 多仓库分开管理
+#### Story 5.3 — 库存策略 Strategy Pattern
+- **As a** 系统, **I want** 库存成本计算通过 Strategy Pattern 实现, **so that** V1 用 WAC、V2 可无缝切换 FIFO 或按重量计量，不需要修改上层业务逻辑。
 - **Acceptance Criteria**:
-  - 仓库 CRUD；同租户内仓库名唯一
-  - 仓库列表默认仓库标注"默认"Badge
-  - 设置 → 仓库管理页面（`web/app/(dashboard)/settings/warehouses/page.tsx`）
-- **Tech Notes**:
-  - 涉及表: `warehouse`（`migrations/000006_init_stock.up.sql` 包含）
+  - `CostStrategy` interface: `CalcInboundCost(sku, qty, unitPrice) → avgCost`
+  - `WACStrategy` 实现通过 4 种场景单元测试
+  - `FIFOStrategy` 骨架编译通过（V1 不注册为默认，V2 激活）
+  - `ByWeightStrategy` 处理小数数量（`NUMERIC(18,4)`）
+  - Tenant 可通过 `system_config.cost_strategy` 选择策略（默认 `wac`）
+- **Tech Notes**: `app/stock/cost_strategy.go` 定义 interface；`lifecycle/app.go` 按 config 注入；FIFO 需要 `stock_lot` 表记录入库批次顺序
 
-#### Story 5.2 — 库存六状态实时查询
-- **As a** 仓管, **I want** 查看每个 SKU 的在手/可用/预占/在途/损坏/冻结六个数字，**so that** 知道哪些库存可以发货
+#### Story 5.6 — 散装/按重计量库存
+- **As a** 仓管（五金店）, **I want** 系统支持以克/千克为单位记录螺丝等散装商品库存, **so that** 不必把散装商品换算成"件"来管理。
 - **Acceptance Criteria**:
-  - `GET /api/v1/stocks?warehouse_id=&product_id=` 返回六状态值
-  - `available_qty = on_hand_qty - reserved_qty`（实时计算，非定时）
-  - 支持"全仓"汇总视图（GROUP BY product_id）
-  - `channel_id` 字段默认 `default`，渠道筛选列 UI 预留但禁用（US-3.3）
-- **Tech Notes**:
-  - 涉及表: `stock_snapshot`；并发更新使用 `SELECT FOR UPDATE`
-
-#### Story 5.3 — WAC 移动加权平均成本算法
-- **As a** 财务, **I want** 每次采购入库后系统自动重算 WAC，**so that** 库存价值报表始终准确
-- **Acceptance Criteria**:
-  - 入库 100 件 @ ¥10，再入库 50 件 @ ¥13 → WAC = (100×10 + 50×13) / 150 = ¥10.67
-  - 出库时记录当时的 WAC 成本（不影响 WAC 本身）
-  - WAC 存 `stock_snapshot.avg_cost_price`，精度 NUMERIC(18,6)
-- **Tech Notes**:
-  - 涉及表: `stock_snapshot`, `bill_item`
-  - 涉及函数: `app/stock/` WAC 计算（在审核入库单时触发，事务内）
-- **Test Plan**:
-  - Unit: `TestWAC_TwoInbounds`, `TestWAC_PartialInbound`, `TestWAC_ZeroQtyEdgeCase`
-
-#### Story 5.4 — 库存流水追溯
-- **As a** 财务/审计, **I want** 每笔库存变动都有流水记录（来源单据/时间/操作人），**so that** 库存差异可追溯
-- **Acceptance Criteria**:
-  - 每次 `stock_snapshot` 变更同时写入 `stock_ledger`（PRD 要求，架构 §5.2 中描述）
-  - 流水记录包含: `change_type/qty_before/qty_after/ref_bill_id/ref_bill_type/user_id`
-  - `GET /api/v1/stocks/:sku_id/ledger` 返回该 SKU 全部流水（分页）
-- **Tech Notes**:
-  - `stock_ledger` 为新增表（architecture.md 中未列，需补充 migration `000006`）
-  - 涉及组件: `adapter/repo/stock_repo.go`（`AppendLedger` 事务内调用）
-
-#### Story 5.5 — 库存快照物化视图刷新
-- **As a** 报表系统, **I want** `report_stock_summary` 物化视图定期刷新，**so that** 报表查询无需扫全表
-- **Acceptance Criteria**:
-  - Worker 每 5 分钟执行 `REFRESH MATERIALIZED VIEW CONCURRENTLY tally.report_stock_summary`
-  - 刷新期间不阻塞读查询（CONCURRENTLY 关键字）
-  - 低库存预警 `is_low_stock` 字段在刷新后更新
-- **Tech Notes**:
-  - 涉及文件: `lifecycle/worker.go`（定时任务注册），`migrations/000011_init_views.up.sql`
+  - `measurement_strategy = 'weight'` 的 SKU，`stock_snapshot.on_hand_qty` 使用 `NUMERIC(18,4)` 存储
+  - 开单时可输入 0.5 kg 等小数数量
+  - 库存显示时附带单位（`kg` / `g` 由 `product.base_unit` 决定）
+- **Profile**: `retail`（五金店主用）
 
 ---
 
 ## Epic 6: 采购流程闭环
 
-**目标**: 采购员可以创建草稿采购单 → 提交审核 → 仓管确认入库（含部分入库）→ 库存自动增加 → WAC 重算；财务可以录入付款记录并查看应付状态；支持反审和红冲。
+**目标**: 采购员可创建采购单 → 入库 → WAC 重算 → 应付台账；支持部分入库、反审红冲；计量单位按 `measurement_strategy` 正确显示（五金店采购"50 kg 螺丝"而非"50 件"）。
 
-**价值**: PRD §4.1 模块4 (US-4.1~4.4)；PRD §6.4 采购模块 P0 全部落地；PRD §12 W5-W6 里程碑
+**PRD Requirements**: US-4.1~4.4；PRD §6.4 采购 P0
 
-**依赖**: Epic 5（仓库与库存）
+**Risk**: 状态机散乱——`bill_head` 的采购状态转换规则若不统一封装，各 handler 各自实现会导致 bug 难追踪。`pkg/types/bill_status.go` 必须在 Story 6.1 中先定义。
 
-**风险**: 状态机完整性——采购单有 7 个状态（草稿/已提交/已审核/部分入库/完成/取消/已冲销），状态转换规则如果没有统一的状态机实现（而是散落在各 handler 里），后期 bug 难以追踪。建议使用枚举状态机模式，在 Story 6.1 中确定。
+**Acceptance**:
+- 完整采购单状态机测试（含非法转换 400）
+- 入库后 `stock_snapshot.on_hand_qty` 精确增加，WAC 重算
+- 红冲后原单"已冲销"，反向入库单生成，审计日志记录
+- 采购数量单位按商品 `measurement_strategy` 正确显示
 
-**预估**: 7 个 Story × 平均 5.5 小时 = 38 小时
+**依赖**: Epic 5
 
-**Definition of Done**:
-- 完整采购单状态机测试（覆盖所有合法/非法状态转换）
-- 入库确认后 `stock_snapshot.on_hand_qty` 精确增加，WAC 重算
-- 红冲后原单状态"已冲销"，反向入库单生成，审计日志记录
-- 应付台账查询接口正确反映付款进度
+**预估**: 7 Stories × 平均 5.5h = **38h**
 
 ### Stories
 
-| # | Story Title | 类型 | 工时 | 关键文件/模块 |
-|---|------------|------|------|--------------|
-| 6.1 | 创建采购单草稿（Stepper 三步 + 行内编辑） | feat | 7h | `app/purchase/create_purchase.go`, `web/app/purchases/new/page.tsx` |
-| 6.2 | 采购单提交审核与状态机流转 | feat | 5h | `app/purchase/submit_purchase.go`, `approve_purchase.go`, `pkg/types/bill_status.go` |
-| 6.3 | 采购入库确认（全量/部分入库 + WAC 重算） | feat | 6h | `app/purchase/receive_purchase.go`, `app/stock/` WAC |
-| 6.4 | 采购单应付款管理（多次付款录入） | feat | 5h | `app/finance/create_payment.go`, `domain/entity/payment_head.go` |
-| 6.5 | 采购单反审与红冲（数据完整性保护） | feat | 6h | `app/purchase/cancel_purchase.go`, 红字单据生成逻辑 |
-| 6.6 | 采购单列表与详情页 | feat | 4h | `web/app/purchases/page.tsx`, `[id]/page.tsx`, `components/bill/` |
-| 6.7 | 采购退货（退供应商）处理 | feat | 5h | `app/purchase/` 退货子流程, `bill_type=出库, sub_type=采购退货` |
-
-### Story 大纲
-
-#### Story 6.1 — 创建采购单草稿
-- **As a** 采购员, **I want** 用三步 Stepper 创建采购单，**so that** 步骤清晰不容易遗漏字段
-- **Acceptance Criteria**:
-  - Step 1: 选供应商（搜索/新建）+ 日期/备注
-  - Step 2: 添加 SKU 明细（搜索 SKU + 扫码）+ 数量/单价行内编辑 + 实时小计汇总
-  - Step 3: 确认并提交（或保存草稿）
-  - 草稿自动保存（⌘S），离开页面有"未保存"提示
-  - 提交后生成 `PO-YYYYMMDD-XXX` 编号（`bill_sequence` 表）
-- **Tech Notes**:
-  - 涉及表: `bill_head`, `bill_item`, `bill_sequence`, `partner`
-  - 涉及组件: `components/form-builder/stepper.tsx`, `components/bill/bill-item-table.tsx`
-
-#### Story 6.2 — 采购单提交审核与状态机流转
-- **As a** 采购员, **I want** 提交草稿后进入审核流程，**so that** 防止未经确认的采购单影响账务
-- **Acceptance Criteria**:
-  - 状态转换: 草稿(0) → 已提交(1) → 已审核(2) | 已驳回
-  - 非法转换（如草稿直接跳完成）返回 400 错误
-  - 审核通过不立即入库，等待仓管确认入库（Story 6.3）
-- **Tech Notes**:
-  - 涉及文件: `pkg/types/bill_status.go`（状态枚举 + 合法转换表）
-  - 涉及函数: `app/purchase/submit_purchase.go`, `approve_purchase.go`
-
-#### Story 6.3 — 采购入库确认
-- **As a** 仓管, **I want** 扫码确认收到货物并录入实收数量，**so that** 库存精确增加
-- **Acceptance Criteria**:
-  - 支持全量收货（一次性）和部分收货（多次）
-  - 入库确认后: `stock_snapshot.on_hand_qty` += 入库数量；WAC 重算（Story 5.3 逻辑）
-  - 批次商品: 入库时强制录入 `lot_no` + `expiry_date`
-  - NATS `PSI_EVENTS` 发布 `psi.stock.changed` 事件
-- **Tech Notes**:
-  - 涉及函数: `app/purchase/receive_purchase.go`
-  - 所有库存变更在 PostgreSQL 事务内：`bill_head` 更新 + `stock_snapshot` 更新 + `stock_ledger` 写入
-
-#### Story 6.4 — 采购单应付款管理
-- **As a** 财务, **I want** 录入每次付款金额和日期，**so that** 应付台账实时反映付款进度
-- **Acceptance Criteria**:
-  - 采购单详情页显示：应付总额 / 已付 / 剩余应付
-  - 可录入多次付款（`payment_head` 记录），每次指定金额/日期/账户/备注
-  - 全额付清后状态自动更新为"已结清"
-- **Tech Notes**:
-  - 涉及表: `payment_head`, `payment_item`, `finance_account`
-  - `bill_head.paid_amount` 在付款后累加更新
-
-#### Story 6.5 — 采购单反审与红冲
-- **As a** 采购员, **I want** 对已审核采购单进行红冲，**so that** 纠正错误时账面保持完整性
-- **Acceptance Criteria**:
-  - 反审：审核(2) → 草稿(0)，仅限未入库的采购单
-  - 红冲（已入库）：原单状态 → "已冲销"；生成反向入库单（`bill_type=出库, sub_type=采购退货`）；库存自动减少
-  - 所有操作写入 `audit_log`（who/what/result）
-- **Tech Notes**:
-  - `bill_head.amendment_of_id` FK 关联原单，追溯红冲关系
-  - 涉及函数: `app/purchase/cancel_purchase.go`
-
-#### Story 6.6 — 采购单列表与详情页
-- **As a** 采购员, **I want** 在采购单列表中按状态/时间/供应商筛选，**so that** 快速找到需要处理的单据
-- **Acceptance Criteria**:
-  - 列表支持状态筛选 Badge（草稿/待入库/已完成）
-  - 状态颜色语义化（ux-benchmarks P16）：草稿=灰/待审=黄/审核=蓝/完成=绿/取消=红
-  - 点击行→ Slide-over Sheet 侧滑出详情（ux-benchmarks P1）
-- **Tech Notes**:
-  - 涉及组件: `components/bill/bill-detail-sheet.tsx`, `bill-status-badge.tsx`
-
-#### Story 6.7 — 采购退货处理
-- **As a** 采购员, **I want** 对已入库商品发起退货，**so that** 退回次品时库存和应付账款正确减少
-- **Acceptance Criteria**:
-  - 退货单引用原采购入库单，不能超退
-  - 退货出库确认后: `stock_snapshot.on_hand_qty` -= 退货数量；`bill_head.paid_amount` 相应抵减
-  - 退货单独立编号 `PR-YYYYMMDD-XXX`
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 6.1 | 创建采购单草稿（Stepper + 计量单位感知） | both | feat | 7h | `app/purchase/create_purchase.go`, `web/app/purchases/new/` |
+| 6.2 | 采购单提交审核与状态机 | both | feat | 5h | `app/purchase/submit_purchase.go`, `pkg/types/bill_status.go` |
+| 6.3 | 采购入库确认（全量/部分 + 成本策略触发） | both | feat | 6h | `app/purchase/receive_purchase.go` |
+| 6.4 | 采购单应付款管理（多次付款录入） | both | feat | 5h | `app/finance/create_payment.go` |
+| 6.5 | 采购单反审与红冲 | both | feat | 6h | `app/purchase/cancel_purchase.go` |
+| 6.6 | 采购单列表与详情页 | both | feat | 4h | `web/app/purchases/page.tsx` |
+| 6.7 | 采购退货（退供应商） | both | feat | 5h | `app/purchase/` 退货子流程 |
 
 ---
 
 ## Epic 7: 销售流程闭环
 
-**目标**: 业务员可以创建销售单 → 超库存预警 → 审核 → 出库确认 → 库存扣减 → 应收台账更新；财务可以录入收款；支持红冲（销售退货）；支持打印送货单。
+**目标**: 业务员可创建销售单 → 超库存预警 → 出库确认 → 库存扣减 → 应收台账；支持打印送货单；零售 Profile 下支持现金/赊账收款区分；跨境 Profile 下支持外币金额显示（V1 仅显示，E9 做正式多币种）。
 
-**价值**: PRD §4.1 模块5 (US-5.1~5.4)；PRD §6.5 销售模块 P0 全部落地；PRD §12 W7-W8 里程碑
+**PRD Requirements**: US-5.1~5.4；PRD §6.5 销售 P0
 
-**依赖**: Epic 5（库存）, Epic 6（应付参考结构复用，尤其收付款设计）
+**Risk**: 超卖并发控制——提交到出库确认之间可能并发超卖，出库确认时必须 `SELECT FOR UPDATE`，在 Story 7.3 明确。
 
-**风险**: 超卖控制——销售单提交时校验 `available_qty` 足够，但从"提交"到"出库确认"中间可能有并发超卖。需要在出库确认时再次加锁（`SELECT FOR UPDATE`），并在 Story 7.3 中明确这个设计。
-
-**预估**: 7 个 Story × 平均 5.5 小时 = 38 小时
-
-**Definition of Done**:
+**Acceptance**:
 - 销售单完整状态机测试（含超库存场景）
-- 出库确认后 `stock_snapshot.on_hand_qty` 精确减少
-- 应收台账按客户分组正确汇总
-- 打印销售单含公司抬头和中文大写金额
+- 出库确认后 `on_hand_qty` 精确减少
+- 打印送货单含公司抬头、中文大写金额
+- 零售 Profile 下有"收现金/赊账"快速选项
+
+**依赖**: Epic 5（库存）, Epic 6（参考收付款结构）
+
+**预估**: 8 Stories × 平均 5h = **40h**
 
 ### Stories
 
-| # | Story Title | 类型 | 工时 | 关键文件/模块 |
-|---|------------|------|------|--------------|
-| 7.1 | 创建销售单（客户选择 + SKU 明细 + 折扣） | feat | 7h | `app/sales/create_sales.go`, `web/app/sales/new/page.tsx` |
-| 7.2 | 库存实时校验与超库存行内警告 | feat | 4h | `app/sales/submit_sales.go`, 前端实时库存查询 |
-| 7.3 | 出库确认（全量/部分出库 + 并发锁保护） | feat | 6h | `app/sales/ship_sales.go`, PostgreSQL FOR UPDATE |
-| 7.4 | 销售单应收款管理与超期标红 | feat | 5h | `app/finance/`, `partner.ar_balance` 更新 |
-| 7.5 | 销售退货（红冲）与库存恢复 | feat | 5h | `app/sales/cancel_sales.go`, 退货入库单生成 |
-| 7.6 | 销售单打印（送货单/对账单 + 中文大写金额） | feat | 5h | `styles/print.css`, `web/app/sales/[id]/` 打印视图 |
-| 7.7 | 销售单列表与详情页 | feat | 4h | `web/app/sales/page.tsx`, `[id]/page.tsx` |
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 7.1 | 创建销售单（客户选择 + SKU 明细 + 折扣 + 计量单位） | both | feat | 7h | `app/sales/create_sales.go`, `web/app/sales/new/` |
+| 7.2 | 库存实时校验与超库存行内警告 | both | feat | 4h | `app/sales/submit_sales.go` |
+| 7.3 | 出库确认（全量/部分 + 并发锁） | both | feat | 6h | `app/sales/ship_sales.go` |
+| 7.4 | 销售单应收款管理与超期标红 | both | feat | 5h | `app/finance/` |
+| 7.5 | 销售退货（红冲）与库存恢复 | both | feat | 5h | `app/sales/cancel_sales.go` |
+| 7.6 | 销售单打印（送货单/对账单 + 中文大写） | both | feat | 5h | `web/styles/print.css`, `components/print/` |
+| 7.7 | 零售快速收款（现金/赊账/班次结算入口） | retail | feat | 5h | `web/app/sales/[id]/collect.tsx` |
+| 7.8 | 销售单列表与详情页 | both | feat | 3h | `web/app/sales/page.tsx` |
 
-### Story 大纲
-
-#### Story 7.1 — 创建销售单
-- **As a** 业务员, **I want** 用三步 Stepper 创建销售单，**so that** 在客户现场也能快速完成开单
+#### Story 7.7 — 零售快速收款（现金/赊账/班次结算入口）
+- **As a** 五金店收银员, **I want** 销售单确认时快速选择"现金收清"或"挂账赊欠", **so that** 一笔单子 30 秒内可以完成。
 - **Acceptance Criteria**:
-  - Step 1: 选客户（搜索/快速新建）
-  - Step 2: 添加 SKU 明细；行内显示当前可用库存；支持扫码枪输入
-  - Step 3: 选仓库/付款方式/备注，整单折扣输入
-  - 提交生成 `SO-YYYYMMDD-XXX` 编号
-- **Tech Notes**:
-  - 可用库存实时查询（前端每行 SKU 变更时异步请求 `GET /api/v1/stocks?sku_id=`）
-  - 行级折扣 + 整单折扣均支持（US-5.2）
-
-#### Story 7.2 — 库存实时校验与超库存行内警告
-- **As a** 业务员, **I want** 输入超过库存的数量时看到行内警告，**so that** 不会提交超卖的销售单
-- **Acceptance Criteria**:
-  - 行内输入数量 > `available_qty` 时，该行显示橙色警告"库存不足（可用 X 件）"
-  - 允许保存草稿（不阻断），不允许提交出库（阻断）
-  - 提交时后端再次校验，防止并发超卖（乐观锁）
-- **Tech Notes**:
-  - 前端: TanStack Query 缓存可用库存（60s TTL，手动 invalidate 后更新）
-  - 后端: `app/sales/submit_sales.go` 提交时 `SELECT FOR UPDATE stock_snapshot`
-
-#### Story 7.3 — 出库确认与并发锁保护
-- **As a** 仓管, **I want** 确认实际出库数量后库存精确扣减，**so that** 系统库存与实物一致
-- **Acceptance Criteria**:
-  - 支持部分出库（分批发货），`bill_head.purchase_status` 跟踪完成度
-  - 出库确认：`stock_snapshot.on_hand_qty` -= 出库数量；`available_qty` 同步更新
-  - 批次商品：优先按最近到期批次出库（FIFO 批次，非 FIFO 成本）
-  - 并发场景：两个仓管同时确认同一销售单 → 第二个操作返回 409 冲突
-
-#### Story 7.4 — 销售单应收款管理与超期标红
-- **As a** 财务, **I want** 录入每笔收款后应收台账实时更新，**so that** 知道哪些客户有欠款
-- **Acceptance Criteria**:
-  - 应收台账按客户分组：总应收/已收/待收/超期（按配置天数计算）
-  - 超期应收自动标红（默认 30 天，可配置 `system_config`）
-  - 收款完成后 `partner.ar_balance` 同步更新
-
-#### Story 7.5 — 销售退货与库存恢复
-- **As a** 财务, **I want** 对已出库销售单发起退货，**so that** 客户退货时账面和库存都正确
-- **Acceptance Criteria**:
-  - 退货入库单引用原销售出库单，数量不超过原单
-  - 库存恢复: `stock_snapshot.on_hand_qty` += 退货数量
-  - 应收自动抵减；审计日志记录操作人
-  - 退货单编号 `SR-YYYYMMDD-XXX`
-
-#### Story 7.6 — 销售单打印
-- **As a** 业务员, **I want** 在客户现场打印送货单，**so that** 提供专业的纸质凭证
-- **Acceptance Criteria**:
-  - 打印视图隐藏侧边栏/顶栏，显示公司 Logo/抬头/单据明细/中文大写合计金额（ux-benchmarks P15）
-  - 支持"送货单"和"对账单"两种模板
-  - `react-to-print` 触发，支持 A4 和 A5 纸
-- **Tech Notes**:
-  - 涉及文件: `web/styles/print.css`；`formatCNY()` 工具函数（中文大写）
-
-#### Story 7.7 — 销售单列表与详情页
-- **As a** 业务员, **I want** 在销售单列表快速找到任意单据并查看详情，**so that** 随时跟进订单状态
-- **Acceptance Criteria**:
-  - 按状态/客户/时间范围筛选
-  - 待出库状态高亮提醒（ux-benchmarks P16）
-  - 详情 Sheet 含收款记录时间线
+  - 销售单详情页右上角两个大按钮："收现金"（直接结清）/ "挂账"（标记赊账，自动进应收台账）
+  - 班次结算入口：当日收款汇总弹窗（现金 + 微信/支付宝汇总，供店主核对）
+  - "收现金"后自动更新 `finance_account.current_balance`（现金账户）
+- **Profile**: `retail`
+- **Out of Scope**: 微信/支付宝收单（Epic 10 实现）；打印小票（Epic 10 实现）
 
 ---
 
-## Epic 8: 调拨与盘点
+## Epic 8: Profile 机制实现
 
-**目标**: 仓管可以创建跨仓调拨单（含在途状态和部分收货）；支持整仓盘点和循环盘点（按类别不关仓）；盘点差异审核通过后库存自动调平；损耗出库记录完整。
+**目标**: 后端 `tenant_profile` middleware 就绪；前端侧边栏导航按 Profile 动态显示/隐藏菜单项；Profile 专属字段集（采购/销售单的跨境/零售差异字段）按 Profile 正确渲染；管理员可在设置页修改 Profile。
 
-**价值**: PRD §4.1 模块6 (US-6.1~6.3)；PRD §6.6 调拨与盘点 P0；PRD Journey 4 和 Journey 8
+**PRD Requirements**: 决策锁 DL-1；无直接 PRD User Story，但是所有 Profile 相关 Story 的基础设施
 
-**依赖**: Epic 6（采购流程闭环，理解状态机设计）, Epic 7（销售流程闭环，共享 bill_head 模型）
+**Risk**: 如果 Profile 机制做成"前端硬判断"（`if profile === 'retail'`），会散落在数十个组件里，维护灾难。必须在本 Epic 建立统一的 Profile 感知渲染框架和后端 field-set 配置，后续 E9/E10 直接调用。
 
-**风险**: 循环盘点的并发控制——盘点任务进行中时，其他单据仍在出入库，盘点快照的时间点一致性是个挑战。v1 使用"快照入账面库存 + 盘点完成时校验差异"的简单模型，不做实时锁仓。
+**Acceptance**:
+- 后端 `/api/v1/profile/field-set` 返回当前 Profile 的可用字段列表
+- 侧边栏：跨境菜单（多币种/HS Code/海运）在 retail 下隐藏；零售菜单（POS/称重）在 cross_border 下隐藏
+- 采购单/销售单表单：字段按 Profile 配置动态显隐（无需前端硬编码 if/else）
+- 设置页可切换 Profile，切换后 UI 即时更新
 
-**预估**: 5 个 Story × 平均 5 小时 = 25 小时
+**依赖**: Epic 3（ProfileGate 组件）, Epic 6（采购单字段）, Epic 7（销售单字段）
 
-**Definition of Done**:
-- 调拨单在途状态正确（A 仓减少/B 仓增加时序正确）
-- 盘点任务差异审核后库存精确调平
-- `TestStocktake_DiffApproved_StockAdjusted` 集成测试通过
+**预估**: 5 Stories × 平均 6h = **30h**
 
 ### Stories
 
-| # | Story Title | 类型 | 工时 | 关键文件/模块 |
-|---|------------|------|------|--------------|
-| 8.1 | 跨仓调拨单（含在途状态与部分收货） | feat | 6h | `app/transfer/`, `handler/v1/transfer.go`, `web/app/transfers/` |
-| 8.2 | 整仓盘点任务创建与快照 | feat | 5h | `app/stocktake/create_stocktake.go` |
-| 8.3 | 盘点实盘录入（扫码/行内输入/进度条） | feat | 5h | `app/stocktake/record_stocktake.go`, `web/app/stocktakes/[id]/page.tsx` |
-| 8.4 | 盘点差异审核与库存调平 | feat | 5h | `app/stocktake/finalize_stocktake.go` |
-| 8.5 | 循环盘点（按商品分类/不关仓）与损耗出库 | feat | 5h | 循环盘点任务管理，`bill_type=出库/sub_type=损耗` |
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 8.1 | 后端 Profile Field-Set 配置与 middleware | both | feat | 6h | `app/profile/field_set.go`, `adapter/middleware/profile.go` |
+| 8.2 | 侧边栏导航按 Profile 动态渲染 | both | feat | 5h | `components/layout/sidebar.tsx` Profile 条件 |
+| 8.3 | 采购/销售单表单 Profile 感知字段集 | both | feat | 7h | `components/bill/bill-form.tsx` + field-set 驱动 |
+| 8.4 | 商品 Profile 字段差异（HS Code vs 五金规格属性） | both | feat | 5h | `components/product/product-form.tsx` |
+| 8.5 | 设置页 Profile 切换与 UI 即时刷新 | both | feat | 5h | `web/app/(dashboard)/settings/profile/page.tsx` |
 
-### Story 大纲
-
-#### Story 8.1 — 跨仓调拨单
-- **As a** 仓管, **I want** 创建从 A 仓到 B 仓的调拨单，**so that** 库存在仓库间平衡
+#### Story 8.1 — 后端 Profile Field-Set 配置与 middleware
+- **As a** 系统, **I want** 后端 API 按租户 Profile 返回可用字段集, **so that** 前端无需硬编码 if/else 判断各字段是否显示。
 - **Acceptance Criteria**:
-  - 提交调拨单: A 仓 `available_qty` -= 调拨数量，`in_transit_qty` += 调拨数量
-  - B 仓确认收货: `in_transit_qty` -= 收货数量，B 仓 `on_hand_qty` += 收货数量
-  - 支持部分收货（B 仓只收到 80%，剩余 20% 继续在途）
-  - A 仓 `available_qty` 不足时提交报错（Journey 8 验收）
-
-#### Story 8.2 — 整仓盘点任务创建与快照
-- **As a** 仓管, **I want** 发起整仓盘点时系统生成当前账面库存快照，**so that** 盘点有参考基准
-- **Acceptance Criteria**:
-  - 创建盘点任务：选仓库 → 系统拉取 `stock_snapshot` 当前值作为"应盘数量"冻结快照
-  - 快照存入 `bill_item.qty`（账面）字段
-  - 任务状态: 进行中/待审核/已完成
-
-#### Story 8.3 — 盘点实盘录入
-- **As a** 仓管, **I want** 用条码枪扫码后直接在对应行录入实盘数量，**so that** 盘点高效准确
-- **Acceptance Criteria**:
-  - 盘点界面顶部进度条（已盘 / 总数）
-  - 扫码 → 自动定位 SKU 行，光标跳至"实盘数量"列
-  - Tab 跳下一行，Enter 确认；差异 > 5% 红色高亮
-  - 实时计算差异列（Journey 4 验收标准：-5 件/-5% 红色高亮）
-
-#### Story 8.4 — 盘点差异审核与库存调平
-- **As a** 管理员, **I want** 审核盘点差异报告，**so that** 库存数据与实物一致
-- **Acceptance Criteria**:
-  - 审核通过: 正差（盘盈）→ 生成入库单；负差（盘亏）→ 生成出库单；库存调平
-  - `stock_ledger` 记录"盘点调平 ±N"及操作人
-  - 盘点完成后任务状态 → "已完成"，归档
-
-#### Story 8.5 — 循环盘点与损耗出库
-- **As a** 仓管, **I want** 选择部分 SKU 盘点（不关仓），**so that** 日常循环盘点不影响出库
-- **Acceptance Criteria**:
-  - 循环盘点：选择"按商品分类"或"自定义 SKU 列表"创建局部盘点任务
-  - 盘点进行中的 SKU 打"盘点中"标记（不锁库存，仅标注）
-  - 损耗出库：创建 `bill_type=出库, sub_type=损耗` 的单据，库存减少有记录
+  - `GET /api/v1/profile/field-set` 返回 `{ bill_fields: [...], product_fields: [...] }` 按 Profile 过滤
+  - `cross_border` 字段集含: `currency_code / exchange_rate / hs_code / country_of_origin / shipping_status`
+  - `retail` 字段集含: `weight_qty / bulk_unit / pos_payment_method / shift_id`
+  - Gin middleware `ProfileContext` 将 `tenant_profile.profile_type` 注入 `ctx`（通过 `ProfileResolver`），handler 据此过滤响应字段
+- **Tech Notes**: `app/profile/field_set.go` 定义 `FieldSet` struct；field-set 配置存代码（非 DB），避免配置漂移
 
 ---
 
-## Epic 9: 财务台账与对账
+## Epic 9: 跨境专属能力
 
-**目标**: 财务可以查看应收账款台账（按客户/时间/状态）和应付账款台账（按供应商）；支持多资金账户；超期应收自动标红并触发 Dashboard 预警卡片；台账可导出 Excel。
+**目标**: 跨境企业 persona 可在 Tally 中处理多币种报价/入库、记录 HS Code、追踪海运状态；V1 实现多币种显示和人工汇率录入（不接外部汇率 API）。
 
-**价值**: PRD §4.1 模块7 (US-7.1~7.3)；PRD §6.7 财务台账 P0 全部落地；PRD Journey 6
+**PRD Requirements**: 决策锁 DL-2；PRD §4.2 多币种（V2）提前到 V1 双 persona 版本
 
-**依赖**: Epic 6（应付台账数据）, Epic 7（应收台账数据）
+**Risk**: 多币种的金额存储策略——必须在本 Epic 开始前锁定：所有金额以"原始货币 + 汇率 + CNY 等值"三字段存储，避免后期换算失真。存储方案在 Story 9.1 中明确。
 
-**风险**: 大客户应收历史数据量大时，按客户分组汇总查询可能很慢。需要 `partner.ar_balance/ap_balance` 实时聚合字段（Epic 6/7 中已更新），台账查询直接读聚合字段 + 按需展开明细，避免全表 SUM。
+**Acceptance**:
+- 跨境 Profile 租户可在采购/销售单中选择外币，填入人工汇率，系统自动换算 CNY 等值
+- HS Code 可在商品属性中存储并在单据中显示
+- 海运状态字段在单据中可手动更新
+- `currency_code` / `exchange_rate` / `amount_cny` 三字段在 `bill_head` DDL 中存在
+- 零售 Profile 租户看不到以上字段（ProfileGate 隔离）
 
-**预估**: 5 个 Story × 平均 5 小时 = 25 小时
+**依赖**: Epic 8（Profile 机制）
 
-**Definition of Done**:
-- 应收/应付台账查询 API P95 < 200ms（数据量 1000 条）
-- Excel 导出含中文大写金额，能被 WPS 正确打开
-- 超期逻辑单元测试覆盖（边界条件：恰好第 30 天）
+**预估**: 5 Stories × 平均 6h = **30h**
 
 ### Stories
 
-| # | Story Title | 类型 | 工时 | 关键文件/模块 |
-|---|------------|------|------|--------------|
-| 9.1 | 应收账款台账（按客户分组 + 超期标红） | feat | 6h | `app/finance/query_payment.go`, `web/app/finance/page.tsx` |
-| 9.2 | 应付账款台账（按供应商 + 付款进度） | feat | 4h | 复用应收结构，供应商维度 |
-| 9.3 | 多资金账户管理（银行/支付宝/微信/现金） | feat | 4h | `domain/entity/finance_account.go`, `web/app/finance/accounts/page.tsx` |
-| 9.4 | 收付款记录详情与单据关联 | feat | 4h | `web/app/finance/payments/page.tsx`, `components/bill/bill-detail-sheet.tsx` |
-| 9.5 | 台账 Excel 导出（含公司抬头 + 中文大写） | feat | 4h | `app/finance/` 导出逻辑，`excelize` |
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 9.1 | 多币种存储模型（bill_head 三字段 + 汇率录入） | cross_border | feat | 7h | `migrations/` bill_head 扩展, `domain/entity/bill_head.go` |
+| 9.2 | 采购/销售单外币输入与 CNY 换算显示 | cross_border | feat | 6h | `web/app/purchases/new/`, `web/app/sales/new/` |
+| 9.3 | HS Code 商品属性与单据打印 | cross_border | feat | 5h | `app/product/`, `components/print/` |
+| 9.4 | 海运状态追踪（手动录入，单据附注） | cross_border | feat | 5h | `bill_head.shipping_status`, `web/app/purchases/[id]/` |
+| 9.5 | 跨境财务报表（外币应收/应付，按币种汇总） | cross_border | feat | 6h | `app/finance/query_payment.go`, `web/app/finance/` |
 
-### Story 大纲
-
-#### Story 9.1 — 应收账款台账
-- **As a** 财务, **I want** 查看每个客户的应收汇总，**so that** 月末对账一目了然
+#### Story 9.1 — 多币种存储模型
+- **As a** 跨境企业财务, **I want** 系统以原始外币 + 汇率 + CNY 等值三个字段存储金额, **so that** 汇率变动后历史单据金额不失真，且可随时重新换算报表。
 - **Acceptance Criteria**:
-  - 台账列：客户名 / 总应收 / 已收 / 待收 / 超期金额（超期天数可配置）
-  - 超期金额 > 0 时该行红色高亮
-  - 点击客户行 → 展开该客户所有相关销售单及收款进度
-  - API: `GET /api/v1/partners/:id/ar_ap?type=ar` 返回台账数据
+  - `bill_head` 新增（migration 000019）: `currency VARCHAR(10) DEFAULT 'CNY'`，`exchange_rate NUMERIC(20,8) DEFAULT 1`，`amount_local NUMERIC(18,4)`（原始币金额；CNY 等值始终存 `total_amount`）
+  - `bill_item` 新增: `unit_price_orig NUMERIC(18,4)`（原始币单价）
+  - 创建单据时，用户输入原始外币金额 + 当日汇率，系统自动计算 CNY 等值并存储
+  - 历史单据的 CNY 等值不随汇率变化重算（快照语义）
+- **Profile**: `cross_border`
+- **Tech Notes**: 迁移文件 `000019_add_currency.up.sql`（000013 已被 tenant_profile 占用）；多币种字段为 `currency`（非 `currency_code`）、`amount_local`（非 `total_amount_cny`）；所有财务汇总报表以 `total_amount`（CNY）为基准，`amount_local` 存原币金额
 
-#### Story 9.2 — 应付账款台账
-- **As a** 财务, **I want** 查看每个供应商的应付汇总，**so that** 控制现金流节奏
+#### Story 9.5 — 跨境财务报表（外币应收/应付）
+- **As a** 跨境企业财务, **I want** 应收/应付台账按币种分组汇总, **so that** 可以分别看 USD / EUR / CNY 的欠款情况。
 - **Acceptance Criteria**:
-  - 与应收台账对称结构（供应商维度，未付/部分付/已结清）
-  - 支持按"到期日"排序，即将到期的用黄色预警
-
-#### Story 9.3 — 多资金账户管理
-- **As a** 财务, **I want** 管理多个资金账户并查看余额，**so that** 清楚每个账户的现金状况
-- **Acceptance Criteria**:
-  - 支持银行账户/支付宝/微信/现金（可自定义名称和初始余额）
-  - `finance_account.current_balance` 在每次收付款后实时更新
-  - 账户列表显示余额 + 本月流入/流出汇总
-
-#### Story 9.4 — 收付款记录详情与单据关联
-- **As a** 财务, **I want** 查看每笔收付款与对应单据的关联，**so that** 对账时有完整链路
-- **Acceptance Criteria**:
-  - `payment_head.related_bill_id` 可跳转到对应销售单/采购单
-  - 付款记录时间线展示（最新在上）
-
-#### Story 9.5 — 台账 Excel 导出
-- **As a** 财务, **I want** 一键导出当月台账 Excel，**so that** 给会计师时不需要手工整理
-- **Acceptance Criteria**:
-  - 导出内容：公司名称/报表标题/日期范围/数据明细/合计行/中文大写合计
-  - 文件名: `应收台账_202604.xlsx`；列宽自适应内容
-  - 导出 < 3s（1000 行以内同步，以上异步通知）
+  - 台账支持"按币种"筛选 Tab（CNY / USD / EUR / 其他）
+  - 每个币种显示：原始金额 / 汇率 / CNY 等值
+  - 合计行仅汇总 CNY 等值（跨币种无法直接相加）
+- **Profile**: `cross_border`
 
 ---
 
-## Epic 10: 报表与仪表盘
+## Epic 10: 零售专属能力
 
-**目标**: 老板可以在 Dashboard 看到 4 个 KPI 卡（含 Sparkline + 环比）；库存周转率/ABC 分析/滞销预警报表可查；Dashboard 待办卡片聚合低库存预警；首屏 LCP < 1.5s。
+**目标**: 五金店 persona 可用 POS 界面快速收银；支持 ESC/POS 小票打印；接入微信/支付宝收单（展示二维码）；会员卡积分；称重秤 USB/串口集成（读取重量自动填入数量）。
 
-**价值**: PRD §4.1 模块8 (US-8.1~8.4)；PRD §6.8 报表 P0；PRD §7.1 性能预算
+**PRD Requirements**: 决策锁 DL-2；PRD §13 "永远不做 POS" — 注意：PRD 原文 POS 在 Out of Scope，但双 persona 方向已锁定零售能力。此处按用户指令执行，覆盖原 PRD §13 的 POS 禁令。
 
-**依赖**: Epic 5（库存数据）, Epic 6（采购数据）, Epic 7（销售数据）, Epic 9（财务数据）
+**Risk**: 称重秤集成——浏览器 Web Serial API 兼容性有限（Chrome 89+），Safari 不支持。需在 Story 10.4 早期验证目标设备（Windows 收银机/iPad）的浏览器环境，必要时降级为手动输入 + 快捷键触发。
 
-**风险**: 报表查询性能——库存周转率计算需要 JOIN `bill_item` 历史流水全表，数据量大时可能超过 1s。需要预计算策略（物化视图 `report_stock_summary` 或 Redis 缓存），在 Story 10.2 中确定方案。
+**Acceptance**:
+- 零售 Profile 租户有"收银台"页面，可快速完成一笔收银 < 30 秒
+- ESC/POS 小票打印在连接打印机时可工作
+- 微信/支付宝二维码展示可用（不要求自动确认，V2 接 Open API 做自动确认）
+- 会员卡积分可录入和查询
+- 跨境 Profile 租户看不到以上入口
 
-**预估**: 6 个 Story × 平均 5 小时 = 30 小时
+**依赖**: Epic 8（Profile 机制），Epic 7（销售单基础）
 
-**Definition of Done**:
-- Dashboard 首屏 LCP < 1.5s（Lighthouse 测试，在 Stage 环境）
-- 四个报表均有完整 UI 和 API，支持时间范围筛选
-- `report_stock_summary` 物化视图刷新后报表数据正确
+**预估**: 6 Stories × 平均 7h = **42h**
 
 ### Stories
 
-| # | Story Title | 类型 | 工时 | 关键文件/模块 |
-|---|------------|------|------|--------------|
-| 10.1 | 仪表盘 KPI 卡片（4 指标 + Sparkline + 环比） | feat | 6h | `web/app/(dashboard)/page.tsx`, `components/charts/kpi-card.tsx` |
-| 10.2 | 库存周转率报表（按商品/分类） | feat | 5h | `app/report/stock_report.go`, `web/app/reports/stock/page.tsx` |
-| 10.3 | ABC 分析报表（A/B/C 分类自动计算） | feat | 5h | `app/report/stock_report.go` ABC 算法 |
-| 10.4 | 滞销预警报表（阈值可配置） | feat | 4h | `app/report/stock_report.go` 滞销查询 |
-| 10.5 | Dashboard 待办卡片系统（预警聚合） | feat | 5h | `web/app/(dashboard)/page.tsx` 待办区 |
-| 10.6 | 销售趋势图与报表 Excel 导出 | feat | 5h | `app/report/sales_report.go`, `components/charts/` |
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 10.1 | POS 收银台界面（商品快捷选择 + 数量 + 合计） | retail | feat | 8h | `web/app/(dashboard)/pos/page.tsx`, `components/pos/` |
+| 10.2 | ESC/POS 小票打印（USB 热敏打印机） | retail | feat | 7h | `components/pos/receipt-printer.ts`（Web Serial API） |
+| 10.3 | 微信/支付宝收款二维码展示（手动确认） | retail | feat | 6h | `web/app/(dashboard)/pos/payment/page.tsx` |
+| 10.4 | 称重秤 USB 集成（Web Serial API 读取重量） | retail | feat | 7h | `hooks/use-scale.ts`（Web Serial API） |
+| 10.5 | 会员卡系统（积分录入/兑换/查询） | retail | feat | 7h | `app/member/`, `domain/entity/member.go` |
+| 10.6 | 班次结算（当日收款汇总 + 交班报表） | retail | feat | 7h | `app/shift/`, `web/app/(dashboard)/shift/page.tsx` |
 
-### Story 大纲
-
-#### Story 10.1 — 仪表盘 KPI 卡片
-- **As a** 老板, **I want** 打开 Dashboard 5 秒内看懂本月业务状态，**so that** 不需要进入各子模块
+#### Story 10.1 — POS 收银台界面
+- **As a** 五金店收银员, **I want** 一个全屏收银台界面，快速点选商品/扫码/输入数量后一键收款, **so that** 每笔收银不超过 30 秒。
 - **Acceptance Criteria**:
-  - 四卡：本月销售额 / 本月毛利率 / 当前库存总价值 / 应收欠款总额
-  - 每卡含：当前值 + 环比箭头（↑↓）+ 7 天 Sparkline（Tremor + Recharts）
-  - 首屏 LCP < 1.5s（KPI 数据 API 需加 Redis 缓存，TTL 5 分钟）
-- **Tech Notes**:
-  - API: `GET /api/v1/reports/sales?period=this_month` 等
-  - `components/charts/kpi-card.tsx` 复用（Epic 3 预留位）
+  - 左侧: 商品快捷列表（按分类分组，每个 tile 显示商品图/名/价）；右侧: 当前购物车 + 合计
+  - 扫码枪扫码自动加入购物车（同 Epic 4 barcode 逻辑）
+  - 称重商品自动从秤读取重量（Story 10.4 完成后对接）
+  - 结算弹窗：现金/微信/支付宝三个大按钮；现金需输入收款金额自动计算找零
+  - 收银完成自动触发 Story 7 销售单创建（后台异步）
+- **Profile**: `retail`
+- **Tech Notes**: `/pos/page.tsx` 独立于主布局（全屏，隐藏侧边栏）；Zustand cart store 管理购物车状态
 
-#### Story 10.2 — 库存周转率报表
-- **As a** 老板, **I want** 查看每个商品/品类的库存周转率，**so that** 找出资金占压严重的品类
+#### Story 10.4 — 称重秤 USB 集成
+- **As a** 五金店仓管, **I want** 把螺丝放上秤后，系统自动读取重量并填入开单数量, **so that** 不需要手动输入重量减少错误。
 - **Acceptance Criteria**:
-  - 周转率 = 出库成本 / 平均库存价值（自定义时间范围）
-  - 按商品维度和按分类维度两个 Tab
-  - 支持 Excel 导出
-- **Tech Notes**:
-  - 使用物化视图 `report_stock_summary`，避免实时计算
-  - 对于自定义时间范围查询，查 `stock_ledger` + 时间范围内 `bill_item`
+  - `useScale()` hook 通过 Web Serial API 监听串口数据，解析重量值（支持常见称重协议：OHAUS/Toledo 简单格式）
+  - 在商品 `measurement_strategy = 'weight'` 的行，数量列旁边显示"从秤读取"按钮
+  - 秤不可用时（浏览器不支持/串口未授权）降级为手动输入，不报错
+  - 测试：用模拟串口数据验证重量解析正确
+- **Profile**: `retail`
+- **Out of Scope**: 自动识别称重秤型号（V1 仅支持手动配置波特率/协议）
 
-#### Story 10.3 — ABC 分析报表
-- **As a** 老板, **I want** 看到按销售额排名的 A/B/C 类 SKU 分布，**so that** 聚焦管理高价值 SKU
+#### Story 10.5 — 会员卡系统
+- **As a** 五金店老板, **I want** 记录老顾客的积分并在下次消费时兑换, **so that** 提升回头客黏性。
 - **Acceptance Criteria**:
-  - A 类: 前 20% SKU 贡献 80% 销售额（帕累托原则）
-  - 列表带 A/B/C 标签，按销售额降序；支持重算（选时间段）
-  - PieChart 展示三类占比（`components/charts/abc-pie-chart.tsx`）
-
-#### Story 10.4 — 滞销预警报表
-- **As a** 老板, **I want** 看到超过 N 天未动销的 SKU 列表，**so that** 主动清理积压
-- **Acceptance Criteria**:
-  - 可配置滞销天数阈值（默认 30 天，存 `system_config`）
-  - 列表: SKU 名 / 库存量 / 库存金额 / 最后出库时间 / 滞销天数
-  - 支持"按库存金额降序"排列（找金额最大的积压）
-
-#### Story 10.5 — Dashboard 待办卡片系统
-- **As a** 老板, **I want** Dashboard 上看到需要处理的待办事项，**so that** 优先处理最重要的问题
-- **Acceptance Criteria**:
-  - 待办类型: 低库存预警 / 超期应收 / 盘点待审核 / AI 建议（Epic 11 接入）
-  - 每类待办显示数量和金额摘要；点击跳转对应模块
-  - 待办卡片空状态显示"暂无待处理事项"（非空白页）
-
-#### Story 10.6 — 销售趋势图与报表导出
-- **As a** 老板, **I want** 查看近 30 天按品类/按时间的销售趋势折线图，**so that** 发现季节性规律
-- **Acceptance Criteria**:
-  - Recharts AreaChart，X 轴为日期，Y 轴为销售额；可选品类筛选
-  - 所有报表页面底部有"导出 Excel"按钮
-  - `components/charts/sales-bar-chart.tsx` 可复用
+  - 会员注册：手机号 + 姓名 + 初始积分 = 0
+  - 每笔销售单关联会员（按手机号搜索）；积分规则：每消费 ¥1 = 1 积分（`system_config` 可配置比例）
+  - 积分兑换：兑换时自动抵扣对应金额（100 积分 = ¥1，可配置）
+  - 会员查询：手机号搜索后显示历史消费 + 积分余额
+- **Profile**: `retail`
+- **Tech Notes**: `domain/entity/member.go`，`member_points_ledger`（积分流水）
 
 ---
 
-## Epic 11: AI 自然语言查询与 Kova Agent
+## Epic 11: Onboarding 向导（双 persona）
 
-**目标**: 用户可以通过 ⌘K → AI Drawer 用自然语言查询库存/销售/财务数据；Kova Agent 每日运行补货建议和滞销预警，建议卡片出现在 Dashboard 待办区；用户可对建议采纳/忽略/暂缓。
+**目标**: 新用户注册后 5 分钟内完成首次开单；跨境企业和五金店各有专属 onboarding 路径；演示数据按 Profile 预置真实场景（跨境：汇率单据 / 零售：散装商品 + 会员）。
 
-**价值**: PRD §4.1 模块9 (US-9.1~9.3)；PRD §6.9 AI 助手 P0 全部落地；PRD §9 AI 差异化策略；决策锁 §3 第8/9条
+**PRD Requirements**: PRD §5 Journey 1；PRD §1.3（平均首次开单时间 < 10 分钟）；决策锁 DL-2
 
-**依赖**: Epic 10（报表数据完整，AI 查询才有意义）
+**Risk**: 演示数据的维护成本——两套种子数据（cross_border / retail）如果 hardcode 在 SQL，后续商品模型变更会导致种子失效。需要用程序化种子生成，而非静态 SQL。
 
-**风险**: Hub API P95 响应 < 3s（含流式首字节 < 1.5s）在中国大陆网络环境下可能不稳定；Kova Agent 对 PSI 数据的 function calling 工具集需要仔细设计——工具过多会影响 LLM 准确率。应在 Story 11.1 中先实现 2-3 个核心工具（库存查询/销售查询），验证延迟基准，再扩展。这是 PRD 第二大风险（§11.1），放最后一个 Epic 但非最低优先——AI 是差异化核心，必须在 MVP α 就能 demo。
+**Acceptance**:
+- 跨境路径：注册 → 选 cross_border → 演示数据含外币采购单 → 5 分钟内完成第一张跨境销售单
+- 零售路径：注册 → 选 retail → 演示数据含散装商品/会员 → 5 分钟内完成第一笔 POS 收银
+- Onboarding 完成率埋点（注册到首次开单的漏斗）
 
-**预估**: 6 个 Story × 平均 7 小时 = 42 小时
+**依赖**: Epic 8（Profile 机制）, Epic 9（跨境能力），Epic 10（零售能力）
 
-**Definition of Done**:
-- ⌘K → AI Drawer 全链路测试（mock Hub API），首字节 < 1.5s 有量化测试
-- Kova Agent 每日运行脚本，建议写入 `agent_recommendations` 表
-- Dashboard 待办区展示 AI 建议卡片，采纳/忽略/暂缓逻辑完整
-- Hub 工具调用 function registry 覆盖 6 类查询（PRD Journey 5）
+**预估**: 5 Stories × 平均 5h = **25h**
 
 ### Stories
 
-| # | Story Title | 类型 | 工时 | 关键文件/模块 |
-|---|------------|------|------|--------------|
-| 11.1 | Hub AI 自然语言查询（SSE 流式 + Function Calling 基础工具集） | feat | 8h | `app/ai_agent/chat.go`, `function_registry.go`, `adapter/hub/` |
-| 11.2 | AI Drawer 对接真实 Hub API（流式渲染 + 操作嵌入按钮） | feat | 6h | `components/ai-drawer/`, `use-ai-chat.ts` 对接 |
-| 11.3 | ⌘K AI 查询入口与自然语言识别路由 | feat | 5h | `components/command-palette/commands.ts` AI 分组 |
-| 11.4 | Kova 补货 Agent（每日运行 + 建议持久化） | feat | 7h | `app/ai_agent/reorder_agent.go`, `adapter/kova/`, `lifecycle/worker.go` |
-| 11.5 | Kova 滞销预警 Agent（每日运行 + Dashboard 卡片） | feat | 6h | `app/ai_agent/deadstock_agent.go` |
-| 11.6 | 用户对 AI 建议的采纳/忽略/暂缓决策系统 | feat | 5h | `domain/entity/agent_recommendations.go`，`handler/v1/ai.go` |
-
-### Story 大纲
-
-#### Story 11.1 — Hub AI 自然语言查询基础
-- **As a** 任意用户, **I want** 用中文提问并获得数据化回答，**so that** 不需要记报表菜单路径
-- **Acceptance Criteria**:
-  - 支持 6 类查询（PRD Journey 5：库存/销售/应收应付/预警/补货估算/报表生成）
-  - Hub 工具集（function calling）: `query_stock`, `query_sales`, `query_ar_ap`, `query_alerts`（v1 最小集）
-  - SSE 流式输出，首字节 < 1.5s P95（Hub 侧已有缓存，Tally 侧不重复缓存 LLM 结果）
-  - AI 不执行写操作（仅返回数据 + 建议 + 跳转预填链接）
-- **Tech Notes**:
-  - API: `POST /api/v1/ai/chat`（SSE response，`text/event-stream`）
-  - `app/ai_agent/function_registry.go` 注册工具函数
-  - `prompts/chat_system.txt` 定义角色（进销存助手，不执行写操作）
-- **Test Plan**:
-  - Unit: `TestFunctionRegistry_QueryStock_ReturnsValidJSON`
-  - Integration: mock Hub SSE response，验证流式转发正确
-
-#### Story 11.2 — AI Drawer 对接真实 Hub API
-- **As a** 用户, **I want** AI Drawer 中看到流式 Markdown 回答和可点击的操作按钮，**so that** AI 分析与实际操作无缝衔接
-- **Acceptance Criteria**:
-  - `useChat` hook 连接 `/api/v1/ai/chat`（Go 后端 SSE → Next.js BFF → 前端）
-  - Markdown 表格正确渲染；操作按钮 `[查看报表]`、`[创建采购单（预填）]` 点击跳转
-  - 加载状态: 思考动画（三点 shimmer）
-  - 错误状态: Toast "AI 服务暂时不可用"，可重试
-
-#### Story 11.3 — ⌘K AI 查询入口
-- **As a** 用户, **I want** 在 ⌘K 中直接输入自然语言问题，**so that** AI 查询和普通导航体验一致
-- **Acceptance Criteria**:
-  - 输入"？"前缀或选择"AI 助手"分组 → 自动打开 AI Drawer 并将文字带入输入框
-  - 热门查询建议（hardcode 5 条）: "本月销售额？" / "哪些商品低库存？" / ...
-
-#### Story 11.4 — Kova 补货 Agent
-- **As a** 老板, **I want** 每天早上看到 AI 生成的补货建议，**so that** 不需要自己分析销量就能决策
-- **Acceptance Criteria**:
-  - tally-worker 每日 09:00 Cron 触发 Kova Agent（`app/ai_agent/reorder_agent.go`）
-  - Agent 读取: 历史 90 天销量 + `stock_snapshot.available_qty` + `stock_initial.low_safe_qty`
-  - 生成建议写入 `agent_recommendations` 表（`recommendation_type=reorder`）
-  - `GET /api/v1/ai/suggestions` 返回当日建议列表
-- **Tech Notes**:
-  - 涉及表: `agent_recommendations`（架构 §5 末尾提及）
-  - 涉及组件: `adapter/kova/agent.go`（Kova REST client，触发 Agent 执行）
-  - v1: Kova Agent 仅返回建议文本 + 建议采购量，不自动提交采购单（decision-lock §3）
-
-#### Story 11.5 — Kova 滞销预警 Agent
-- **As a** 老板, **I want** 每天看到 AI 判断的滞销商品列表和处置建议，**so that** 不需要自己翻报表
-- **Acceptance Criteria**:
-  - 每日运行（可与补货 Agent 同 Cron batch）
-  - 滞销判断标准：`available_qty > 0` AND 最后出库日期 > 30 天前
-  - 每条建议包含: SKU 名/库存量/库存金额/最后出库日期/AI 处置建议（降价/调拨/退供）
-  - 写入 `agent_recommendations`（`recommendation_type=deadstock`），推送 Dashboard 待办区
-
-#### Story 11.6 — 用户对 AI 建议的采纳/忽略/暂缓
-- **As a** 老板, **I want** 对每条 AI 建议作出决策，**so that** 有效建议执行，无效建议不再打扰我
-- **Acceptance Criteria**:
-  - **采纳**: 跳转对应预填表单（补货→预填采购单，调拨建议→预填调拨单）；建议状态→ "已采纳"
-  - **忽略**: 建议状态→ "已忽略"；7 天内同一 SKU 不重复推送（`agent_recommendations.ignored_until`）
-  - **暂缓**: 建议状态→ "暂缓"；`snoozed_until = now() + 3 days`，到期后状态重置
-  - Dashboard 待办卡片显示"已处理 X 条 / 未处理 Y 条"摘要
-- **Tech Notes**:
-  - API: `POST /api/v1/ai/suggestions/:id/adopt|ignore|snooze`
-  - 涉及表: `agent_recommendations`（需新增 `status/ignored_until/snoozed_until` 字段）
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 11.1 | Onboarding 向导框架（Profile 分叉路径） | both | feat | 5h | `web/app/(onboarding)/`, `components/onboarding/` |
+| 11.2 | 跨境 Onboarding 路径（汇率设置 + 第一张采购单引导） | cross_border | feat | 5h | `web/app/(onboarding)/cross-border/` |
+| 11.3 | 零售 Onboarding 路径（POS 设置 + 第一笔收银引导） | retail | feat | 5h | `web/app/(onboarding)/retail/` |
+| 11.4 | Profile 专属演示数据（程序化种子生成） | both | feat | 6h | `internal/seed/`, `cmd/seed/main.go` |
+| 11.5 | Onboarding 完成率埋点与首次开单引导 CTA | both | feat | 4h | `components/onboarding/progress-tracker.tsx` |
 
 ---
 
-## 4. Story 优先级矩阵
+---
 
-| Story | P 级 | MVP 边界 | 备注 |
-|-------|------|---------|------|
-| 1.1~1.7 | P0 | MVP α | 基础设施，全部必须 |
-| 2.1~2.6 | P0 | MVP α | 多租户安全，不可跳过 |
-| 3.1~3.6 | P0 | MVP α | UX 基石，后续复用 |
-| 4.1~4.8 | P0 | MVP α | 商品是一切的基础 |
-| 5.1~5.5 | P0 | MVP α | 库存核心 |
-| 6.1~6.7 | P0 | MVP α | 采购闭环 |
-| 7.1~7.7 | P0 | MVP α | 销售闭环 |
-| 8.1~8.5 | P0 | MVP α | 盘点/调拨 |
-| 9.1~9.5 | P0 | MVP α | 财务台账 |
-| 10.1~10.6 | P0/P1 | MVP α/β | 10.1~10.5 为 α；10.6 为 β |
-| 11.1~11.3 | P0 | MVP α | AI 查询是差异化核心 |
-| 11.4~11.6 | P0 | MVP β | Kova Agent MVP β 正式上线 |
-
-**MVP α 边界**: Story 1.1 到 11.3（61 个 stories，其中 10.6 可后补）
-
-**MVP β 边界**: Story 11.4 到 11.6 + 10.6
+## V2 — 边缘部署 & 离线优先
 
 ---
 
-## 5. Sprint Planning Suggestion
+## Epic 12: 边缘端 Go Binary（五金店本地部署）
 
-**假设**: 每 Sprint 2 周；有效工时 70%（= 每人每天 5.6h）
+**目标**: Tally 可以编译为独立 Go binary，使用 SQLite 作为本地存储，单 tenant 模式运行，不依赖云端 PostgreSQL；部署在五金店 Windows 收银机或 Linux mini PC 上，断网时 POS 功能完整可用。
 
-### 方案 A：单人开发（约 13 个 Sprint / 26 周）
+**PRD Requirements**: 决策锁 DL-5 / DL-6；V2 边缘部署
 
-| Sprint | Epic(s) | 目标产出 |
-|--------|---------|---------|
-| S1 | E1 + E3 部分 | 骨架可启动 + CI 绿 + 设计系统基础组件 |
-| S2 | E2 + E3 完成 | OIDC 登录 + RLS 通过 + 组件库完整 |
-| S3-4 | E4 | 商品/SKU 完整 CRUD + Excel 导入 |
-| S5 | E5 | 仓库 + 库存六状态 + WAC |
-| S6-7 | E6 | 采购流程全闭环 |
-| S8-9 | E7 | 销售流程全闭环 |
-| S10 | E8 | 调拨 + 盘点 |
-| S11 | E9 | 财务台账 |
-| S12 | E10 | 报表 + Dashboard |
-| S13 | E11 | AI 查询 + Kova Agent |
+**Risk**: SQLite 与 PostgreSQL 的 SQL 方言差异——GORM 可切换 dialect，但 PostgreSQL 特有语法（RLS、JSONB `->>`、`NUMERIC`精度、`uuid_generate_v4()`）需要在 edge build tag 下有兼容实现。这是 V2 最高技术风险，需要在 Story 12.1 中做 PoC。
 
-**MVP α 完成**: Sprint 12 末（约 24 周）
+**Acceptance**:
+- `go build -tags edge ./cmd/server` 编译成功，生成 ~30MB SQLite 版 binary
+- 该 binary 在无网络环境下启动，POS 收银/采购入库/销售出库可用
+- V1 预留的 `origin` / `sync_status` 字段在 SQLite 版本中已使用（`origin='edge'`，`sync_status='pending'`）
+- E2E 测试：离线 POS 收银 10 笔，之后网络恢复，数据待同步（Story 13 接管）
 
-### 方案 B：双人开发（约 8 个 Sprint / 16 周）
+**依赖**: E1（基础架构）, E4（商品模型），E7（销售流程）
 
-| Sprint | 人员 A | 人员 B |
-|--------|--------|--------|
-| S1 | E1 骨架 + E2 认证 | E3 设计系统 |
-| S2 | E4 商品/SKU | E5 仓库/库存 |
-| S3 | E6 采购前 3 story | E7 销售前 3 story |
-| S4 | E6 后 4 story | E7 后 4 story |
-| S5 | E8 调拨盘点 | E9 财务台账 |
-| S6 | E10 报表仪表盘 | E11 AI 查询基础 |
-| S7 | E11 Kova Agent | Bug Fix + 性能优化 |
-| S8 | Stage 部署 + Lighthouse 客户 UAT | 文档 + 监控配置 |
+**预估**: 6 Stories × 平均 6h = **36h**
 
-**MVP α 完成**: Sprint 7 末（约 14 周）
+### Stories
 
-### 方案 C：三人开发（约 6 个 Sprint / 12 周）
-
-| Sprint | 人员 A（后端核心）| 人员 B（前端 UX）| 人员 C（AI + 集成）|
-|--------|-----------------|-----------------|-------------------|
-| S1 | E1 + E2 后端 | E3 设计系统 | E2 OIDC 前端 |
-| S2 | E4 + E5 后端 | E4 前端 + E3 完善 | E11.1 Hub 工具集 PoC |
-| S3 | E6 后端 | E6 前端 + E7 前端早期 | E5 后端 + Worker 基础 |
-| S4 | E7 后端 | E7 前端 | E8 + E9 后端 |
-| S5 | E10 后端 | E8 + E9 前端 | E11 AI Drawer + Kova |
-| S6 | Bug Fix + 性能 | E10 前端 + 打磨 | E11 完整 + Stage 部署 |
-
-**MVP α 完成**: Sprint 6 末（约 12 周）
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 12.1 | Build tag edge + SQLite dialect PoC（风险验证） | retail | spike | 8h | `internal/adapter/repo/dialect/`, `cmd/server/main_edge.go` |
+| 12.2 | SQLite 迁移脚本（edge 版，去除 PG 专属语法） | retail | feat | 7h | `migrations/edge/` |
+| 12.3 | 单 tenant 模式（去除 RLS，本地文件存 tenant config） | retail | feat | 5h | `internal/adapter/middleware/tenant_local.go` |
+| 12.4 | Edge binary 离线 POS 收银（无网络完整流程） | retail | feat | 6h | `cmd/server/main_edge.go` + POS 路由 |
+| 12.5 | Edge binary 打包（Windows exe + Linux binary + 自启动） | retail | infra | 6h | `Makefile edge-build`, `deploy/edge/` |
+| 12.6 | Edge binary E2E 测试（离线操作场景） | retail | test | 4h | `tests/edge/` |
 
 ---
 
-## 6. Cross-Epic Concerns
+## Epic 13: 同步引擎
 
-### 6.1 测试策略
+**目标**: 边缘节点的本地数据在网络恢复后自动同步到云端 PostgreSQL；支持增量上行（NATS JetStream）和全量下行（HTTP Pull）；冲突检测使用向量时钟，冲突记录写入 `sync_conflict` 表待人工裁决。
 
-| 层级 | 目标覆盖率 | 关键测试场景 |
-|------|-----------|------------|
-| `app/`（Use Case 层）| ≥ 80% | 状态机转换、WAC 算法、RLS 隔离、并发库存 |
-| `adapter/repo/` | ≥ 60% | GORM 查询正确性、事务回滚 |
-| `adapter/handler/` | ≥ 50% | API 入参校验、权限拒绝 403 |
-| 前端 `components/` | ≥ 40% | DataTable 渲染、Sheet 开关、Toast 时序 |
-| E2E（Playwright）| 关键路径 | 登录→创建商品→创建销售单→确认出库→查看库存 |
+**PRD Requirements**: 决策锁 DL-5；V2 同步引擎
 
-**必须有的集成测试**（testcontainers-go，真实 PostgreSQL）：
-- `TestRLS_CrossTenantQueryReturnsEmpty`（Epic 2 完成后）
-- `TestWAC_MultipleInbounds_CorrectAvgCost`（Epic 5 完成后）
-- `TestSalesOrder_ConcurrentShipment_NoOversell`（Epic 7 完成后）
-- `TestStocktake_DiffApproved_StockAdjusted`（Epic 8 完成后）
+**Risk**: 向量时钟实现复杂度——对于 V2 阶段的场景（单店铺 + 单云端，冲突极少），可以简化为"云端优先 + 上行 CAS（Compare-And-Swap）"策略，降低实现复杂度。在 Story 13.1 中决策。
 
-### 6.2 文档要求
+**Acceptance**:
+- 边缘节点数据上行：`sync_status='pending'` 的记录批量发布到 NATS JetStream
+- 云端消费并 upsert 到 PostgreSQL，成功后通知边缘节点更新 `sync_status='synced'`
+- 下行：云端配置变更（商品库/客户库）通过 HTTP Pull 同步到边缘 SQLite
+- 冲突（同一记录在云端和边缘均被修改）写入 `sync_conflict` 表，等待 Epic 14 裁决
 
-每个 Story 完成后：
-- 更新 `doc/coord/service-status.md`（2b-svc-psi 区块）
-- 新增 API 端点时更新 `doc/coord/contracts.md`
-- 破坏性变更（废弃字段/重命名端点）必须在 `changelog.md` 标注 Breaking
+**依赖**: Epic 12（Edge binary）
 
-### 6.3 性能预算检查点
+**预估**: 5 Stories × 平均 7h = **35h**
 
-| 检查点 | 触发时机 | 指标 |
-|--------|---------|------|
-| **LCP 首测** | Epic 10 完成，Dashboard 上线后 | LCP < 1.5s（Stage，Chrome 无缓存） |
-| **API P95 基准** | Epic 7 完成，销售出库上线后 | 销售单提交 P99 < 1s；库存查询 P95 < 200ms |
-| **AI 响应基准** | Epic 11 Story 11.1 完成后 | Hub SSE 首字节 P95 < 1.5s（10 并发压测） |
-| **Excel 导入压测** | Epic 4 Story 4.7 完成后 | 500 行 < 5s（含解析 + batch insert） |
-| **条码扫码延迟** | Epic 4 Story 4.5 完成后 | 扫码→SKU 定位全链路 P99 < 300ms |
+### Stories
+
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 13.1 | 同步策略决策与向量时钟/CAS 设计（spike） | retail | spike | 6h | `doc/decisions/sync-strategy.md` |
+| 13.2 | 上行同步引擎（边缘 → NATS → 云端 PG） | retail | feat | 8h | `internal/sync/uplink.go`, `adapter/nats/sync_producer.go` |
+| 13.3 | 下行同步引擎（云端配置 HTTP Pull → 边缘 SQLite） | retail | feat | 7h | `internal/sync/downlink.go` |
+| 13.4 | 冲突检测与 sync_conflict 表写入 | retail | feat | 7h | `internal/sync/conflict_detector.go`, `domain/entity/sync_conflict.go` |
+| 13.5 | 同步状态监控（边缘节点同步日志 + 云端消费延迟告警） | retail | feat | 7h | `internal/sync/monitor.go`, Prometheus 指标 |
 
 ---
 
-## 7. Risks & Open Questions
+## Epic 14: 冲突裁决 UI
 
-### 7.1 跨 Epic 风险
+**目标**: 系统管理员可在云端 Admin 界面看到所有未裁决冲突，逐条查看"云端版本 vs 边缘版本"的 diff，选择采用哪一方或手动合并，裁决结果自动同步回边缘节点。
 
-| 风险 | 影响 Epic | 缓解方案 |
-|------|----------|---------|
-| GORM + PostgreSQL RLS `SET LOCAL` 连接池复用问题 | Epic 2 | Story 2.3 实现时务必用 `db.WithContext` + 事务内 `SET LOCAL`，并有跨租户 E2E 测试（Story 2.4）覆盖 |
-| Hub API 中国大陆延迟 P95 > 3s | Epic 11 | Story 11.1 完成后立即压测；设计降级方案（流式首字节 < 1.5s 已可接受，长查询异步处理 + WebSocket 通知） |
-| Kova Agent 对小数据量客户预测准确性不足 | Epic 11 | v1 仅建议不执行（decision-lock §3 已锁定）；M3 后收集真实数据做精度 baseline（PRD §11.1 OQ-5）|
-| `bill_head + bill_item` 通用单据模型在实际代码中边界模糊 | Epic 6~8 | Epic 6 Story 6.1 开始时定义 `pkg/types/bill_status.go` 和 `bill_type.go` 完整枚举，后续 Epic 不允许硬编码字符串 |
-| pgvector 扩展未在 lurus-pg-rw 安装 | Epic 1 | `migrations/000001_init_extensions.up.sql` 中 `CREATE EXTENSION IF NOT EXISTS "vector"` 执行时若失败则报错，Epic 1 Story 1.3 需要验证（PRD §14 OQ-1）|
+**PRD Requirements**: 决策锁 DL-5；V2 冲突裁决
 
-### 7.2 待 PM 决策的 Open Questions（引用 PRD §14）
+**Risk**: 冲突 diff 展示——对于非技术人员（店主），需要将字段级 diff 翻译成业务语言（"云端库存 50 件 vs 门店库存 48 件"，而非 JSON diff）。
 
-| # | 问题 | 影响 Story | 预计解决时机 |
-|---|------|-----------|------------|
-| OQ-1 | pgvector 是否已在 lurus-pg-rw 安装？ | Story 1.3 | Epic 1 开始前确认 |
-| OQ-6 | Redis DB 5 是否与其他服务冲突？已在 lurus.yaml 登记？ | Story 1.1 | Epic 1 开始前确认 |
-| OQ-7 | Lighthouse 客户行业类型（影响批次/序列号优先级）| Story 4.4 权重 | M1 内确认 |
-| OQ-2 | Kova Agent 调用 PSI 场景延迟 < 500ms？ | Story 11.4 | Story 11.1 PoC 后基准测试 |
-| OQ-4 | AI 查询 v1 直接 SQL 够用还是必须接 Memorus？ | Story 11.1 | Story 11.1 实现时决策 |
-| OQ-9 | 计费模式具体分层（AI 调用次数上限）| Story 2.2（平台配额） | Lighthouse 客户访谈后 |
+**Acceptance**:
+- 冲突列表页：显示记录类型、冲突时间、两端摘要
+- 冲突详情：业务语言 diff（按字段中文名展示，不是 JSON）
+- 裁决操作：采用云端 / 采用边缘 / 手动合并（仅简单字段）
+- 裁决结果触发同步引擎将结果推送回边缘节点
 
----
+**依赖**: Epic 13（同步引擎）
 
-## 8. PRD 需求覆盖矩阵
+**预估**: 4 Stories × 平均 5h = **20h**
 
-| PRD 需求 | Epic | Story | 状态 |
-|---------|------|-------|------|
-| US-1.1 OIDC 注册创建企业 | E2 | 2.1, 2.2 | 覆盖 |
-| US-1.2 邀请成员分配角色 | E2 | 2.5 | 覆盖 |
-| US-2.1 多 SKU 商品创建 | E4 | 4.2, 4.3 | 覆盖 |
-| US-2.2 Excel 批量导入 | E4 | 4.7 | 覆盖 |
-| US-2.3 条码枪扫码定位 | E4 | 4.5 | 覆盖 |
-| US-2.4 安全库存阈值预警 | E4 | 4.6 | 覆盖 |
-| US-2.5 批次管理（FIFO 出货） | E4 | 4.4 | 覆盖 |
-| US-2.6 序列号管理 | E4 | 4.4 | 覆盖 |
-| US-3.1 多仓库独立库存 | E5 | 5.1, 5.2 | 覆盖 |
-| US-3.2 库存六状态 | E5 | 5.2 | 覆盖 |
-| US-3.3 多渠道库存视图预留 | E5 | 5.2 | 覆盖（channel_id 字段 + 禁用筛选 UI）|
-| US-4.1 采购单 Stepper 创建 | E6 | 6.1 | 覆盖 |
-| US-4.2 入库确认 + WAC 重算 | E6 | 6.3 | 覆盖 |
-| US-4.3 应付款状态查询 | E6 | 6.4 | 覆盖 |
-| US-4.4 反审/红冲 | E6 | 6.5 | 覆盖 |
-| US-5.1 销售单创建 + 出库确认 | E7 | 7.1, 7.3 | 覆盖 |
-| US-5.2 行级/单据级折扣 | E7 | 7.1 | 覆盖 |
-| US-5.3 应收款状态 + 超期标红 | E7 | 7.4 | 覆盖 |
-| US-5.4 销售退货红冲 | E7 | 7.5 | 覆盖 |
-| US-6.1 跨仓调拨单 | E8 | 8.1 | 覆盖 |
-| US-6.2 整仓盘点 | E8 | 8.2, 8.3, 8.4 | 覆盖 |
-| US-6.3 循环盘点 | E8 | 8.5 | 覆盖 |
-| US-7.1 应收账款台账 | E9 | 9.1 | 覆盖 |
-| US-7.2 应付账款台账 | E9 | 9.2 | 覆盖 |
-| US-7.3 资金账户余额 | E9 | 9.3 | 覆盖 |
-| US-8.1 Dashboard KPI 卡 | E10 | 10.1 | 覆盖 |
-| US-8.2 库存周转率报表 | E10 | 10.2 | 覆盖 |
-| US-8.3 ABC 分析 | E10 | 10.3 | 覆盖 |
-| US-8.4 滞销预警报表 | E10 | 10.4 | 覆盖 |
-| US-9.1 ⌘K + AI Drawer 自然语言查询 | E11 | 11.1, 11.2, 11.3 | 覆盖 |
-| US-9.2 Kova 补货 Agent + 采纳/忽略 | E11 | 11.4, 11.6 | 覆盖 |
-| US-9.3 滞销预警推送 + 处置建议 | E11 | 11.5, 11.6 | 覆盖 |
-| PRD §6.1 商品图片上传（P1）| E4 | Story 4.2 扩展（P1，MVP β）| 延后 |
-| PRD §6.1 自定义字段（P1）| E4 | Story 4.2 扩展（P1）| 延后 |
-| PRD §6.4 采购单附件上传（P1）| E6 | Story 6.1 扩展（P1）| 延后 |
-| PRD §6.5 客户价格体系（P1）| E7 | Story 7.1 扩展（P1）| 延后 |
-| PRD §4.2 Defer 列表（金税/多渠道/FIFO…）| — | — | 明确不做 v1 |
+### Stories
+
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 14.1 | 冲突列表页（sync_conflict 查询 + 状态筛选） | retail | feat | 5h | `web/app/(dashboard)/admin/conflicts/page.tsx` |
+| 14.2 | 冲突详情业务语言 diff 展示 | retail | feat | 6h | `components/conflict/conflict-diff.tsx` |
+| 14.3 | 裁决操作（采用云端/边缘/手动合并） | retail | feat | 5h | `app/conflict/resolve_conflict.go` |
+| 14.4 | 裁决结果回写边缘节点（触发下行同步） | retail | feat | 4h | `internal/sync/downlink.go` 扩展 |
 
 ---
 
-*epics.md 版本 1.0 | 生成时间: 2026-04-23 | 下一步: bmad-sm 读取 Epic 1 → 生成 story-1.1.md*
+## Epic 15: PWA 离线壳
+
+**目标**: Tally Web 应用可以作为 PWA 安装到 Windows/Mac/iOS/Android；Service Worker 缓存关键资源和 API 响应；网络中断时 UI 展示"离线模式"提示，POS 基础操作继续可用（通过 IndexedDB 兜底）。
+
+**PRD Requirements**: 决策锁 DL-5；V2 PWA 离线
+
+**Risk**: IndexedDB 与 SQLite 的双重存储——Edge binary 已有 SQLite，PWA 模式的 IndexedDB 是额外兜底层，两者数据不互通。V2 的 PWA 离线模式主要服务于"临时断网"场景（<1 小时），不替代 Edge binary 的"长期离线"。需在 Story 15.1 中明确边界。
+
+**Acceptance**:
+- Tally 可被浏览器"安装为应用"（PWA manifest 完整）
+- 断网时：商品列表、最近单据列表从 Service Worker 缓存返回（只读）
+- 断网时：POS 收银新建销售单暂存 IndexedDB，恢复网络后自动上传
+- 离线状态：顶栏显示"离线模式 - 数据将在恢复连接后同步"
+
+**依赖**: Epic 13（同步引擎，提供上传接口）
+
+**预估**: 5 Stories × 平均 5h = **25h**
+
+### Stories
+
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 15.1 | PWA 范围定义与 Service Worker 框架 | retail | spike | 5h | `web/public/sw.js`, `web/app/manifest.json` |
+| 15.2 | 关键资源缓存策略（商品库/最近单据） | retail | feat | 5h | `sw.js` 缓存策略 |
+| 15.3 | 离线 POS 草稿暂存（IndexedDB + 自动上传） | retail | feat | 6h | `hooks/use-offline-queue.ts`, `lib/idb.ts` |
+| 15.4 | 离线状态 UI（顶栏指示 + 降级提示） | retail | feat | 4h | `components/layout/topbar.tsx` 网络状态 |
+| 15.5 | PWA 安装引导（首次访问 install prompt） | retail | feat | 5h | `components/pwa/install-prompt.tsx` |
+
+---
+
+## Epic 16: 边缘节点管理
+
+**目标**: 系统管理员可在云端 Dashboard 查看所有已注册的边缘节点（店铺）、心跳状态、版本号；边缘节点可自动检测新版本并提示更新；节点注册使用一次性激活码。
+
+**PRD Requirements**: 决策锁 DL-5；V2 边缘节点管理
+
+**Risk**: 自动 self-update 在 Windows 环境下需要替换运行中的 binary，Windows 文件锁问题需要额外处理（先写新文件、重命名、重启）。
+
+**Acceptance**:
+- 边缘节点首次启动时向云端注册（激活码 + 设备信息）
+- 云端节点列表显示：节点名称/店铺/版本/最后心跳时间/同步状态
+- 边缘节点每 5 分钟上报心跳；超过 30 分钟无心跳 → 告警
+- 新版本发布后，边缘节点检测到版本差异 → 显示"有新版本可更新"提示
+
+**依赖**: Epic 12（Edge binary），Epic 13（同步引擎）
+
+**预估**: 4 Stories × 平均 5h = **20h**
+
+### Stories
+
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 16.1 | 边缘节点注册与激活码机制 | retail | feat | 5h | `app/edge_node/register.go`, `domain/entity/edge_node.go` |
+| 16.2 | 节点心跳上报与云端列表页 | retail | feat | 5h | `app/edge_node/heartbeat.go`, `web/app/(dashboard)/admin/nodes/` |
+| 16.3 | 版本检测与 self-update 提示 | retail | feat | 6h | `internal/updater/`, `cmd/server/main_edge.go` |
+| 16.4 | 节点告警（心跳超时 + 同步积压） | retail | feat | 4h | `lifecycle/worker.go` 告警 task + 通知 |
+
+---
+
+## V3 — 高级 AI
+
+---
+
+## Epic 17: AI 补货 Agent（Kova 集成）
+
+**目标**: Kova Agent 每日自动分析历史销量 + 安全库存，生成补货建议并以"待办卡片"形式推送到 Dashboard；用户可一键采纳（跳转预填采购单）或忽略（7 天不重推）。
+
+**PRD Requirements**: US-9.2；PRD §9.2 Kova 补货 Agent；PRD §6.9 AI 助手 P0
+
+**Risk**: 小数据量客户（SKU < 200，历史 < 3 个月）预测准确率不足——V3 必须先建 baseline（M3 收集 Lighthouse 客户数据），再启动 Agent 开发；不能在没有数据的情况下上线。
+
+**Acceptance**:
+- Kova Agent 每日 09:00 运行；基于 90 天历史销量计算预计断货时间
+- 建议卡片出现在 Dashboard 待办区（带预测依据：日均销量/当前库存/预计断货天数）
+- 用户采纳 → 跳转预填采购单（SKU/数量已填）；忽略 → 7 天不重推；暂缓 → 3 天后重推
+- V3 仅建议，不自动提交采购单
+
+**依赖**: V1 E10（报表数据）, V1 E11（AI Drawer 基础）
+
+**预估**: 5 Stories × 平均 7h = **35h**
+
+### Stories
+
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 17.1 | 历史销量 Baseline 数据服务 + 预测模型接口 | both | feat | 8h | `app/ai_agent/sales_baseline.go` |
+| 17.2 | Kova 补货 Agent 注册与每日触发 | both | feat | 7h | `app/ai_agent/reorder_agent.go`, `adapter/kova/` |
+| 17.3 | 补货建议持久化与 Dashboard 待办卡片 | both | feat | 6h | `domain/entity/agent_recommendations.go`, `web/app/dashboard/` |
+| 17.4 | 采纳/忽略/暂缓决策系统 | both | feat | 6h | `handler/v1/ai.go`, `components/recommendation-card.tsx` |
+| 17.5 | 补货 Agent 精度监控（采纳率 + 实际结果追踪） | both | feat | 8h | `app/ai_agent/accuracy_tracker.go` |
+
+---
+
+## Epic 18: 动态定价（跨境专属）
+
+**目标**: 跨境 persona 可在 Dashboard 看到 AI 推荐的销售价格调整建议，基于汇率变动 + 历史利润率 + 竞品参考价（手动录入）；建议以"调价建议卡片"形式呈现，用户确认后一键批量调价。
+
+**PRD Requirements**: 决策锁 DL-6（高级 AI 延后到 V3）；PRD §2.2（简道云 AI 动态定价是竞品护城河，Tally 需超越）
+
+**Risk**: 竞品价格数据来源——V3 只支持手动录入参考价，不爬取竞品网站（法律风险）。AI 建议完全基于内部数据（汇率 + 历史利润率）。
+
+**Acceptance**:
+- 系统自动检测 `exchange_rate` 变动 > 2%，触发"调价建议"
+- 建议含：当前售价、建议新售价、调整理由（汇率变动 X% + 当前利润率 Y%）
+- 用户可批量选择 SKU 执行调价
+
+**依赖**: V1 E9（多币种）, V3 E17（AI 框架）
+
+**预估**: 4 Stories × 平均 7h = **28h**
+
+### Stories
+
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 18.1 | 汇率变动检测与调价触发机制 | cross_border | feat | 6h | `lifecycle/worker.go` 汇率监控 task |
+| 18.2 | AI 调价建议生成（Hub 调用 + 利润率分析） | cross_border | feat | 8h | `app/ai_agent/pricing_agent.go` |
+| 18.3 | 调价建议 UI + 批量执行 | cross_border | feat | 7h | `web/app/(dashboard)/pricing/page.tsx` |
+| 18.4 | 调价历史追踪与效果分析 | cross_border | feat | 7h | `app/report/pricing_report.go` |
+
+---
+
+## Epic 19: 自然语言查询 Hub（NL Query）
+
+**目标**: 用户可通过 ⌘K → AI Drawer 用中文自然语言查询库存/销售/财务数据；Hub API Function Calling 驱动 SQL 查询；首字节响应 < 1.5s；回答中嵌入操作快捷按钮。
+
+**PRD Requirements**: US-9.1；PRD §6.9 AI 助手 P0；PRD §9.1 Hub 自然语言查询
+
+**Risk**: Hub API 在中国大陆 P95 延迟可能 > 3s——流式输出是必须（首字节 < 1.5s 可接受），长查询需要异步处理 + WebSocket 通知。Story 19.1 完成后立即压测。
+
+**Acceptance**:
+- 6 类查询（库存/销售/应收应付/预警/补货估算/报表生成）在 AI Drawer 可用
+- Hub Function Calling 工具集：`query_stock / query_sales / query_ar_ap / query_alerts`
+- SSE 流式输出，首字节 < 1.5s P95
+- AI 不执行写操作，仅返回数据 + 建议 + 跳转预填链接
+
+**依赖**: V1 E3（AI Drawer 框架）, V1 E10（报表数据）
+
+**预估**: 4 Stories × 平均 7h = **28h**
+
+### Stories
+
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 19.1 | Hub AI 自然语言查询后端（SSE + Function Calling） | both | feat | 8h | `app/ai_agent/chat.go`, `function_registry.go` |
+| 19.2 | AI Drawer 对接真实 Hub API（流式渲染 + 操作按钮） | both | feat | 7h | `components/ai-drawer/`, `use-ai-chat.ts` |
+| 19.3 | ⌘K AI 查询入口与热门查询建议 | both | feat | 6h | `components/command-palette/commands.ts` |
+| 19.4 | Kova 滞销预警 Agent（每日运行 + Dashboard 卡片） | both | feat | 7h | `app/ai_agent/deadstock_agent.go` |
+
+---
+
+## Epic 20: 智能记忆（Memorus 集成）
+
+**目标**: 店主可以问"那个张大哥上次买啥"，系统通过 Memorus RAG 找到历史订单上下文并在 AI Drawer 中自然语言回答；销售/库存事件实时写入 Memorus，提升 AI 预测精度。
+
+**PRD Requirements**: PRD §9.3 Memorus RAG 上下文；PRD §6.9 Memorus 上下文 P1
+
+**Risk**: Memorus API 稳定性——`2b-svc-memorus` 目前是 Python 服务，延迟 P95 未知。AI Drawer 查询需要设超时（3s），超时降级为无 RAG 上下文的普通查询。
+
+**Acceptance**:
+- 销售单确认出库后，异步写入 Memorus（SKU + 客户 + 时间）
+- AI Drawer 查询时自动附带 Memorus RAG 上下文（< 1s 超时降级）
+- 自然语言查询"张大哥上次买啥"能正确返回最近一笔订单
+- `product.embedding`（`vector(1536)`）字段在 V3 开始写入，用于商品相似度推荐
+
+**依赖**: V3 E19（NL Query Hub）, V1 E4（商品 embedding 字段预留）
+
+**预估**: 4 Stories × 平均 8h = **32h**
+
+### Stories
+
+| # | Title | Profile | 类型 | 工时 | 关键文件 |
+|---|-------|---------|------|------|---------|
+| 20.1 | 销售/库存事件写入 Memorus（异步，NATS 触发） | both | feat | 8h | `adapter/memorus/writer.go`, `lifecycle/worker.go` |
+| 20.2 | AI 查询 Memorus RAG 上下文增强（< 1s 超时降级） | both | feat | 8h | `app/ai_agent/chat.go` RAG 增强 |
+| 20.3 | 客户购买历史自然语言查询（"张大哥上次买啥"） | both | feat | 8h | `app/ai_agent/function_registry.go` 新增工具 |
+| 20.4 | 商品 embedding 写入与相似商品推荐 | both | feat | 8h | `app/product/embedding.go`, `adapter/hub/embedding.go` |
+
+---
+
+## PRD 需求覆盖矩阵（v2）
+
+| PRD 需求 | Epic | Story | 版本 | Profile |
+|---------|------|-------|------|---------|
+| US-1.1 OIDC 注册创建企业 | E2 | 2.1, 2.2 | V1 | both |
+| US-1.2 邀请成员分配角色 | E2 | 2.5 | V1 | both |
+| US-2.1 多 SKU 商品创建 | E4 | 4.2, 4.3, 4.4 | V1 | both |
+| US-2.2 Excel 批量导入 | E4 | 4.9 | V1 | both |
+| US-2.3 条码枪扫码定位 | E4 | 4.7 | V1 | both |
+| US-2.4 安全库存阈值预警 | E4 | 4.8 | V1 | both |
+| US-2.5 批次管理（FIFO 出货） | E4 | 4.6 | V1 | both |
+| US-2.6 序列号管理 | E4 | 4.6 | V1 | both |
+| US-3.1 多仓库独立库存 | E5 | 5.1, 5.2 | V1 | both |
+| US-3.2 库存六状态 | E5 | 5.2 | V1 | both |
+| US-3.3 多渠道库存视图预留 | E5 | 5.2 | V1 | both |
+| US-4.1 采购单 Stepper 创建 | E6 | 6.1 | V1 | both |
+| US-4.2 入库确认 + WAC 重算 | E6 | 6.3 | V1 | both |
+| US-4.3 应付款状态查询 | E6 | 6.4 | V1 | both |
+| US-4.4 反审/红冲 | E6 | 6.5 | V1 | both |
+| US-5.1 销售单创建 + 出库确认 | E7 | 7.1, 7.3 | V1 | both |
+| US-5.2 行级/单据级折扣 | E7 | 7.1 | V1 | both |
+| US-5.3 应收款 + 超期标红 | E7 | 7.4 | V1 | both |
+| US-5.4 销售退货红冲 | E7 | 7.5 | V1 | both |
+| US-6.1 跨仓调拨单 | E6 | 6 (调拨并入 E6) | V1 | both |
+| US-6.2 整仓盘点 | E6 | 6 (盘点并入 E6) | V1 | both |
+| US-6.3 循环盘点 | E6 | 6 (盘点并入 E6) | V1 | both |
+| US-7.1 应收账款台账 | E7 | 7.4 | V1 | both |
+| US-7.2 应付账款台账 | E6 | 6.4 | V1 | both |
+| US-7.3 资金账户余额 | E7 | 7.7 (财务) | V1 | both |
+| US-8.1 Dashboard KPI 卡 | E10 (调整为 E11 前置) | — | V1 | both |
+| US-8.2 库存周转率报表 | E10 | — | V1 | both |
+| US-8.3 ABC 分析 | E10 | — | V1 | both |
+| US-8.4 滞销预警报表 | E10 | — | V1 | both |
+| US-9.1 ⌘K + AI Drawer | E19 | 19.1-19.3 | V3 | both |
+| US-9.2 Kova 补货 Agent | E17 | 17.1-17.4 | V3 | both |
+| US-9.3 滞销预警推送 | E19 | 19.4 | V3 | both |
+| DL-1 Profile 机制 | E8 | 8.1-8.5 | V1 | both |
+| DL-2 跨境双 persona | E9 | 9.1-9.5 | V1 | cross_border |
+| DL-2 零售双 persona | E10 | 10.1-10.6 | V1 | retail |
+| DL-3 商品模型升级 | E4 | 4.3, 4.4, 4.5 | V1 | both |
+| DL-4 库存策略 Strategy Pattern | E5 | 5.3 | V1 | both |
+| DL-5 离线容器字段 V1 预留 | E1/E4/E5 | 1.3, 4.3, 5.2 | V1 | retail |
+| DL-5 边缘部署实施 | E12-E16 | — | V2 | retail |
+| DL-6 高级 AI | E17-E20 | — | V3 | both |
+| PRD §13 POS（原 Out of Scope） | E10 | 10.1-10.6 | V1（覆盖原禁令，双 persona 方向已锁定）| retail |
+
+**覆盖说明**:
+- 原 PRD 单 persona 需求（US-1.1 ~ US-9.3）全部覆盖
+- 新增 Decision Lock 需求（DL-1 ~ DL-6）全部覆盖
+- PRD §13 POS 禁令已被双 persona 方向覆盖，E10 正式实现零售收银能力
+- 调拨（US-6.1）和盘点（US-6.2, 6.3）从独立 Epic 8 合并进 E6（采购闭环扩展），Story 编号在新 Epic 结构中待 SM 细化
+
+---
+
+## 工时预估汇总
+
+| 阶段 | Epic | Story 数 | 总工时 | Sprint（单人，56h/sprint）|
+|------|------|---------|-------|--------------------------|
+| V1 — 双 Profile MVP | E1-E11 | 78 | ~461h | ~8.2 sprint |
+| V2 — 边缘部署 | E12-E16 | 24 | ~136h | ~2.4 sprint |
+| V3 — 高级 AI | E17-E20 | 16 | ~123h | ~2.2 sprint |
+| **合计** | E1-E20 | **118** | **~720h** | **~12.8 sprint** |
+
+双人并行系数约 0.6（并行效率折扣）：
+- V1 双人: ~5 sprint（10 周）
+- V2 双人: ~1.5 sprint（3 周）
+- V3 双人: ~1.5 sprint（3 周）
+- **双人总计: ~8 sprint（16 周）**
+
+---
+
+## 与 PRD/Architecture 重写的协调点
+
+以下是本 Epics 文档依赖新 PRD/Architecture 重写完成后需要对齐的内容（并行重写中，当前为假设）：
+
+| 协调项 | 本文档当前假设 | 需要新文档确认 |
+|--------|--------------|----------------|
+| `tenant_profile` 字段 DDL | 独立表 `tally.tenant_profile`，字段 `profile_type VARCHAR(20)`，migration 000013 | **已确认** — architecture §3.1 |
+| `measurement_strategy` 枚举值 | `individual / weight / length / volume / batch / serial` | **已确认** — architecture migration 000015 |
+| 多币种存储字段 | `bill_head` 增加 `currency / exchange_rate / amount_local`，migration 000019 | **已确认** — architecture §3.7（注：字段名为 `currency`+`amount_local`，非 `currency_code`+`total_amount_cny`；Story 9.1 Tech Notes 需按此更新） |
+| `origin / sync_status / edge_node_id / edge_timestamp` V2 预留字段 | 存在于 `bill_head / bill_item / payment_head / stock_initial`（migration 000016） | **已确认** — architecture §3.5；`stock_snapshot` 不加（服务端聚合，不来自边缘直写） |
+| Edge binary build tag | `-tags edge` 切换 `modernc.org/sqlite`（纯 Go，无 CGO） | **已确认** — architecture §6.1 + ADR-010 |
+| POS 页面路由 | `web/app/(dashboard)/pos/page.tsx`（独立布局，隐藏侧边栏） | **已确认** — architecture §13.3 + PRD §13.1 风险缓解 |
+| 会员表命名 | `member` + `member_points_ledger` | **待确认** — architecture v2 未覆盖会员模块（V1 Epic 10.5 属于双 persona 扩展，架构文档未列表） |
+| NATS stream 扩展 | `PSI_EVENTS` 增加 5 个 `tally.edge.*` / `psi.exchange_rate.updated` 主题 | **已确认** — architecture §11 |
