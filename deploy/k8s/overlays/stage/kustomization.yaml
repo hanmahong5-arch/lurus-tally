@@ -4,6 +4,6 @@ resources:
   - ../../base
 images:
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-placeholder
+    newTag: main-6048b08
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-placeholder
+    newTag: main-6048b08
