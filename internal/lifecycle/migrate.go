@@ -36,6 +36,14 @@ func RunMigrations(ctx context.Context, dsn string, logger *slog.Logger) error {
 			"check network connectivity, credentials, and that the PostgreSQL pod is Running", err)
 	}
 
+	// Pre-create the tally schema so the migrations tracking table can be created inside it.
+	// golang-migrate's postgres driver does NOT auto-create the SchemaName schema; if it is
+	// missing, the driver's CREATE TABLE for schema_migrations fails with SQLSTATE 3F000.
+	if _, err := db.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS tally`); err != nil {
+		return fmt.Errorf("migration failed: cannot create tally schema: %w; "+
+			"ensure the DATABASE_DSN user has CREATE SCHEMA privilege", err)
+	}
+
 	src, err := iofs.New(migrations.FS, ".")
 	if err != nil {
 		return fmt.Errorf("migration failed: cannot load embedded SQL files: %w; "+
@@ -43,8 +51,7 @@ func RunMigrations(ctx context.Context, dsn string, logger *slog.Logger) error {
 	}
 
 	driver, err := migratepg.WithInstance(db, &migratepg.Config{
-		// Store migration tracking table inside the tally schema to avoid polluting public.
-		MigrationsTable: "tally.schema_migrations",
+		MigrationsTable: "schema_migrations",
 		SchemaName:      "tally",
 	})
 	if err != nil {
@@ -92,13 +99,17 @@ func RunMigrationsDown(ctx context.Context, dsn string) error {
 		return fmt.Errorf("migration down: cannot reach PostgreSQL: %w", err)
 	}
 
+	if _, err := db.ExecContext(ctx, `CREATE SCHEMA IF NOT EXISTS tally`); err != nil {
+		return fmt.Errorf("migration down: cannot create tally schema: %w", err)
+	}
+
 	src, err := iofs.New(migrations.FS, ".")
 	if err != nil {
 		return fmt.Errorf("migration down: cannot load embedded SQL files: %w", err)
 	}
 
 	driver, err := migratepg.WithInstance(db, &migratepg.Config{
-		MigrationsTable: "tally.schema_migrations",
+		MigrationsTable: "schema_migrations",
 		SchemaName:      "tally",
 	})
 	if err != nil {
