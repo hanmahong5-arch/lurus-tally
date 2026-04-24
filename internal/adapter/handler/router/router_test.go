@@ -14,11 +14,11 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-// newTestRouter creates a Gin engine with nil product/unit/auth/stock/bill/currency handlers for route-registration tests.
+// newTestRouter creates a Gin engine with nil handlers for route-registration tests.
 // nil handlers are safe as long as the tested routes don't reach the handler bodies.
 func newTestRouter() *gin.Engine {
 	h := health.New("dev")
-	return router.New(h, nil, nil, nil, nil, nil, nil)
+	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 func TestRouter_HealthzRouteRegistered(t *testing.T) {
@@ -135,6 +135,55 @@ func TestRouter_CurrencyRoutesRegistered(t *testing.T) {
 		{http.MethodGet, "/api/v1/exchange-rates"},
 		{http.MethodPost, "/api/v1/exchange-rates"},
 		{http.MethodGet, "/api/v1/exchange-rates/history"},
+	}
+
+	for _, tc := range routes {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(tc.method, tc.path, nil)
+		r.ServeHTTP(w, req)
+		if w.Code == http.StatusNotFound {
+			t.Errorf("%s %s returned 404 — route not registered", tc.method, tc.path)
+		}
+	}
+}
+
+// TestRouter_SaleRoutes_Registered verifies all sale bill routes are registered.
+func TestRouter_SaleRoutes_Registered(t *testing.T) {
+	r := newTestRouter()
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/v1/sale-bills/quick-checkout"},
+		{http.MethodPost, "/api/v1/sale-bills"},
+		{http.MethodPut, "/api/v1/sale-bills/some-id"},
+		{http.MethodPost, "/api/v1/sale-bills/some-id/approve"},
+		{http.MethodPost, "/api/v1/sale-bills/some-id/cancel"},
+		{http.MethodGet, "/api/v1/sale-bills"},
+		{http.MethodGet, "/api/v1/sale-bills/some-id"},
+	}
+
+	for _, tc := range routes {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(tc.method, tc.path, nil)
+		r.ServeHTTP(w, req)
+		if w.Code == http.StatusNotFound {
+			t.Errorf("%s %s returned 404 — route not registered", tc.method, tc.path)
+		}
+	}
+}
+
+// TestRouter_PaymentRoutesRegistered verifies payment routes are registered.
+func TestRouter_PaymentRoutesRegistered(t *testing.T) {
+	r := newTestRouter()
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/v1/payments"},
+		{http.MethodGet, "/api/v1/payments"},
 	}
 
 	for _, tc := range routes {
