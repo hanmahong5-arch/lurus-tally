@@ -15,6 +15,15 @@ spec:
       labels:
         app: tally-web
     spec:
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      - office-debian-2
       securityContext:
         runAsNonRoot: true
         runAsUser: 1001
