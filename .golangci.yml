@@ -1,22 +1,24 @@
+version: "2"
+
 run:
   timeout: 3m
 
 linters:
+  default: none
   enable:
     - errcheck
     - govet
     - staticcheck
-    - gofmt
-    - goimports
-    - unconvert
     - ineffassign
     - unused
-  disable:
-    - exhaustruct
+    - unconvert
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
 
-issues:
-  exclude-rules:
-    # errcheck is relaxed in test files (e.g. deferred cleanup calls).
-    - path: _test\.go
-      linters:
-        - errcheck
+formatters:
+  enable:
+    - gofmt
+    - goimports
