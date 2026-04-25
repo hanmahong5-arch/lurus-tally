@@ -37,6 +37,8 @@ spec:
           envFrom:
             - configMapRef:
                 name: tally-web-config
+            - secretRef:
+                name: tally-secrets
           securityContext:
             readOnlyRootFilesystem: false
             allowPrivilegeEscalation: false

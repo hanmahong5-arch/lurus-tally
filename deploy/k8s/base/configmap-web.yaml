@@ -9,3 +9,4 @@ data:
   BACKEND_URL: "http://tally-backend:18200"
   PORT: "3000"
   HOSTNAME: "0.0.0.0"
+  AUTH_TRUST_HOST: "true"
