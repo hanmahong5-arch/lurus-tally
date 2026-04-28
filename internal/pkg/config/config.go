@@ -30,6 +30,12 @@ type Config struct {
 	// bootable.
 	PlatformBaseURL     string // PLATFORM_BASE_URL: e.g. http://platform-core.lurus-platform.svc:18104
 	PlatformInternalKey string // PLATFORM_INTERNAL_KEY: bearer token for platform internal API
+
+	// Auth — when ZitadelDomain is empty, AuthMiddleware is skipped and the
+	// service trusts X-Tenant-ID + X-Zitadel-Sub headers (dev only). In
+	// production ZitadelDomain MUST be set so the JWT signature is validated
+	// against the issuer's JWKS.
+	ZitadelDomain string // ZITADEL_DOMAIN: e.g. auth.lurus.cn — issuer + JWKS derived from this
 }
 
 // required reads an environment variable and returns a descriptive error when absent.
@@ -86,5 +92,6 @@ func Load() (*Config, error) {
 		PlatformBaseURL: optional("PLATFORM_BASE_URL",
 			"http://platform-core.lurus-platform.svc:18104"),
 		PlatformInternalKey: optional("PLATFORM_INTERNAL_KEY", ""),
+		ZitadelDomain:       optional("ZITADEL_DOMAIN", ""),
 	}, nil
 }

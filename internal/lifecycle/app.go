@@ -20,6 +20,7 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
 	repopayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/payment"
@@ -88,11 +89,13 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appunit.NewDeleteUseCase(unitRepo),
 	)
 
-	// Wire tenant profile use cases.
-	tenantProfileRepo := repotenant.NewProfileRepo(db)
+	// Wire tenant onboarding store. The BootstrapStore wraps *sql.DB and
+	// provides the atomic tenant+mapping+profile creation needed for first
+	// login. Both ChooseProfileUseCase and GetMeUseCase share this store.
+	tenantStore := repotenant.NewSQLBootstrapStore(db)
 	authHandler := handlerAuth.New(
-		apptenant.NewChooseProfileUseCase(tenantProfileRepo),
-		apptenant.NewGetMeUseCase(tenantProfileRepo),
+		apptenant.NewChooseProfileUseCase(tenantStore),
+		apptenant.NewGetMeUseCase(tenantStore),
 	)
 
 	// Wire stock use cases. MVP: single WAC calculator (FIFO routing per-tenant
@@ -168,8 +171,23 @@ func NewApp(cfg *config.Config) (*App, error) {
 		l.Warn("billing integration disabled (PLATFORM_INTERNAL_KEY not set)")
 	}
 
+	// Build AuthMiddleware when ZITADEL_DOMAIN is set. In dev it can be empty;
+	// the router will then leave /api/v1 unauthenticated and handlers will
+	// surface 401 on identity-required calls.
+	var authMW gin.HandlerFunc
+	if cfg.ZitadelDomain != "" {
+		issuer := "https://" + cfg.ZitadelDomain
+		jwksURL := issuer + "/oauth/v2/keys"
+		authMW = middleware.NewAuthMiddleware(jwksURL, issuer)
+		l.Info("auth middleware enabled",
+			slog.String("issuer", issuer),
+			slog.String("jwks_url", jwksURL))
+	} else {
+		l.Warn("auth middleware disabled (ZITADEL_DOMAIN not set) — /api/v1 is unauthenticated")
+	}
+
 	h := health.New(cfg.ServiceVersion)
-	r := router.New(h, productHandler, unitHandler, authHandler, stockHandler, billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler)
+	r := router.New(h, authMW, productHandler, unitHandler, authHandler, stockHandler, billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

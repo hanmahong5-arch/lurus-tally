@@ -97,6 +97,36 @@ func (r *ProfileRepo) QueryProfileType(ctx context.Context, tenantID uuid.UUID) 
 	return pt, nil
 }
 
+// TenantRepository defines the persistence contract for tally.tenant rows.
+// Tally creates these locally on first-time onboarding; future revisions may
+// sync them from 2l-svc-platform via NATS IDENTITY_EVENTS.
+type TenantRepository interface {
+	Create(ctx context.Context, id uuid.UUID, name string) error
+}
+
+// TenantRepo implements TenantRepository against PostgreSQL.
+type TenantRepo struct {
+	db DB
+}
+
+// NewTenantRepo creates a TenantRepo backed by db.
+func NewTenantRepo(db DB) *TenantRepo {
+	return &TenantRepo{db: db}
+}
+
+// Create inserts a tenant row with the given id and name.
+// status defaults to 1 (active) at the schema level.
+func (r *TenantRepo) Create(ctx context.Context, id uuid.UUID, name string) error {
+	const q = `
+		INSERT INTO tally.tenant (id, name, status, settings, created_at, updated_at)
+		VALUES ($1, $2, 1, '{}'::jsonb, $3, $3)`
+	_, err := r.db.ExecContext(ctx, q, id, name, time.Now().UTC())
+	if err != nil {
+		return fmt.Errorf("tenant repo create: %w", err)
+	}
+	return nil
+}
+
 // MappingRepo implements UserMappingRepository against PostgreSQL.
 type MappingRepo struct {
 	db DB

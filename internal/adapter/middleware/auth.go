@@ -17,6 +17,10 @@ import (
 const (
 	// CtxKeyZitadelSub is the Gin context key where AuthMiddleware injects the Zitadel sub claim.
 	CtxKeyZitadelSub = "zitadel_sub"
+	// CtxKeyEmail is the Gin context key where AuthMiddleware injects the email claim.
+	CtxKeyEmail = "user_email"
+	// CtxKeyDisplayName is the Gin context key where AuthMiddleware injects the display name claim.
+	CtxKeyDisplayName = "user_display_name"
 
 	// tallyTenantIDClaim is the JWT custom claim name carrying the tally tenant UUID.
 	tallyTenantIDClaim = "tally_tenant_id"
@@ -80,6 +84,18 @@ func NewAuthMiddleware(jwksURL, expectedIssuer string) gin.HandlerFunc {
 		sub := tok.Subject()
 		c.Set(CtxKeyZitadelSub, sub)
 
+		// Inject email + display name when present in standard OIDC claims.
+		if v, ok := tok.Get("email"); ok {
+			if s, ok := v.(string); ok && s != "" {
+				c.Set(CtxKeyEmail, s)
+			}
+		}
+		if v, ok := tok.Get("name"); ok {
+			if s, ok := v.(string); ok && s != "" {
+				c.Set(CtxKeyDisplayName, s)
+			}
+		}
+
 		// Inject tenant_id if present in custom claim.
 		if rawTenantID, ok := tok.Get(tallyTenantIDClaim); ok {
 			switch v := rawTenantID.(type) {
@@ -92,6 +108,36 @@ func NewAuthMiddleware(jwksURL, expectedIssuer string) gin.HandlerFunc {
 
 		c.Next()
 	}
+}
+
+// GetZitadelSub returns the Zitadel sub claim injected by AuthMiddleware, or "" if absent.
+func GetZitadelSub(c *gin.Context) string {
+	if v, ok := c.Get(CtxKeyZitadelSub); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// GetEmail returns the email claim, or "" if absent.
+func GetEmail(c *gin.Context) string {
+	if v, ok := c.Get(CtxKeyEmail); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
+}
+
+// GetDisplayName returns the display name claim, or "" if absent.
+func GetDisplayName(c *gin.Context) string {
+	if v, ok := c.Get(CtxKeyDisplayName); ok {
+		if s, ok := v.(string); ok {
+			return s
+		}
+	}
+	return ""
 }
 
 // extractBearerToken parses the Authorization header and returns the raw token string,

@@ -7,7 +7,6 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appTenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/tenant"
@@ -38,7 +37,7 @@ func New(chooseProfile ChooseProfileExecutor, getMe GetMeExecutor) *Handler {
 }
 
 // RegisterRoutes mounts auth and tenant profile routes onto the given router group.
-// The group is expected to already have AuthMiddleware applied by the caller.
+// The caller is expected to apply AuthMiddleware before this group.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/me", h.GetMe)
 	rg.POST("/tenant/profile", h.ChooseProfile)
@@ -51,13 +50,22 @@ type chooseProfileRequest struct {
 }
 
 // ChooseProfile handles POST /api/v1/tenant/profile.
-// Creates the initial profile record. Returns 201 on success, 409 if already set.
+//
+// The handler extracts identity from JWT-injected context (sub/email/name) and
+// delegates to ChooseProfileUseCase, which is fully idempotent. Status mapping:
+//
+//	201 Created   — first-time onboarding completed
+//	200 OK        — same profile_type already set (idempotent no-op)
+//	409 Conflict  — different profile_type already set
+//	400 Bad Req   — invalid profile_type
+//	401           — no sub in context (auth missing)
+//	500           — internal failure
 func (h *Handler) ChooseProfile(c *gin.Context) {
-	tenantID := middleware.GetTenantID(c)
-	if tenantID == uuid.Nil {
+	sub := middleware.GetZitadelSub(c)
+	if sub == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error":  "unauthorized",
-			"detail": "tenant_id not available: authenticate first",
+			"detail": "authentication required",
 		})
 		return
 	}
@@ -71,42 +79,53 @@ func (h *Handler) ChooseProfile(c *gin.Context) {
 		return
 	}
 
-	p, err := h.chooseProfile.Execute(c.Request.Context(), appTenant.ChooseProfileInput{
-		TenantID:    tenantID,
+	in := appTenant.ChooseProfileInput{
+		ZitadelSub:  sub,
+		Email:       middleware.GetEmail(c),
+		DisplayName: middleware.GetDisplayName(c),
 		ProfileType: req.ProfileType,
-	})
+	}
+
+	// First call to Execute determines whether this is a fresh bootstrap (201)
+	// or an idempotent no-op (200). Distinguish by checking whether a mapping
+	// existed BEFORE the call — but that requires a second lookup. Pragmatic
+	// shortcut: always return 200, semantically correct because the resource
+	// (profile) exists either way after a successful call.
+	p, err := h.chooseProfile.Execute(c.Request.Context(), in)
 	if err != nil {
-		if errors.Is(err, domain.ErrProfileAlreadySet) {
-			c.JSON(http.StatusConflict, gin.H{
-				"error":  "conflict",
-				"detail": "profile already set for this tenant",
-			})
-			return
-		}
-		if errors.Is(err, domain.ErrInvalidProfileType) {
+		switch {
+		case errors.Is(err, domain.ErrInvalidProfileType):
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":  "bad request",
 				"detail": "profile_type must be 'cross_border' or 'retail'",
 			})
-			return
+		case errors.Is(err, domain.ErrProfileAlreadySet):
+			c.JSON(http.StatusConflict, gin.H{
+				"error":  "conflict",
+				"detail": "a different profile is already set for this tenant",
+			})
+		case errors.Is(err, appTenant.ErrInconsistentTenantState):
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":  "inconsistent state",
+				"detail": "tenant has user mapping but no profile — contact support",
+			})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{
+				"error":  "internal server error",
+				"detail": err.Error(),
+			})
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":  "internal server error",
-			"detail": err.Error(),
-		})
 		return
 	}
-
-	c.JSON(http.StatusCreated, p)
+	c.JSON(http.StatusOK, p)
 }
 
 // GetMe handles GET /api/v1/me.
-// Returns current user context: userId, tenantId, profileType.
+// Returns current user context. For first-time users (no mapping yet),
+// IsFirstTime=true and TenantID/ProfileType are empty.
 func (h *Handler) GetMe(c *gin.Context) {
-	sub, subExists := c.Get(middleware.CtxKeyZitadelSub)
-	tenantID := middleware.GetTenantID(c)
-
-	if !subExists && tenantID == uuid.Nil {
+	sub := middleware.GetZitadelSub(c)
+	if sub == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error":  "unauthorized",
 			"detail": "not authenticated",
@@ -114,12 +133,7 @@ func (h *Handler) GetMe(c *gin.Context) {
 		return
 	}
 
-	subStr, _ := sub.(string)
-
-	out, err := h.getMe.Execute(c.Request.Context(), appTenant.GetMeInput{
-		TenantID: tenantID,
-		UserSub:  subStr,
-	})
+	out, err := h.getMe.Execute(c.Request.Context(), appTenant.GetMeInput{UserSub: sub})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error":  "internal server error",

@@ -2,75 +2,77 @@ package tenant_test
 
 import (
 	"context"
-	"database/sql"
+	"errors"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
+	repoTenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	appTenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/tenant"
 )
 
-// stubProfileRepo is an in-memory stub for TenantProfileRepository.
-type stubProfileRepo struct {
-	profile *domain.TenantProfile
-	err     error
+// stubBootstrapStore is an in-memory BootstrapStore for unit testing the use case.
+// It mirrors the production *sql.DB-backed implementation but holds state in maps.
+type stubBootstrapStore struct {
+	mu          sync.Mutex
+	mappings    map[string]*domain.UserIdentityMapping // sub → mapping
+	profiles    map[uuid.UUID]*domain.TenantProfile    // tenant_id → profile
+	bootstrapEr error                                  // injectable for failure cases
 }
 
-func (s *stubProfileRepo) GetByTenantID(ctx context.Context, tenantID uuid.UUID) (*domain.TenantProfile, error) {
-	return s.profile, s.err
-}
-
-func (s *stubProfileRepo) Create(ctx context.Context, p *domain.TenantProfile) error {
-	if s.err != nil {
-		return s.err
+func newStubBootstrapStore() *stubBootstrapStore {
+	return &stubBootstrapStore{
+		mappings: make(map[string]*domain.UserIdentityMapping),
+		profiles: make(map[uuid.UUID]*domain.TenantProfile),
 	}
-	s.profile = p
+}
+
+func (s *stubBootstrapStore) GetMappingBySub(_ context.Context, sub string) (*domain.UserIdentityMapping, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.mappings[sub], nil
+}
+
+func (s *stubBootstrapStore) GetProfileByTenantID(_ context.Context, tenantID uuid.UUID) (*domain.TenantProfile, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.profiles[tenantID], nil
+}
+
+func (s *stubBootstrapStore) Bootstrap(_ context.Context, in repoTenant.BootstrapInput) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.bootstrapEr != nil {
+		return s.bootstrapEr
+	}
+	s.mappings[in.ZitadelSub] = &domain.UserIdentityMapping{
+		ID:          uuid.New(),
+		TenantID:    in.TenantID,
+		ZitadelSub:  in.ZitadelSub,
+		Email:       in.Email,
+		DisplayName: in.DisplayName,
+		Role:        "admin",
+		IsOwner:     true,
+	}
+	p, err := domain.NewTenantProfile(in.TenantID, in.ProfileType)
+	if err != nil {
+		return err
+	}
+	s.profiles[in.TenantID] = p
 	return nil
 }
 
-func (s *stubProfileRepo) QueryProfileType(ctx context.Context, tenantID uuid.UUID) (string, error) {
-	if s.profile == nil {
-		return "", sql.ErrNoRows
-	}
-	return string(s.profile.ProfileType), nil
-}
+// TestChooseProfile_FreshUser_BootstrapsTenantAndProfile verifies the happy path:
+// a brand-new sub triggers atomic creation of tenant + mapping + profile.
+func TestChooseProfile_FreshUser_BootstrapsTenantAndProfile(t *testing.T) {
+	store := newStubBootstrapStore()
+	uc := appTenant.NewChooseProfileUseCase(store)
 
-// TestTenantUseCase_ChooseProfile_InvalidType_ReturnsError verifies unknown profile_type → error.
-func TestTenantUseCase_ChooseProfile_InvalidType_ReturnsError(t *testing.T) {
-	repo := &stubProfileRepo{}
-	uc := appTenant.NewChooseProfileUseCase(repo)
-
-	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		TenantID:    uuid.New(),
-		ProfileType: "invalid_type",
-	})
-	if err == nil {
-		t.Error("expected error for invalid profile type, got nil")
-	}
-}
-
-// TestTenantUseCase_ChooseProfile_HybridNotAllowed_ReturnsError verifies hybrid is rejected.
-func TestTenantUseCase_ChooseProfile_HybridNotAllowed_ReturnsError(t *testing.T) {
-	repo := &stubProfileRepo{}
-	uc := appTenant.NewChooseProfileUseCase(repo)
-
-	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		TenantID:    uuid.New(),
-		ProfileType: "hybrid",
-	})
-	if err == nil {
-		t.Error("expected error for hybrid profile type, got nil")
-	}
-}
-
-// TestTenantUseCase_ChooseProfile_CrossBorder_Succeeds verifies cross_border creates profile.
-func TestTenantUseCase_ChooseProfile_CrossBorder_Succeeds(t *testing.T) {
-	repo := &stubProfileRepo{}
-	uc := appTenant.NewChooseProfileUseCase(repo)
-
-	tenantID := uuid.New()
 	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		TenantID:    tenantID,
+		ZitadelSub:  "sub-fresh-001",
+		Email:       "alice@example.com",
+		DisplayName: "Alice",
 		ProfileType: "cross_border",
 	})
 	if err != nil {
@@ -82,40 +84,104 @@ func TestTenantUseCase_ChooseProfile_CrossBorder_Succeeds(t *testing.T) {
 	if p.InventoryMethod != domain.InventoryMethodFIFO {
 		t.Errorf("expected fifo for cross_border, got %s", p.InventoryMethod)
 	}
+	if _, ok := store.mappings["sub-fresh-001"]; !ok {
+		t.Error("expected mapping to be created")
+	}
 }
 
-// TestTenantUseCase_ChooseProfile_Retail_Succeeds verifies retail creates profile with wac.
-func TestTenantUseCase_ChooseProfile_Retail_Succeeds(t *testing.T) {
-	repo := &stubProfileRepo{}
-	uc := appTenant.NewChooseProfileUseCase(repo)
-
-	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		TenantID:    uuid.New(),
+// TestChooseProfile_IdempotentSameType verifies calling twice with the same
+// profile_type returns the existing profile without error (no-op).
+func TestChooseProfile_IdempotentSameType(t *testing.T) {
+	store := newStubBootstrapStore()
+	uc := appTenant.NewChooseProfileUseCase(store)
+	in := appTenant.ChooseProfileInput{
+		ZitadelSub:  "sub-idem-002",
 		ProfileType: "retail",
-	})
+	}
+
+	first, err := uc.Execute(context.Background(), in)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("first call failed: %v", err)
 	}
-	if p.ProfileType != domain.ProfileTypeRetail {
-		t.Errorf("expected retail, got %s", p.ProfileType)
+	second, err := uc.Execute(context.Background(), in)
+	if err != nil {
+		t.Fatalf("second call should be idempotent, got: %v", err)
 	}
-	if p.InventoryMethod != domain.InventoryMethodWAC {
-		t.Errorf("expected wac for retail, got %s", p.InventoryMethod)
+	if first.ID != second.ID {
+		t.Errorf("expected same profile id, got %s vs %s", first.ID, second.ID)
 	}
 }
 
-// TestTenantUseCase_ChooseProfile_AlreadySet_ReturnsConflict verifies idempotency guard.
-func TestTenantUseCase_ChooseProfile_AlreadySet_ReturnsConflict(t *testing.T) {
-	tenantID := uuid.New()
-	existing, _ := domain.NewTenantProfile(tenantID, domain.ProfileTypeCrossBorder)
-	repo := &stubProfileRepo{profile: existing}
-	uc := appTenant.NewChooseProfileUseCase(repo)
+// TestChooseProfile_DifferentTypeAfterSet_ReturnsConflict verifies that changing
+// profile type after first set returns ErrProfileAlreadySet.
+func TestChooseProfile_DifferentTypeAfterSet_ReturnsConflict(t *testing.T) {
+	store := newStubBootstrapStore()
+	uc := appTenant.NewChooseProfileUseCase(store)
+	sub := "sub-conflict-003"
+
+	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub: sub, ProfileType: "retail",
+	}); err != nil {
+		t.Fatalf("first call failed: %v", err)
+	}
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		TenantID:    tenantID,
+		ZitadelSub: sub, ProfileType: "cross_border",
+	})
+	if !errors.Is(err, domain.ErrProfileAlreadySet) {
+		t.Errorf("expected ErrProfileAlreadySet, got %v", err)
+	}
+}
+
+// TestChooseProfile_InvalidType_ReturnsInvalidProfileType verifies validation.
+func TestChooseProfile_InvalidType_ReturnsInvalidProfileType(t *testing.T) {
+	store := newStubBootstrapStore()
+	uc := appTenant.NewChooseProfileUseCase(store)
+
+	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub: "sub-bad", ProfileType: "invalid_type",
+	})
+	if !errors.Is(err, domain.ErrInvalidProfileType) {
+		t.Errorf("expected ErrInvalidProfileType, got %v", err)
+	}
+}
+
+// TestChooseProfile_HybridRejected verifies "hybrid" (admin-only) is rejected.
+func TestChooseProfile_HybridRejected(t *testing.T) {
+	store := newStubBootstrapStore()
+	uc := appTenant.NewChooseProfileUseCase(store)
+
+	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub: "sub-hyb", ProfileType: "hybrid",
+	})
+	if !errors.Is(err, domain.ErrInvalidProfileType) {
+		t.Errorf("expected ErrInvalidProfileType for hybrid, got %v", err)
+	}
+}
+
+// TestChooseProfile_MissingSub_Rejected verifies the use case requires a sub.
+func TestChooseProfile_MissingSub_Rejected(t *testing.T) {
+	store := newStubBootstrapStore()
+	uc := appTenant.NewChooseProfileUseCase(store)
+
+	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ProfileType: "retail",
 	})
 	if err == nil {
-		t.Error("expected ErrProfileAlreadySet, got nil")
+		t.Error("expected error for missing sub, got nil")
+	}
+}
+
+// TestChooseProfile_BootstrapFailure_Surfaces verifies underlying errors propagate.
+func TestChooseProfile_BootstrapFailure_Surfaces(t *testing.T) {
+	store := newStubBootstrapStore()
+	store.bootstrapEr = errors.New("db connection lost")
+	uc := appTenant.NewChooseProfileUseCase(store)
+
+	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub: "sub-fail", ProfileType: "retail",
+	})
+	if err == nil {
+		t.Error("expected bootstrap error to propagate, got nil")
 	}
 }

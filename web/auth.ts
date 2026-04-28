@@ -3,6 +3,7 @@ import Zitadel from "next-auth/providers/zitadel"
 
 declare module "next-auth" {
   interface Session {
+    accessToken?: string
     user: {
       id: string
       email?: string | null
@@ -11,13 +12,51 @@ declare module "next-auth" {
       tenantId: string | null
       profileType: string | null
       isFirstTime: boolean
+      role?: string | null
+      isOwner?: boolean
     }
   }
+}
 
-  interface JWT {
-    sub?: string
-    tallyTenantId?: string
-    profileType?: string
+// Note: NextAuth v5 types JWT as Record<string, unknown>; augmenting
+// "next-auth/jwt" subpath causes "module not found" under some module
+// resolution configurations. We rely on local casts inside the jwt callback
+// instead.
+
+// BACKEND_URL is the in-cluster service URL for tally-backend.
+// Falls back to the public domain only when running outside K8s.
+const BACKEND_URL = process.env.BACKEND_URL ?? "http://tally-backend:18200"
+
+// Profile cache TTL — re-fetch /api/v1/me at most once every 60s on session
+// access. We invalidate eagerly via NextAuth update() after /setup submit.
+const PROFILE_TTL_MS = 60_000
+
+interface MePayload {
+  user_id: string
+  tenant_id: string
+  email: string
+  display_name: string
+  role: string
+  is_owner: boolean
+  profile_type: string
+  is_first_time: boolean
+}
+
+// fetchMe calls the backend /api/v1/me with the user's access_token. On any
+// failure it returns null and the caller treats the user as first-time so the
+// frontend redirects to /setup. This is fail-safe by design — a flaky backend
+// or expired token never leaks the user into a half-hydrated dashboard.
+async function fetchMe(accessToken: string): Promise<MePayload | null> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/v1/me`, {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      // server-side fetch in NextAuth callback — no caching
+      cache: "no-store",
+    })
+    if (!res.ok) return null
+    return (await res.json()) as MePayload
+  } catch {
+    return null
   }
 }
 
@@ -33,31 +72,53 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     signIn: "/login",
   },
   callbacks: {
-    async jwt({ token, account, profile }) {
-      // On first sign-in, store the Zitadel sub and any custom claims.
-      if (account) {
-        token.sub = token.sub ?? (profile?.sub as string)
-        // tally_tenant_id may be injected by a Zitadel Action in the future.
-        const p = profile as Record<string, unknown> | undefined
-        if (p?.tally_tenant_id && typeof p.tally_tenant_id === "string") {
-          token.tallyTenantId = p.tally_tenant_id
+    // jwt is invoked once per request after sign-in, and additionally on
+    // explicit update() calls from the client. We use this hook to:
+    //   1. capture the access_token from the OIDC `account` (only present at sign-in)
+    //   2. lazily fetch /api/v1/me to populate tenant/profile fields on the token
+    //   3. refresh on explicit update() (post /setup submit)
+    async jwt({ token, account, profile, trigger }) {
+      const t = token as Record<string, unknown>
+
+      // First sign-in: capture sub + access_token from the OIDC account.
+      if (account && profile) {
+        if (typeof profile.sub === "string") {
+          t.sub = profile.sub
+        }
+        if (typeof account.access_token === "string") {
+          t.accessToken = account.access_token
+        }
+      }
+
+      const accessToken = typeof t.accessToken === "string" ? t.accessToken : ""
+      const fetchedAt = typeof t.profileFetchedAt === "number" ? t.profileFetchedAt : 0
+      const explicitRefresh = trigger === "update"
+      const stale = !fetchedAt || Date.now() - fetchedAt > PROFILE_TTL_MS
+
+      if (accessToken && (explicitRefresh || stale || t.isFirstTime !== false)) {
+        const me = await fetchMe(accessToken)
+        if (me) {
+          t.tenantId = me.tenant_id || null
+          t.profileType = me.profile_type || null
+          t.isFirstTime = me.is_first_time
+          t.role = me.role || null
+          t.isOwner = me.is_owner
+          t.profileFetchedAt = Date.now()
         }
       }
       return token
     },
     async session({ session, token }) {
-      // Fetch /api/v1/me from the backend to get tenantId + profileType.
-      // The backend JWT validation happens server-side when the access_token is forwarded.
-      // For MVP, we rely on the tally_tenant_id claim injected into the JWT token cache.
-      const tenantId = typeof token.tallyTenantId === "string" ? token.tallyTenantId : null
-      const profileType = typeof token.profileType === "string" ? token.profileType : null
-
+      const t = token as Record<string, unknown>
+      session.accessToken = typeof t.accessToken === "string" ? t.accessToken : undefined
       session.user = {
         ...session.user,
-        id: token.sub ?? "",
-        tenantId,
-        profileType,
-        isFirstTime: !tenantId,
+        id: typeof t.sub === "string" ? t.sub : "",
+        tenantId: typeof t.tenantId === "string" ? t.tenantId : null,
+        profileType: typeof t.profileType === "string" ? t.profileType : null,
+        isFirstTime: typeof t.isFirstTime === "boolean" ? t.isFirstTime : true,
+        role: typeof t.role === "string" ? t.role : null,
+        isOwner: typeof t.isOwner === "boolean" ? t.isOwner : false,
       }
       return session
     },

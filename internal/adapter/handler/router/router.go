@@ -26,10 +26,12 @@ func notImplemented(c *gin.Context) {
 // New creates and configures a Gin engine with all registered routes.
 // All handler pointers may be nil in test environments; routes will still be registered
 // and respond with 501 instead of panicking.
+// authMW may be nil — in that case the /api/v1 group has no auth middleware
+// and handlers will see no sub/tenant_id in context (returns 401).
 // The engine mode (release/debug) is controlled by GIN_MODE or gin.SetMode.
 //
 //nolint:cyclop // router wiring is intentionally long
-func New(h *health.Handler, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler) *gin.Engine {
+func New(h *health.Handler, authMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
@@ -41,6 +43,9 @@ func New(h *health.Handler, ph *handlerproduct.Handler, uh *handlerunit.Handler,
 
 	// API v1 — business endpoints.
 	api := r.Group("/api/v1")
+	if authMW != nil {
+		api.Use(authMW)
+	}
 	{
 		// Auth + tenant profile routes (Story 2.1).
 		// Production setup: AuthMiddleware is applied at the lifecycle layer before

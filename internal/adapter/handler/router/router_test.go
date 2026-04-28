@@ -16,9 +16,10 @@ func init() {
 
 // newTestRouter creates a Gin engine with nil handlers for route-registration tests.
 // nil handlers are safe as long as the tested routes don't reach the handler bodies.
+// authMW is also nil in tests so we exercise pure route registration.
 func newTestRouter() *gin.Engine {
 	h := health.New("dev")
-	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 func TestRouter_HealthzRouteRegistered(t *testing.T) {
