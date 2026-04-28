@@ -18,7 +18,7 @@ func init() {
 // nil handlers are safe as long as the tested routes don't reach the handler bodies.
 func newTestRouter() *gin.Engine {
 	h := health.New("dev")
-	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil)
+	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 func TestRouter_HealthzRouteRegistered(t *testing.T) {
@@ -184,6 +184,29 @@ func TestRouter_PaymentRoutesRegistered(t *testing.T) {
 	}{
 		{http.MethodPost, "/api/v1/payments"},
 		{http.MethodGet, "/api/v1/payments"},
+	}
+
+	for _, tc := range routes {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(tc.method, tc.path, nil)
+		r.ServeHTTP(w, req)
+		if w.Code == http.StatusNotFound {
+			t.Errorf("%s %s returned 404 — route not registered", tc.method, tc.path)
+		}
+	}
+}
+
+// TestRouter_BillingRoutesRegistered verifies the platform billing integration routes
+// are wired (Tally → platform subscription checkout, Story 10.1).
+func TestRouter_BillingRoutesRegistered(t *testing.T) {
+	r := newTestRouter()
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/billing/overview"},
+		{http.MethodPost, "/api/v1/billing/subscribe"},
 	}
 
 	for _, tc := range routes {

@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
+	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
@@ -27,6 +28,7 @@ import (
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
+	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
@@ -35,6 +37,7 @@ import (
 	appunit "github.com/hanmahong5-arch/lurus-tally/internal/app/unit"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/logger"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
 )
 
@@ -143,8 +146,30 @@ func NewApp(cfg *config.Config) (*App, error) {
 	)
 	paymentHandler := handlerpayment.New(recordPaymentUC, listPaymentsUC)
 
+	// Wire billing → platform integration. When PLATFORM_INTERNAL_KEY is unset
+	// (dev clusters without platform) we leave billingHandler nil; the router
+	// then surfaces 501 on /billing/* routes instead of crashing at boot.
+	var billingHandler *handlerbilling.Handler
+	if cfg.PlatformInternalKey != "" {
+		platClient, perr := platformclient.New(platformclient.Config{
+			BaseURL: cfg.PlatformBaseURL,
+			APIKey:  cfg.PlatformInternalKey,
+		})
+		if perr != nil {
+			return nil, fmt.Errorf("lifecycle: cannot init platform client: %w", perr)
+		}
+		billingHandler = handlerbilling.New(
+			appbilling.NewSubscribeUseCase(platClient),
+			appbilling.NewOverviewUseCase(platClient),
+		)
+		l.Info("billing integration enabled",
+			slog.String("platform_url", cfg.PlatformBaseURL))
+	} else {
+		l.Warn("billing integration disabled (PLATFORM_INTERNAL_KEY not set)")
+	}
+
 	h := health.New(cfg.ServiceVersion)
-	r := router.New(h, productHandler, unitHandler, authHandler, stockHandler, billHandler, currencyHandler, saleHandler, paymentHandler)
+	r := router.New(h, productHandler, unitHandler, authHandler, stockHandler, billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

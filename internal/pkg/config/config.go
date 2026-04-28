@@ -23,6 +23,13 @@ type Config struct {
 	ServiceVersion  string // SERVICE_VERSION: build version label (default "dev")
 	ShutdownTimeout string // SHUTDOWN_TIMEOUT: graceful shutdown deadline (default "5s")
 	MigrateOnBoot   bool   // MIGRATE_ON_BOOT: run migrations on startup, default true
+
+	// Billing — Tally calls into 2l-svc-platform /internal/v1/* for subscription
+	// checkout. When PlatformInternalKey is empty the billing routes return 503
+	// instead of failing fast at boot so dev clusters without platform stay
+	// bootable.
+	PlatformBaseURL     string // PLATFORM_BASE_URL: e.g. http://platform-core.lurus-platform.svc:18104
+	PlatformInternalKey string // PLATFORM_INTERNAL_KEY: bearer token for platform internal API
 }
 
 // required reads an environment variable and returns a descriptive error when absent.
@@ -76,5 +83,8 @@ func Load() (*Config, error) {
 		ServiceVersion:  optional("SERVICE_VERSION", "dev"),
 		ShutdownTimeout: optional("SHUTDOWN_TIMEOUT", "5s"),
 		MigrateOnBoot:   optional("MIGRATE_ON_BOOT", "true") != "false",
+		PlatformBaseURL: optional("PLATFORM_BASE_URL",
+			"http://platform-core.lurus-platform.svc:18104"),
+		PlatformInternalKey: optional("PLATFORM_INTERNAL_KEY", ""),
 	}, nil
 }

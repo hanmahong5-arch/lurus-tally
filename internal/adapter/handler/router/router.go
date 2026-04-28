@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
+	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
@@ -28,7 +29,7 @@ func notImplemented(c *gin.Context) {
 // The engine mode (release/debug) is controlled by GIN_MODE or gin.SetMode.
 //
 //nolint:cyclop // router wiring is intentionally long
-func New(h *health.Handler, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler) *gin.Engine {
+func New(h *health.Handler, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
@@ -110,6 +111,14 @@ func New(h *health.Handler, ph *handlerproduct.Handler, uh *handlerunit.Handler,
 		} else {
 			api.POST("/payments", notImplemented)
 			api.GET("/payments", notImplemented)
+		}
+
+		// Billing routes — Tally → platform subscription checkout (Story 10.1).
+		if bilh != nil {
+			bilh.RegisterRoutes(api)
+		} else {
+			api.GET("/billing/overview", notImplemented)
+			api.POST("/billing/subscribe", notImplemented)
 		}
 	}
 

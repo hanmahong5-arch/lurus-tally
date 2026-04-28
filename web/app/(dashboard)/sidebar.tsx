@@ -15,6 +15,7 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { href: "/purchases", label: "采购管理", icon: "🛒" },
   { href: "/sales", label: "销售管理", icon: "📊" },
   { href: "/finance", label: "财务管理", icon: "💰" },
+  { href: "/subscription", label: "订阅与计费", icon: "💳" },
 ]
 
 /**
