@@ -32,11 +32,11 @@ type Wallet struct {
 // AccountOverview is what /internal/v1/accounts/:id/overview returns.
 type AccountOverview struct {
 	Account struct {
-		ID          int64  `json:"id"`
-		Username    string `json:"username"`
-		Email       string `json:"email"`
-		VipTier     string `json:"vip_tier"`
-		VipExpires  string `json:"vip_expires_at,omitempty"`
+		ID         int64  `json:"id"`
+		Username   string `json:"username"`
+		Email      string `json:"email"`
+		VipTier    string `json:"vip_tier"`
+		VipExpires string `json:"vip_expires_at,omitempty"`
 	} `json:"account"`
 	Wallet       *Wallet               `json:"wallet,omitempty"`
 	Subscription *SubscriptionSnapshot `json:"subscription,omitempty"`

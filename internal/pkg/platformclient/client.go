@@ -85,7 +85,7 @@ func (c *Client) do(ctx context.Context, method, path string, payload, out any) 
 	if err != nil {
 		return &Error{Code: ErrCodeUnavailable, Message: fmt.Sprintf("transport: %v", err)}
 	}
-	defer res.Body.Close()
+	defer func() { _ = res.Body.Close() }()
 
 	rawBody, _ := io.ReadAll(io.LimitReader(res.Body, maxBodyBytes))
 

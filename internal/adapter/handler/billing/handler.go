@@ -55,8 +55,8 @@ type subscribeRequest struct {
 // subscribeResponse keeps the client contract small and explicit; the frontend
 // branches on which field is non-empty.
 type subscribeResponse struct {
-	OrderNo      string                              `json:"order_no,omitempty"`
-	PayURL       string                              `json:"pay_url,omitempty"`
+	OrderNo      string                               `json:"order_no,omitempty"`
+	PayURL       string                               `json:"pay_url,omitempty"`
 	Subscription *platformclient.SubscriptionSnapshot `json:"subscription,omitempty"`
 }
 
