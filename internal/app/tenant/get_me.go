@@ -20,14 +20,14 @@ type GetMeInput struct {
 // onboarding (no mapping), TenantID + ProfileType are empty strings and
 // IsFirstTime is true so the frontend can route to /setup.
 type GetMeOutput struct {
-	UserSub     string `json:"user_id"`        // Zitadel sub
-	TenantID    string `json:"tenant_id"`      // "" when not yet onboarded
-	Email       string `json:"email"`          // "" when not in mapping
-	DisplayName string `json:"display_name"`   // ""
-	Role        string `json:"role"`           // "" when not yet onboarded
-	IsOwner     bool   `json:"is_owner"`       // false when not yet onboarded
-	ProfileType string `json:"profile_type"`   // "" when no profile set
-	IsFirstTime bool   `json:"is_first_time"`  // true when no mapping yet
+	UserSub     string `json:"user_id"`       // Zitadel sub
+	TenantID    string `json:"tenant_id"`     // "" when not yet onboarded
+	Email       string `json:"email"`         // "" when not in mapping
+	DisplayName string `json:"display_name"`  // ""
+	Role        string `json:"role"`          // "" when not yet onboarded
+	IsOwner     bool   `json:"is_owner"`      // false when not yet onboarded
+	ProfileType string `json:"profile_type"`  // "" when no profile set
+	IsFirstTime bool   `json:"is_first_time"` // true when no mapping yet
 }
 
 // GetMeUseCase looks up a user's full identity context by Zitadel sub.
