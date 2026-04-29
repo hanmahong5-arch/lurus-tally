@@ -80,13 +80,17 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     async jwt({ token, account, profile, trigger }) {
       const t = token as Record<string, unknown>
 
-      // First sign-in: capture sub + access_token from the OIDC account.
+      // First sign-in: capture sub + id_token from the OIDC account.
+      // We use id_token (always JWT, OIDC standard) rather than access_token
+      // because Zitadel issues opaque access_tokens by default — backend would
+      // be unable to validate them as JWT without enabling app-level "JWT
+      // access tokens" in Zitadel app config.
       if (account && profile) {
         if (typeof profile.sub === "string") {
           t.sub = profile.sub
         }
-        if (typeof account.access_token === "string") {
-          t.accessToken = account.access_token
+        if (typeof account.id_token === "string") {
+          t.accessToken = account.id_token
         }
       }
 
