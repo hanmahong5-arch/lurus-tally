@@ -79,7 +79,7 @@ export interface ListProductsParams {
   tenantId?: string
 }
 
-const BASE = "/api/v1"
+const BASE = "/api/proxy"
 
 function headers(tenantId?: string): HeadersInit {
   const h: HeadersInit = { "Content-Type": "application/json" }

@@ -65,7 +65,7 @@ export class BillingError extends Error {
   }
 }
 
-const BASE = "/api/v1"
+const BASE = "/api/proxy"
 
 async function readError(res: Response, fallback: string): Promise<BillingError> {
   let code = "unknown"

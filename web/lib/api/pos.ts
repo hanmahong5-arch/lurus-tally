@@ -4,7 +4,7 @@
  * Story 2.1 TODO: replace tenantId param with session-cookie auth.
  */
 
-const BASE = "/api/v1"
+const BASE = "/api/proxy"
 
 function headers(tenantId?: string): Record<string, string> {
   const h: Record<string, string> = { "Content-Type": "application/json" }

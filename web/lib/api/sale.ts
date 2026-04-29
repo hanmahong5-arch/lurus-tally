@@ -87,7 +87,7 @@ export interface ListSaleBillsParams {
   tenantId?: string
 }
 
-const BASE = "/api/v1"
+const BASE = "/api/proxy"
 
 function headers(tenantId?: string): HeadersInit {
   const h: Record<string, string> = { "Content-Type": "application/json" }

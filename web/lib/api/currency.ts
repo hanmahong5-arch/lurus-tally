@@ -34,7 +34,7 @@ export interface CreateRateRequest {
   effective_at?: string // RFC3339 or YYYY-MM-DD; defaults to today on server
 }
 
-const BASE = "/api/v1"
+const BASE = "/api/proxy"
 
 async function handleResponse<T>(res: Response, operation: string): Promise<T> {
   if (!res.ok) {

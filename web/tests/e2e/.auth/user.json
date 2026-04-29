@@ -1,0 +1,65 @@
+{
+  "cookies": [
+    {
+      "name": "__Secure-authjs.callback-url",
+      "value": "https%3A%2F%2Ftally-stage.lurus.cn%2Fdashboard",
+      "domain": "tally-stage.lurus.cn",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__Host-zitadel.login.csrf",
+      "value": "MTc3NzQ2NDM5NHxJbVptZEU4MmJuRkZVbUp0VGxaelUwZEJSbmxEWmpaWlprVlNNRFp5T0ZCSU9GRnFTVzVvVXpBclZqZzlJZ289fMBPWNhF1op1fJn2gEQ665p_LsE6wVuVjpEHsYSq03vd",
+      "domain": "test-auth.lurus.cn",
+      "path": "/",
+      "expires": 1777507594.436684,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "mode",
+      "value": "auto-light",
+      "domain": "test-auth.lurus.cn",
+      "path": "/",
+      "expires": 1809000396,
+      "httpOnly": false,
+      "secure": false,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__Host-zitadel.useragent",
+      "value": "MTc3NzQ2NDM5OHxQLTIxRnMxVDNyZENPS0ZNNWc4YS1CLXp4RW4xVW4xN3hpazdpSnpfU3dKNVdxYWRldU9JenB5SnNKNW9PRjh2SWNPeV83VzFqdUZQX0s0TUlCOFBXbWVyNWtveHBBPT18B-hCUGx3IU8DLtgde04uGynOYdNolYQjNH0D4O8UJyk=",
+      "domain": "test-auth.lurus.cn",
+      "path": "/",
+      "expires": 1809000398.610044,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__Host-authjs.csrf-token",
+      "value": "fcf029170f2c494939761b770b0f75318c77dcee0f778e32bc8123a946f25992%7C0c19f2cab8c5c054bf60e662c098e735ae648e3773315cc492daab7e88279d15",
+      "domain": "tally-stage.lurus.cn",
+      "path": "/",
+      "expires": -1,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    },
+    {
+      "name": "__Secure-authjs.session-token",
+      "value": "eyJhbGciOiJkaXIiLCJlbmMiOiJBMjU2Q0JDLUhTNTEyIiwia2lkIjoiVWdBWHFveW1faUpqZEt3ajlra0ZlTUktTGNMUHdqVEk3TVB4UUcwb1ZKaXcxa0xaY3liTWp6V1FvN0pocE1kNzllaG1zaU5BakJzTVFBbS1Ua3U4VlEifQ..2ip4dC5g3cOQcwnxLHqRlQ.60ht1sIempxyfwzoe64BBNOnbeL5mRh_Kryex5iTUiOJm4vn6K1wcco9V4Fo0Lz3_-dCFnRsfCmqUHpgnpuQ3xGipThbOMT1zR3lftGJO5K7z1bQH-3xLnRhQX9PxdM6oy9aIH9EpttCmnX3Ju85lNT_rv1ix6MMiWT0UOLXDCmUxtb0ir2g04cjpdmAus5XKiMjbdIOkIoygT1OtNX49mPoCi8aIehqnFY239ZG90Jg2gMgYbbMVj4SZLRP7oOApe_cVe8Y1r7TW0wf2-9mP02wdJT5rGswCDQS-6TVVCJwSlZU9XcQoSH7dHocjPM28vq5OtL6RRJzfDbEFWI3rVqGnURhhf_wyxC_9ZKxp6QV0nc7DSrtDLULCwFBOK2Zp-NwoA4J1SHK6HWUmjvYDRmvVxdet4xDXiRLkQlxUfV8qCnUsr5DfhJ9OJEmyEVNHI9ottiCpqXyRwJErKvda0ApPYOVu259sfhZu3P0c2UNC8QmlVnH5RPmD2gqJxnKyOHz5rKdDOumgSr7EApmzpI51MMxKgsDENiY4Cf6btj0zrdJXw4GB-B8wReua8-Gdf7BNCvgaIzly74nIPVrJNCLR8ltp2ApdgPImiRj76h2SSr95YmeCNmCk1pd-iQb9SOdfgBsG13OiFWmSH7qRnUYIGMaL7Fahk6FgZAQqomvqn_R_idj0RHRM7FohfMUnJ7eRXH7K7Nlxbs2alL_nFSO2OcHsZ53CAKsaSircq7uVLN53-0k08akeYsaZoxRSjehjXeg3WH4aR8XE2Sr6CFWMXHs5n6S5h2zaGlujD8LtM-1iWCJ0Llq4HxwFU6T8XPBB5sjTBcH-osuQGi8yzOhpdM_yDOAsFtqF8rCT4PS7TuCHYaKoZef4Mnhjse8AZZiGVqBFQ-7a3P1M351IOYGliNExe_cSEsUY3evF7WJVZ4xrtn22I1bYGBucsflskxthgxpBmw2nYf-bn9bq7gsz7rawNY4I_RfCkN0fI8d5fqprvcExGCpkmMVBNLDZZ8tznD4ipZPLqL0jtUGYVhyK8sGNq-yZJpBzGhLu-gFPjH_6cUuFBYKWDQbGuUZv47IPazFowf3UeEBlWfLtW3RdZw8kb6v3qVfqG8ED5IlOh6NeAyTWfybcMnk5aN9ec6Te9uH7SFuag_HmAg9Odngxrcf1K-eqswULn6VgM1ZVXfTRWTBO49Km8l5mDHh2NLeNmdoJ20jfv_DQQvC9sfsH2kaquD7rR4u7iPsalR6-T2AMlBxYXGa0clKrPDkWEOZ-ZrfKLlk1vg6nRONnF1xgqLhCyRT_Pv1dtyz5f3NTtg_aUgf61AH3vRgBi8MVEfAdZmX7bWCXeRZ7GluN9J_rrBWm1Kg13LFUz_BrtSZ4jmbyXx4KDDyPKe-ji5tBTSr0oITaOpsylji91tiVOv9DHEOhhQ6CihtbanGMUlyn9zw4UKVemZ5VbZad54WiHAUzK1ZUn1BxiN6nkghzINuyWXS7X5CvU4pkWReGYgUe_cBmIyyeDAsSwjIzwfoz1T9r9kl1cWnLUgAIMo0qA.LQCE3JpSMLVTdNQPEu58Z9e3q9p50Zd7fTJxnrlM484",
+      "domain": "tally-stage.lurus.cn",
+      "path": "/",
+      "expires": 1780056399.128272,
+      "httpOnly": true,
+      "secure": true,
+      "sameSite": "Lax"
+    }
+  ],
+  "origins": []
+}
