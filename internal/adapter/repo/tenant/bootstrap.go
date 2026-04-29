@@ -69,7 +69,9 @@ func (s *SQLBootstrapStore) Bootstrap(ctx context.Context, in BootstrapInput) er
 	defer func() { _ = tx.Rollback() }()
 
 	// Set RLS context so policy checks on tenant_profile / user_identity_mapping pass.
-	if _, err := tx.ExecContext(ctx, "SET LOCAL app.tenant_id = $1", in.TenantID.String()); err != nil {
+	// Postgres SET commands don't accept parameter binding ($1), so use set_config()
+	// with is_local=true (LOCAL = scoped to the current transaction).
+	if _, err := tx.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, true)", in.TenantID.String()); err != nil {
 		return fmt.Errorf("bootstrap: set rls context: %w", err)
 	}
 
