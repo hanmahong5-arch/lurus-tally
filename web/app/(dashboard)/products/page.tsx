@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react"
 import Link from "next/link"
-import { listProducts, deleteProduct, type Product } from "@/lib/api/products"
+import { listProducts, deleteProduct, restoreProduct, type Product } from "@/lib/api/products"
+import { globalUndoStack } from "@/lib/undo/undo-stack"
 
 /**
  * Products list page — GET /api/v1/products
@@ -35,12 +36,24 @@ export default function ProductsPage() {
     load()
   }, [])
 
-  async function handleDelete(id: string) {
-    if (!confirm("确认删除该商品？")) return
+  async function handleDelete(p: Product) {
+    // Push undo entry BEFORE the delete call so the entry is never lost if delete fails.
+    globalUndoStack.push({
+      type: "delete_product",
+      id: p.id,
+      name: p.name,
+      revert: async () => {
+        await restoreProduct(p.id, devTenantId)
+        load(q || undefined)
+      },
+    })
+
     try {
-      await deleteProduct(id, devTenantId)
+      await deleteProduct(p.id, devTenantId)
       load(q || undefined)
     } catch (e) {
+      // Delete failed — remove the entry we just pushed so undo doesn't fire.
+      globalUndoStack.pop()
       alert("删除失败: " + String(e))
     }
   }
@@ -153,7 +166,7 @@ export default function ProductsPage() {
                         编辑
                       </Link>
                       <button
-                        onClick={() => handleDelete(p.id)}
+                        onClick={() => handleDelete(p)}
                         className="text-xs text-destructive hover:underline"
                       >
                         删除

@@ -127,6 +127,7 @@ func newTestHandler(repo *mockBillRepo) *handlerbill.Handler {
 		appbill.NewCancelPurchaseUseCase(repo),
 		appbill.NewListPurchasesUseCase(repo),
 		appbill.NewGetPurchaseUseCase(repo),
+		appbill.NewRestorePurchaseUseCase(repo),
 	)
 }
 

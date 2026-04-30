@@ -170,3 +170,17 @@ export async function deleteProduct(
     throw new Error(body.error ?? `deleteProduct: HTTP ${res.status}`)
   }
 }
+
+export async function restoreProduct(
+  id: string,
+  tenantId?: string
+): Promise<void> {
+  const res = await fetch(`${BASE}/products/${id}/restore`, {
+    method: "POST",
+    headers: headers(tenantId),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.error ?? `restoreProduct: HTTP ${res.status}`)
+  }
+}

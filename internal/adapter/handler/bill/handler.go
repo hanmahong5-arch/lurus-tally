@@ -18,12 +18,13 @@ import (
 
 // Handler groups all purchase bill Gin handlers.
 type Handler struct {
-	create  *appbill.CreatePurchaseDraftUseCase
-	update  *appbill.UpdatePurchaseDraftUseCase
-	approve *appbill.ApprovePurchaseUseCase
-	cancel  *appbill.CancelPurchaseUseCase
-	list    *appbill.ListPurchasesUseCase
-	get     *appbill.GetPurchaseUseCase
+	create   *appbill.CreatePurchaseDraftUseCase
+	update   *appbill.UpdatePurchaseDraftUseCase
+	approve  *appbill.ApprovePurchaseUseCase
+	cancel   *appbill.CancelPurchaseUseCase
+	list     *appbill.ListPurchasesUseCase
+	get      *appbill.GetPurchaseUseCase
+	restore  *appbill.RestorePurchaseUseCase
 }
 
 // New creates a Handler wired to the provided use cases.
@@ -34,6 +35,7 @@ func New(
 	cancel *appbill.CancelPurchaseUseCase,
 	list *appbill.ListPurchasesUseCase,
 	get *appbill.GetPurchaseUseCase,
+	restore *appbill.RestorePurchaseUseCase,
 ) *Handler {
 	return &Handler{
 		create:  create,
@@ -42,6 +44,7 @@ func New(
 		cancel:  cancel,
 		list:    list,
 		get:     get,
+		restore: restore,
 	}
 }
 
@@ -51,6 +54,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PUT("/purchase-bills/:id", h.Update)
 	rg.POST("/purchase-bills/:id/approve", h.Approve)
 	rg.POST("/purchase-bills/:id/cancel", h.Cancel)
+	rg.POST("/purchase-bills/:id/restore", h.RestorePurchase)
 	rg.GET("/purchase-bills", h.List)
 	rg.GET("/purchase-bills/:id", h.Get)
 }
@@ -242,6 +246,40 @@ func (h *Handler) Cancel(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
+}
+
+// RestorePurchase handles POST /api/v1/purchase-bills/:id/restore.
+// Sets a cancelled purchase bill back to draft status.
+// Returns 409 when the bill is approved (use the purchase-return flow instead).
+func (h *Handler) RestorePurchase(c *gin.Context) {
+	tenantID := resolveTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, errResp("unauthorized", "tenant_id required", ""))
+		return
+	}
+	billID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errResp("validation_error", "invalid bill id", ""))
+		return
+	}
+
+	if err := h.restore.Execute(c.Request.Context(), tenantID, billID); err != nil {
+		if errors.Is(err, appbill.ErrBillNotFound) {
+			c.JSON(http.StatusNotFound, errResp("bill_not_found", "bill not found", ""))
+			return
+		}
+		if errors.Is(err, appbill.ErrCannotRestoreApproved) {
+			c.JSON(http.StatusConflict, errResp(
+				"cannot_restore_approved_bill",
+				"approved 单据不可直接恢复，需走采购退货流程",
+				"POST /api/v1/purchase-bills/"+billID.String()+"/return",
+			))
+			return
+		}
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "draft"})
 }
 
 // List handles GET /api/v1/purchase-bills

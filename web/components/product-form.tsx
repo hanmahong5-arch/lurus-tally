@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useProfile, ProfileGate } from "@/lib/profile"
 import { UnitSelector } from "@/components/unit-selector"
 import { HsCodeInput } from "@/components/cross-border/hs-code-input"
@@ -22,6 +22,8 @@ interface ProductFormProps {
   /** Tenant ID forwarded to UnitSelector for API calls (dev only) */
   tenantId?: string
   disabled?: boolean
+  /** Optional callback fired on every field change with the current draft state. */
+  onChange?: (draft: Partial<CreateProductInput>) => void
 }
 
 const STRATEGY_LABELS: Record<MeasurementStrategy, string> = {
@@ -51,6 +53,7 @@ export function ProductForm({
   onCancel,
   tenantId,
   disabled,
+  onChange,
 }: ProductFormProps) {
   const { profileType } = useProfile()
 
@@ -91,6 +94,30 @@ export function ProductForm({
 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Ref to skip the synchronous mount effect (fire onChange only on user edits).
+  const isFirstRenderRef = useRef(true)
+
+  // Notify parent of field changes for draft persistence (skips initial mount).
+  useEffect(() => {
+    if (isFirstRenderRef.current) {
+      isFirstRenderRef.current = false
+      return
+    }
+    if (!onChange) return
+    onChange({
+      code,
+      name,
+      manufacturer: manufacturer || undefined,
+      model: model || undefined,
+      spec: spec || undefined,
+      brand: brand || undefined,
+      remark: remark || undefined,
+      measurement_strategy: measurementStrategy,
+      default_unit_id: defaultUnitId,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [code, name, manufacturer, model, spec, brand, remark, measurementStrategy, defaultUnitId])
 
   function buildAttributes(profile: ProfileType): Record<string, unknown> {
     if (profile === "cross_border") {

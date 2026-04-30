@@ -17,11 +17,12 @@ import (
 
 // Handler groups all product CRUD Gin handlers.
 type Handler struct {
-	create *appproduct.CreateUseCase
-	list   *appproduct.ListUseCase
-	get    *appproduct.GetUseCase
-	update *appproduct.UpdateUseCase
-	delete *appproduct.DeleteUseCase
+	create  *appproduct.CreateUseCase
+	list    *appproduct.ListUseCase
+	get     *appproduct.GetUseCase
+	update  *appproduct.UpdateUseCase
+	delete  *appproduct.DeleteUseCase
+	restore *appproduct.RestoreUseCase
 }
 
 // New creates a Handler wired to the provided use cases.
@@ -31,13 +32,15 @@ func New(
 	get *appproduct.GetUseCase,
 	update *appproduct.UpdateUseCase,
 	del *appproduct.DeleteUseCase,
+	restore *appproduct.RestoreUseCase,
 ) *Handler {
 	return &Handler{
-		create: create,
-		list:   list,
-		get:    get,
-		update: update,
-		delete: del,
+		create:  create,
+		list:    list,
+		get:     get,
+		update:  update,
+		delete:  del,
+		restore: restore,
 	}
 }
 
@@ -276,6 +279,33 @@ func (h *Handler) Delete(c *gin.Context) {
 		return
 	}
 	c.Status(http.StatusNoContent)
+}
+
+// Restore handles POST /api/v1/products/:id/restore.
+// It un-deletes a soft-deleted product and returns the restored product JSON.
+func (h *Handler) Restore(c *gin.Context) {
+	tenantID := resolveTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant_id required"})
+		return
+	}
+
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid product id: must be a UUID"})
+		return
+	}
+
+	p, err := h.restore.Execute(c.Request.Context(), tenantID, id)
+	if err != nil {
+		if errors.Is(err, repoproduct.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "product not found or already active"})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, p)
 }
 
 // resolveTenantID reads tenant UUID from the Gin context (set by AuthMiddleware)

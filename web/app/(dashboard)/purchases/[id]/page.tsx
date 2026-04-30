@@ -7,10 +7,12 @@ import {
   getPurchaseBill,
   approvePurchaseBill,
   cancelPurchaseBill,
+  restorePurchaseBill,
   type BillDetail,
   type BillStatus,
   BILL_STATUS_LABEL,
 } from "@/lib/api/purchase"
+import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { BillLineEditor, type BillLineItem } from "@/components/bill-line-editor"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
@@ -59,13 +61,29 @@ export default function PurchaseDetailPage() {
   }
 
   async function handleCancel() {
-    if (!confirm("确认取消此采购单？")) return
+    if (!detail) return
+
+    const billNo = detail.head.bill_no
+
+    // Push undo entry BEFORE the cancel call — consistent with product delete pattern.
+    globalUndoStack.push({
+      type: "cancel_purchase",
+      id,
+      billNo,
+      revert: async () => {
+        await restorePurchaseBill(id, devTenantId)
+        load()
+      },
+    })
+
     setActing(true)
     setActionError(null)
     try {
       await cancelPurchaseBill(id, devTenantId)
       load()
     } catch (e) {
+      // Cancel failed — remove the undo entry we just pushed.
+      globalUndoStack.pop()
       setActionError(String(e))
     } finally {
       setActing(false)

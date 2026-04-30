@@ -174,3 +174,17 @@ export async function getPurchaseBill(
   })
   return handleResponse(res, "getPurchaseBill")
 }
+
+export async function restorePurchaseBill(
+  id: string,
+  tenantId?: string
+): Promise<void> {
+  const res = await fetch(`${BASE}/purchase-bills/${id}/restore`, {
+    method: "POST",
+    headers: headers(tenantId),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}))
+    throw new Error(body.message ?? body.error ?? `restorePurchaseBill: HTTP ${res.status}`)
+  }
+}

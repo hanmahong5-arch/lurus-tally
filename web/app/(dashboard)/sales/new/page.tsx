@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, Suspense } from "react"
+import { useState, useEffect, Suspense } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import {
   createSaleBill,
@@ -11,6 +11,9 @@ import { SaleLineEditor, type SaleLineItem } from "@/components/sale-line-editor
 import { ProfileGate, useProfile } from "@/lib/profile"
 import { CurrencySelector } from "@/components/cross-border/currency-selector"
 import { RateInput } from "@/components/cross-border/rate-input"
+import { useDraft } from "@/hooks/useDraft"
+import { DraftBadge } from "@/components/draft/DraftBadge"
+import { DraftRestoreToast } from "@/components/draft/DraftRestoreToast"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
@@ -22,6 +25,19 @@ const PAY_METHODS = [
   { value: "transfer", label: "转账" },
 ]
 
+/** Fields persisted as a sale draft. */
+interface SaleDraft {
+  isQuick: boolean
+  items: SaleLineItem[]
+  billDate: string
+  customerName: string
+  remark: string
+  paymentMethod: string
+  paidAmount: string
+  currency: string
+  exchangeRate: string
+}
+
 function NewSaleInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -29,22 +45,67 @@ function NewSaleInner() {
 
   // retail profile defaults to quick checkout; explicit ?mode=quick also triggers it
   const defaultQuick = profileType === "retail" || searchParams.get("mode") === "quick"
-  const [isQuick, setIsQuick] = useState(defaultQuick)
 
-  const [items, setItems] = useState<SaleLineItem[]>([])
+  const SALE_INITIAL: SaleDraft = {
+    isQuick: defaultQuick,
+    items: [],
+    billDate: new Date().toISOString().slice(0, 10),
+    customerName: "",
+    remark: "",
+    paymentMethod: "cash",
+    paidAmount: "",
+    currency: "CNY",
+    exchangeRate: "1",
+  }
+
+  const draft = useDraft<SaleDraft>("draft:sale:new", SALE_INITIAL)
+
+  const [isQuick, setIsQuick] = useState(draft.value.isQuick ?? defaultQuick)
+  const [items, setItems] = useState<SaleLineItem[]>(draft.value.items ?? [])
   const [billDate, setBillDate] = useState(
-    () => new Date().toISOString().slice(0, 10)
+    draft.value.billDate ?? new Date().toISOString().slice(0, 10)
   )
-  const [customerName, setCustomerName] = useState("")
-  const [remark, setRemark] = useState("")
-  const [paymentMethod, setPaymentMethod] = useState("cash")
-  const [paidAmount, setPaidAmount] = useState("")
+  const [customerName, setCustomerName] = useState(draft.value.customerName ?? "")
+  const [remark, setRemark] = useState(draft.value.remark ?? "")
+  const [paymentMethod, setPaymentMethod] = useState(draft.value.paymentMethod ?? "cash")
+  const [paidAmount, setPaidAmount] = useState(draft.value.paidAmount ?? "")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Multi-currency fields (cross_border profile, Story 9.1)
-  const [currency, setCurrency] = useState("CNY")
-  const [exchangeRate, setExchangeRate] = useState("1")
+  const [currency, setCurrency] = useState(draft.value.currency ?? "CNY")
+  const [exchangeRate, setExchangeRate] = useState(draft.value.exchangeRate ?? "1")
+
+  // When draft is restored from IDB (restoredAt flips non-null), sync local state.
+  useEffect(() => {
+    if (!draft.restoredAt) return
+    setIsQuick(draft.value.isQuick ?? defaultQuick)
+    setItems(draft.value.items ?? [])
+    setBillDate(draft.value.billDate ?? new Date().toISOString().slice(0, 10))
+    setCustomerName(draft.value.customerName ?? "")
+    setRemark(draft.value.remark ?? "")
+    setPaymentMethod(draft.value.paymentMethod ?? "cash")
+    setPaidAmount(draft.value.paidAmount ?? "")
+    setCurrency(draft.value.currency ?? "CNY")
+    setExchangeRate(draft.value.exchangeRate ?? "1")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.restoredAt])
+
+  // Persist field changes to draft (debounced inside useDraft).
+  useEffect(() => {
+    draft.setValue({
+      isQuick,
+      items,
+      billDate,
+      customerName,
+      remark,
+      paymentMethod,
+      paidAmount,
+      currency,
+      exchangeRate,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isQuick, items, billDate, customerName, remark, paymentMethod, paidAmount, currency, exchangeRate])
 
   const inputCls =
     "w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
@@ -96,6 +157,7 @@ function NewSaleInner() {
         },
         devTenantId
       )
+      await draft.markSubmitted()
       router.push(`/sales/${res.bill_id}`)
     } catch (err) {
       setError(String(err))
@@ -128,6 +190,7 @@ function NewSaleInner() {
         },
         devTenantId
       )
+      await draft.markSubmitted()
       router.push(`/sales/${res.bill_id}`)
     } catch (err) {
       setError(String(err))
@@ -139,9 +202,12 @@ function NewSaleInner() {
     <div className="p-6 max-w-5xl mx-auto">
       <div className="mb-6 flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">
-            {isQuick ? "快速收银" : "新建销售单"}
-          </h1>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-semibold">
+              {isQuick ? "快速收银" : "新建销售单"}
+            </h1>
+            <DraftBadge status={draft.status} />
+          </div>
           <p className="text-sm text-muted-foreground mt-0.5">
             {isQuick
               ? "一键完成销售出库 + 收款"
@@ -156,6 +222,11 @@ function NewSaleInner() {
           {isQuick ? "切换为草稿模式" : "切换为快速收银"}
         </button>
       </div>
+
+      <DraftRestoreToast
+        restoredAt={draft.restoredAt}
+        onDiscard={draft.discardDraft}
+      />
 
       <form
         onSubmit={isQuick ? handleQuickCheckout : handleCreateDraft}

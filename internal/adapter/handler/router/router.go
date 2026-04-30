@@ -66,6 +66,7 @@ func New(h *health.Handler, authMW gin.HandlerFunc, ph *handlerproduct.Handler, 
 			products.GET("/:id", productHandler(ph, (*handlerproduct.Handler).GetByID))
 			products.PUT("/:id", productHandler(ph, (*handlerproduct.Handler).Update))
 			products.DELETE("/:id", productHandler(ph, (*handlerproduct.Handler).Delete))
+			products.POST("/:id/restore", productHandler(ph, (*handlerproduct.Handler).Restore))
 		}
 
 		units := api.Group("/units")
@@ -84,6 +85,7 @@ func New(h *health.Handler, authMW gin.HandlerFunc, ph *handlerproduct.Handler, 
 			api.PUT("/purchase-bills/:id", notImplemented)
 			api.POST("/purchase-bills/:id/approve", notImplemented)
 			api.POST("/purchase-bills/:id/cancel", notImplemented)
+			api.POST("/purchase-bills/:id/restore", notImplemented)
 			api.GET("/purchase-bills", notImplemented)
 			api.GET("/purchase-bills/:id", notImplemented)
 		}

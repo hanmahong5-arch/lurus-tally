@@ -19,6 +19,9 @@ type Repository interface {
 	List(ctx context.Context, filter domain.ListFilter) ([]*domain.Product, int, error)
 	Update(ctx context.Context, p *domain.Product) error
 	Delete(ctx context.Context, tenantID, id uuid.UUID) error
+	// Restore un-deletes a soft-deleted product. Returns ErrNotFound if the product does
+	// not exist, is not owned by the tenant, or has not been soft-deleted.
+	Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.Product, error)
 }
 
 // CreateUseCase creates a new product in the catalogue.

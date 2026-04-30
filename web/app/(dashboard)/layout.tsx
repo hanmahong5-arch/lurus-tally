@@ -1,5 +1,6 @@
 import { DashboardSidebar } from "./sidebar"
 import { GlobalAI } from "@/components/ai-assistant/GlobalAI"
+import { UndoToastProvider } from "@/components/undo/UndoToastProvider"
 
 /**
  * Dashboard layout — wraps all routes in the (dashboard) group with a sidebar + header.
@@ -19,11 +20,13 @@ export default function DashboardLayout({
   children: React.ReactNode
 }) {
   return (
-    <div className="flex h-screen overflow-hidden">
-      <DashboardSidebar />
-      <main className="flex-1 overflow-y-auto">{children}</main>
-      {/* AI assistant: ⌘K Command Palette + Cmd+J Drawer */}
-      <GlobalAI />
-    </div>
+    <UndoToastProvider>
+      <div className="flex h-screen overflow-hidden">
+        <DashboardSidebar />
+        <main className="flex-1 overflow-y-auto">{children}</main>
+        {/* AI assistant: ⌘K Command Palette + Cmd+J Drawer */}
+        <GlobalAI />
+      </div>
+    </UndoToastProvider>
   )
 }

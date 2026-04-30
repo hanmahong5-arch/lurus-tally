@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import {
   createPurchaseBill,
@@ -13,24 +13,78 @@ import {
 import { ProfileGate } from "@/lib/profile"
 import { CurrencySelector } from "@/components/cross-border/currency-selector"
 import { RateInput } from "@/components/cross-border/rate-input"
+import { useDraft } from "@/hooks/useDraft"
+import { DraftBadge } from "@/components/draft/DraftBadge"
+import { DraftRestoreToast } from "@/components/draft/DraftRestoreToast"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
+/** Fields persisted as a purchase bill draft. */
+interface PurchaseDraft {
+  items: BillLineItem[]
+  billDate: string
+  shippingFee: string
+  taxAmount: string
+  remark: string
+  currency: string
+  exchangeRate: string
+}
+
+const PURCHASE_INITIAL: PurchaseDraft = {
+  items: [],
+  billDate: new Date().toISOString().slice(0, 10),
+  shippingFee: "0",
+  taxAmount: "0",
+  remark: "",
+  currency: "CNY",
+  exchangeRate: "1",
+}
+
 export default function NewPurchasePage() {
   const router = useRouter()
-  const [items, setItems] = useState<BillLineItem[]>([])
+
+  const draft = useDraft<PurchaseDraft>("draft:purchase:new", PURCHASE_INITIAL)
+
+  const [items, setItems] = useState<BillLineItem[]>(draft.value.items ?? [])
   const [billDate, setBillDate] = useState(
-    () => new Date().toISOString().slice(0, 10)
+    draft.value.billDate ?? new Date().toISOString().slice(0, 10)
   )
-  const [shippingFee, setShippingFee] = useState("0")
-  const [taxAmount, setTaxAmount] = useState("0")
-  const [remark, setRemark] = useState("")
+  const [shippingFee, setShippingFee] = useState(draft.value.shippingFee ?? "0")
+  const [taxAmount, setTaxAmount] = useState(draft.value.taxAmount ?? "0")
+  const [remark, setRemark] = useState(draft.value.remark ?? "")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   // Multi-currency fields (cross_border profile, Story 9.1)
-  const [currency, setCurrency] = useState("CNY")
-  const [exchangeRate, setExchangeRate] = useState("1")
+  const [currency, setCurrency] = useState(draft.value.currency ?? "CNY")
+  const [exchangeRate, setExchangeRate] = useState(draft.value.exchangeRate ?? "1")
+
+  // When draft is restored from IDB (restoredAt flips non-null), sync local state.
+  useEffect(() => {
+    if (!draft.restoredAt) return
+    setItems(draft.value.items ?? [])
+    setBillDate(draft.value.billDate ?? new Date().toISOString().slice(0, 10))
+    setShippingFee(draft.value.shippingFee ?? "0")
+    setTaxAmount(draft.value.taxAmount ?? "0")
+    setRemark(draft.value.remark ?? "")
+    setCurrency(draft.value.currency ?? "CNY")
+    setExchangeRate(draft.value.exchangeRate ?? "1")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draft.restoredAt])
+
+  // Persist field changes to draft (debounced inside useDraft).
+  useEffect(() => {
+    draft.setValue({
+      items,
+      billDate,
+      shippingFee,
+      taxAmount,
+      remark,
+      currency,
+      exchangeRate,
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [items, billDate, shippingFee, taxAmount, remark, currency, exchangeRate])
 
   const inputCls =
     "w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
@@ -71,6 +125,7 @@ export default function NewPurchasePage() {
         },
         devTenantId
       )
+      await draft.markSubmitted()
       router.push(`/purchases/${res.bill_id}`)
     } catch (e) {
       setError(String(e))
@@ -81,11 +136,19 @@ export default function NewPurchasePage() {
   return (
     <div className="p-6 max-w-5xl mx-auto">
       <div className="mb-6">
-        <h1 className="text-xl font-semibold">新建采购单</h1>
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold">新建采购单</h1>
+          <DraftBadge status={draft.status} />
+        </div>
         <p className="text-sm text-muted-foreground mt-0.5">
           填写采购单信息，保存后将生成草稿
         </p>
       </div>
+
+      <DraftRestoreToast
+        restoredAt={draft.restoredAt}
+        onDiscard={draft.discardDraft}
+      />
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Header fields */}

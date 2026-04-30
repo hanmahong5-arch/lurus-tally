@@ -199,6 +199,35 @@ func (r *Repo) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	return nil
 }
 
+// Restore clears the deleted_at timestamp on a soft-deleted product, making it visible again.
+// Returns ErrNotFound when no matching soft-deleted row exists for the tenant.
+func (r *Repo) Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.Product, error) {
+	now := time.Now().UTC()
+	const updateQ = `
+		UPDATE tally.product
+		SET deleted_at = NULL, updated_at = $1
+		WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL`
+
+	res, err := r.db.ExecContext(ctx, updateQ, now, id, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("product repo restore: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("product repo restore rows affected: %w", err)
+	}
+	if n == 0 {
+		return nil, ErrNotFound
+	}
+
+	// Re-fetch the restored product.
+	p, err := r.GetByID(ctx, tenantID, id)
+	if err != nil {
+		return nil, fmt.Errorf("product repo restore refetch: %w", err)
+	}
+	return p, nil
+}
+
 // rowScanner abstracts *sql.Row and *sql.Rows for reuse in scanProduct/scanProductRow.
 type rowScanner interface {
 	Scan(dest ...any) error

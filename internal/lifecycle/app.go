@@ -87,6 +87,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appproduct.NewGetUseCase(productRepo),
 		appproduct.NewUpdateUseCase(productRepo),
 		appproduct.NewDeleteUseCase(productRepo),
+		appproduct.NewRestoreUseCase(productRepo),
 	)
 
 	// Wire unit use cases.
@@ -148,6 +149,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appbill.NewCancelPurchaseUseCase(billRepo),
 		appbill.NewListPurchasesUseCase(billRepo),
 		appbill.NewGetPurchaseUseCase(billRepo),
+		appbill.NewRestorePurchaseUseCase(billRepo),
 	)
 
 	// Wire currency use cases (Story 9.1: multi-currency + manual exchange rate entry).
