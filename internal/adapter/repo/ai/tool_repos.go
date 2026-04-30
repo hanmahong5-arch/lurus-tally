@@ -39,7 +39,7 @@ func (r *SQLProductRepo) SearchProducts(ctx context.Context, tenantID uuid.UUID,
 	if err != nil {
 		return nil, fmt.Errorf("ai product search: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanProductRows(rows)
 }
 
@@ -56,7 +56,7 @@ func (r *SQLProductRepo) ListAllProducts(ctx context.Context, tenantID uuid.UUID
 	if err != nil {
 		return nil, fmt.Errorf("ai product list: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	return scanProductRows(rows)
 }
 
@@ -115,7 +115,7 @@ func (r *SQLStockRepo) ListStockSnapshots(ctx context.Context, tenantID uuid.UUI
 	if err != nil {
 		return nil, fmt.Errorf("ai stock snapshots: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []appai.StockRow
 	for rows.Next() {
@@ -175,7 +175,7 @@ func (r *SQLSaleRepo) ListRecentSaleLines(ctx context.Context, tenantID uuid.UUI
 	if err != nil {
 		return nil, fmt.Errorf("ai sale lines: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []appai.SaleRow
 	for rows.Next() {

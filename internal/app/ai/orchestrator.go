@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
 	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
-	"github.com/google/uuid"
 )
 
 // PlanStore persists and retrieves Plans (Redis-backed, TTL 1800s).
@@ -23,10 +23,10 @@ type PlanStore interface {
 // It calls the LLM, dispatches tool calls through the Registry, collects Plans,
 // and streams the final text response.
 type Orchestrator struct {
-	llm      *llmclient.Client
-	registry *Registry
+	llm       *llmclient.Client
+	registry  *Registry
 	planStore PlanStore
-	model    string
+	model     string
 }
 
 // NewOrchestrator constructs an Orchestrator.
@@ -57,7 +57,7 @@ Respond in Chinese. Be concise and data-driven. When showing lists, limit to 10 
 type ChatInput struct {
 	TenantID uuid.UUID
 	// History is the conversation history (user + assistant turns).
-	History  []llmclient.Message
+	History []llmclient.Message
 	// UserMessage is the new user message.
 	UserMessage string
 }

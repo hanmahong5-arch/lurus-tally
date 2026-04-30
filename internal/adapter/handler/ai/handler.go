@@ -1,9 +1,10 @@
 // Package ai implements the HTTP handlers for the Tally AI assistant.
 //
 // Endpoints:
-//   POST /api/v1/ai/chat     — SSE streaming chat (tool-calling orchestration)
-//   POST /api/v1/ai/plans/:plan_id/confirm — confirm a destructive plan
-//   POST /api/v1/ai/plans/:plan_id/cancel  — cancel a destructive plan
+//
+//	POST /api/v1/ai/chat     — SSE streaming chat (tool-calling orchestration)
+//	POST /api/v1/ai/plans/:plan_id/confirm — confirm a destructive plan
+//	POST /api/v1/ai/plans/:plan_id/cancel  — cancel a destructive plan
 package ai
 
 import (
@@ -15,9 +16,9 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
 	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
-	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
 )
 
@@ -73,10 +74,11 @@ const (
 
 // Chat handles POST /api/v1/ai/chat.
 // Response is an SSE stream:
-//   event: chunk  data: {"content":"..."}
-//   event: plan   data: {Plan JSON}
-//   event: done   data: {"finish_reason":"stop"}
-//   event: error  data: {"error":"..."}
+//
+//	event: chunk  data: {"content":"..."}
+//	event: plan   data: {Plan JSON}
+//	event: done   data: {"finish_reason":"stop"}
+//	event: error  data: {"error":"..."}
 func (h *Handler) Chat(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
 	if tenantID == uuid.Nil {
@@ -107,7 +109,7 @@ func (h *Handler) Chat(c *gin.Context) {
 	flusher, canFlush := c.Writer.(http.Flusher)
 
 	writeSSE := func(event, data string) {
-		fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, data)
+		_, _ = fmt.Fprintf(c.Writer, "event: %s\ndata: %s\n\n", event, data)
 		if canFlush {
 			flusher.Flush()
 		}

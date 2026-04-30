@@ -3,13 +3,12 @@ package ai_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
-	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
+	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
 )
 
 // --- mock PlanStore ---
@@ -67,12 +66,6 @@ type mockSaleRepo struct{}
 
 func (m *mockSaleRepo) ListRecentSaleLines(_ context.Context, _ uuid.UUID, _ int) ([]appai.SaleRow, error) {
 	return nil, nil
-}
-
-type mockExchangeRateRepo struct{}
-
-func (m *mockExchangeRateRepo) GetRate(_ context.Context, _ uuid.UUID, _, _ string) (interface{}, error) {
-	return nil, fmt.Errorf("no rate available")
 }
 
 // TestRegistry_Dispatch_SearchProducts_ReturnsResults verifies that searchProducts

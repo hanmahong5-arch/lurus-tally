@@ -3,11 +3,11 @@
 // communication is plain HTTP/JSON per the cost-llm skill guidance.
 //
 // DeepSeek v4 trap defenses applied:
-//   1. thinking disabled by default (prevents silent content="" with small max_tokens)
-//   2. min max_tokens=1024 enforced
-//   3. error.code classified (not HTTP status) to distinguish retryable vs deterministic
-//   4. multi-turn tool calls: full assistant message passed back verbatim
-//   5. tools and response_format never sent together
+//  1. thinking disabled by default (prevents silent content="" with small max_tokens)
+//  2. min max_tokens=1024 enforced
+//  3. error.code classified (not HTTP status) to distinguish retryable vs deterministic
+//  4. multi-turn tool calls: full assistant message passed back verbatim
+//  5. tools and response_format never sent together
 package llmclient
 
 import (
@@ -23,27 +23,27 @@ import (
 )
 
 const (
-	defaultMaxTokens  = 1024
+	defaultMaxTokens   = 1024
 	defaultHTTPTimeout = 120 * time.Second
-	sseDataPrefix     = "data: "
-	sseDone           = "[DONE]"
+	sseDataPrefix      = "data: "
+	sseDone            = "[DONE]"
 )
 
 // Message is a single chat message.
 type Message struct {
-	Role       string     `json:"role"`
-	Content    interface{} `json:"content"`           // string or []ContentPart
-	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
-	ToolCallID string     `json:"tool_call_id,omitempty"`
-	Name       string     `json:"name,omitempty"`
+	Role       string      `json:"role"`
+	Content    interface{} `json:"content"` // string or []ContentPart
+	ToolCalls  []ToolCall  `json:"tool_calls,omitempty"`
+	ToolCallID string      `json:"tool_call_id,omitempty"`
+	Name       string      `json:"name,omitempty"`
 	// ReasoningContent must be passed back verbatim in multi-turn tool calls (trap 4).
 	ReasoningContent *string `json:"reasoning_content,omitempty"`
 }
 
 // Tool is an OpenAI-compatible function tool definition.
 type Tool struct {
-	Type     string       `json:"type"`
-	Function FunctionDef  `json:"function"`
+	Type     string      `json:"type"`
+	Function FunctionDef `json:"function"`
 }
 
 // FunctionDef describes a callable function.
@@ -222,7 +222,7 @@ func (c *Client) doChat(ctx context.Context, req ChatRequest) (*ChatResponse, er
 	if err != nil {
 		return nil, fmt.Errorf("llmclient: http request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -265,7 +265,7 @@ func (c *Client) doStream(ctx context.Context, req ChatRequest, onDelta func(Str
 	if err != nil {
 		return fmt.Errorf("llmclient: http stream request: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
 		errBody, _ := io.ReadAll(resp.Body)
