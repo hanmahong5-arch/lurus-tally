@@ -25,7 +25,7 @@ test("AI chat returns non-empty response via newapi", async ({ request }) => {
   expect(body, "no error event").not.toMatch(/event:\s*error/)
   // Pull all `data:` lines under `chunk` events and assert at least one has
   // content. We don't assert specific Chinese text — model output varies.
-  const chunkContents = [...body.matchAll(/event:\s*chunk\s*\n\s*data:\s*(.+)/g)]
+  const chunkContents = Array.from(body.matchAll(/event:\s*chunk\s*\n\s*data:\s*(.+)/g))
     .map((m) => m[1])
     .filter((s) => {
       try {

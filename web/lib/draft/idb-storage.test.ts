@@ -37,16 +37,14 @@ function quotaError(): DOMException {
 describe("idb-storage", () => {
   beforeEach(() => {
     mockStore.clear()
-    vi.mocked(idbKeyval.get).mockImplementation(async (key: string) =>
-      mockStore.get(key)
+    vi.mocked(idbKeyval.get).mockImplementation(async (key) =>
+      mockStore.get(String(key))
     )
-    vi.mocked(idbKeyval.set).mockImplementation(
-      async (key: string, value: unknown) => {
-        mockStore.set(key, value)
-      }
-    )
-    vi.mocked(idbKeyval.del).mockImplementation(async (key: string) => {
-      mockStore.delete(key)
+    vi.mocked(idbKeyval.set).mockImplementation(async (key, value) => {
+      mockStore.set(String(key), value)
+    })
+    vi.mocked(idbKeyval.del).mockImplementation(async (key) => {
+      mockStore.delete(String(key))
     })
     _resetIdbAvailableForTest()
   })
