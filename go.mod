@@ -21,6 +21,7 @@ require (
 	github.com/bytedance/sonic v1.15.0 // indirect
 	github.com/bytedance/sonic/loader v0.5.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/cloudwego/base64x v0.1.6 // indirect
 	github.com/containerd/containerd v1.7.18 // indirect
 	github.com/containerd/log v0.1.0 // indirect
@@ -76,6 +77,7 @@ require (
 	github.com/power-devops/perfstat v0.0.0-20210106213030-5aafc221ea8c // indirect
 	github.com/quic-go/qpack v0.6.0 // indirect
 	github.com/quic-go/quic-go v0.59.0 // indirect
+	github.com/redis/go-redis/v9 v9.19.0 // indirect
 	github.com/segmentio/asm v1.2.0 // indirect
 	github.com/shirou/gopsutil/v3 v3.23.12 // indirect
 	github.com/shoenig/go-m1cpu v0.1.6 // indirect
@@ -90,7 +92,7 @@ require (
 	go.opentelemetry.io/otel v1.24.0 // indirect
 	go.opentelemetry.io/otel/metric v1.24.0 // indirect
 	go.opentelemetry.io/otel/trace v1.24.0 // indirect
-	go.uber.org/atomic v1.7.0 // indirect
+	go.uber.org/atomic v1.11.0 // indirect
 	golang.org/x/arch v0.22.0 // indirect
 	golang.org/x/crypto v0.48.0 // indirect
 	golang.org/x/net v0.51.0 // indirect

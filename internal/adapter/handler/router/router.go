@@ -10,6 +10,7 @@ import (
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
+	handlerai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/ai"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
@@ -31,7 +32,7 @@ func notImplemented(c *gin.Context) {
 // The engine mode (release/debug) is controlled by GIN_MODE or gin.SetMode.
 //
 //nolint:cyclop // router wiring is intentionally long
-func New(h *health.Handler, authMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler) *gin.Engine {
+func New(h *health.Handler, authMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
@@ -124,6 +125,15 @@ func New(h *health.Handler, authMW gin.HandlerFunc, ph *handlerproduct.Handler, 
 		} else {
 			api.GET("/billing/overview", notImplemented)
 			api.POST("/billing/subscribe", notImplemented)
+		}
+
+		// AI assistant routes (Story 11.1: AI Drawer + ⌘K palette).
+		if aih != nil {
+			aih.RegisterRoutes(api)
+		} else {
+			api.POST("/ai/chat", notImplemented)
+			api.POST("/ai/plans/:plan_id/confirm", notImplemented)
+			api.POST("/ai/plans/:plan_id/cancel", notImplemented)
 		}
 	}
 

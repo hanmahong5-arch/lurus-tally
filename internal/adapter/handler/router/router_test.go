@@ -19,7 +19,7 @@ func init() {
 // authMW is also nil in tests so we exercise pure route registration.
 func newTestRouter() *gin.Engine {
 	h := health.New("dev")
-	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 func TestRouter_HealthzRouteRegistered(t *testing.T) {
@@ -216,6 +216,29 @@ func TestRouter_BillingRoutesRegistered(t *testing.T) {
 		r.ServeHTTP(w, req)
 		if w.Code == http.StatusNotFound {
 			t.Errorf("%s %s returned 404 — route not registered", tc.method, tc.path)
+		}
+	}
+}
+
+// TestRouter_AIRoutesRegistered verifies the AI assistant routes are registered (Story 11.1).
+func TestRouter_AIRoutesRegistered(t *testing.T) {
+	r := newTestRouter()
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodPost, "/api/v1/ai/chat"},
+		{http.MethodPost, "/api/v1/ai/plans/some-id/confirm"},
+		{http.MethodPost, "/api/v1/ai/plans/some-id/cancel"},
+	}
+
+	for _, tc := range routes {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(tc.method, tc.path, nil)
+		r.ServeHTTP(w, req)
+		if w.Code == http.StatusNotFound {
+			t.Errorf("%s %s returned 404 — AI route not registered", tc.method, tc.path)
 		}
 	}
 }

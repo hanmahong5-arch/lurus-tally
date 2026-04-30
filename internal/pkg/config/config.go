@@ -36,6 +36,13 @@ type Config struct {
 	// production ZitadelDomain MUST be set so the JWT signature is validated
 	// against the issuer's JWKS.
 	ZitadelDomain string // ZITADEL_DOMAIN: e.g. auth.lurus.cn — issuer + JWKS derived from this
+
+	// AI assistant — routed through lurus newapi (newapi.lurus.cn).
+	// When NewAPIBaseURL is empty the AI routes return 501.
+	NewAPIBaseURL    string // NEWAPI_BASE_URL: e.g. https://newapi.lurus.cn/v1
+	NewAPIKey        string // NEWAPI_API_KEY: bearer token for newapi (injected via secret)
+	DefaultAIModel   string // DEFAULT_AI_MODEL: model name (default "deepseek-v4-flash")
+	AIPlanTTLSeconds int    // AI_PLAN_TTL_SECONDS: destructive plan TTL (default 1800)
 }
 
 // required reads an environment variable and returns a descriptive error when absent.
@@ -79,6 +86,11 @@ func Load() (*Config, error) {
 		return nil, err
 	}
 
+	aiPlanTTL := 1800
+	if v := os.Getenv("AI_PLAN_TTL_SECONDS"); v != "" {
+		fmt.Sscanf(v, "%d", &aiPlanTTL) //nolint:errcheck
+	}
+
 	return &Config{
 		DatabaseDSN:     dbDSN,
 		RedisURL:        redisURL,
@@ -93,5 +105,9 @@ func Load() (*Config, error) {
 			"http://platform-core.lurus-platform.svc:18104"),
 		PlatformInternalKey: optional("PLATFORM_INTERNAL_KEY", ""),
 		ZitadelDomain:       optional("ZITADEL_DOMAIN", ""),
+		NewAPIBaseURL:       optional("NEWAPI_BASE_URL", "https://newapi.lurus.cn/v1"),
+		NewAPIKey:           optional("NEWAPI_API_KEY", ""),
+		DefaultAIModel:      optional("DEFAULT_AI_MODEL", "deepseek-v4-flash"),
+		AIPlanTTLSeconds:    aiPlanTTL,
 	}, nil
 }

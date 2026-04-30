@@ -9,9 +9,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	handlerai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/ai"
 	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
@@ -23,6 +25,7 @@ import (
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
+	repoai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/ai"
 	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
 	repopayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/payment"
@@ -30,6 +33,7 @@ import (
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
+	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
@@ -39,9 +43,11 @@ import (
 	apptenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
 	appunit "github.com/hanmahong5-arch/lurus-tally/internal/app/unit"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/logger"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
+	"github.com/redis/go-redis/v9"
 )
 
 // App is the application root. It holds all wired dependencies and manages
@@ -95,8 +101,28 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// provides the atomic tenant+mapping+profile creation needed for first
 	// login. Both ChooseProfileUseCase and GetMeUseCase share this store.
 	tenantStore := repotenant.NewSQLBootstrapStore(db)
+
+	// Build the platform client up front so the same client serves both
+	// ChooseProfile (account provisioning) and the billing handler. Empty
+	// PLATFORM_INTERNAL_KEY → nil client → both code paths degrade gracefully.
+	var platClient *platformclient.Client
+	if cfg.PlatformInternalKey != "" {
+		pc, perr := platformclient.New(platformclient.Config{
+			BaseURL: cfg.PlatformBaseURL,
+			APIKey:  cfg.PlatformInternalKey,
+		})
+		if perr != nil {
+			return nil, fmt.Errorf("lifecycle: cannot init platform client: %w", perr)
+		}
+		platClient = pc
+		l.Info("platform client initialised",
+			slog.String("platform_url", cfg.PlatformBaseURL))
+	} else {
+		l.Warn("platform integration disabled (PLATFORM_INTERNAL_KEY not set)")
+	}
+
 	authHandler := handlerAuth.New(
-		apptenant.NewChooseProfileUseCase(tenantStore),
+		apptenant.NewChooseProfileUseCase(tenantStore, platClient, l),
 		apptenant.NewGetMeUseCase(tenantStore),
 	)
 
@@ -151,26 +177,50 @@ func NewApp(cfg *config.Config) (*App, error) {
 	)
 	paymentHandler := handlerpayment.New(recordPaymentUC, listPaymentsUC)
 
-	// Wire billing → platform integration. When PLATFORM_INTERNAL_KEY is unset
-	// (dev clusters without platform) we leave billingHandler nil; the router
-	// then surfaces 501 on /billing/* routes instead of crashing at boot.
+	// Wire billing → platform integration. Uses the same platClient already
+	// built above for account provisioning. nil client → 501 on /billing/*.
 	var billingHandler *handlerbilling.Handler
-	if cfg.PlatformInternalKey != "" {
-		platClient, perr := platformclient.New(platformclient.Config{
-			BaseURL: cfg.PlatformBaseURL,
-			APIKey:  cfg.PlatformInternalKey,
-		})
-		if perr != nil {
-			return nil, fmt.Errorf("lifecycle: cannot init platform client: %w", perr)
-		}
+	if platClient != nil {
 		billingHandler = handlerbilling.New(
 			appbilling.NewSubscribeUseCase(platClient),
 			appbilling.NewOverviewUseCase(platClient),
 		)
-		l.Info("billing integration enabled",
-			slog.String("platform_url", cfg.PlatformBaseURL))
+		l.Info("billing integration enabled")
+	}
+
+	// Wire AI assistant. Requires NEWAPI_API_KEY; when absent, AI routes return 501.
+	var aiHandler *handlerai.Handler
+	if cfg.NewAPIKey != "" {
+		rdbOpts, rerr := redis.ParseURL(cfg.RedisURL)
+		if rerr != nil {
+			return nil, fmt.Errorf("lifecycle: cannot parse REDIS_URL for AI store: %w", rerr)
+		}
+		rdb := redis.NewClient(rdbOpts)
+		planTTL := time.Duration(cfg.AIPlanTTLSeconds) * time.Second
+		planStore := repoai.New(repoai.NewGoRedisAdapter(rdb), planTTL)
+
+		llmClient, lerr := llmclient.New(llmclient.Config{
+			BaseURL:      cfg.NewAPIBaseURL,
+			APIKey:       cfg.NewAPIKey,
+			DefaultModel: cfg.DefaultAIModel,
+		})
+		if lerr != nil {
+			return nil, fmt.Errorf("lifecycle: cannot init LLM client: %w", lerr)
+		}
+
+		registry := appai.NewRegistry(
+			repoai.NewSQLProductRepo(db),
+			repoai.NewSQLStockRepo(db),
+			repoai.NewSQLSaleRepo(db),
+			repoai.NewSQLExchangeRateRepo(db),
+		)
+		orchestrator := appai.NewOrchestrator(llmClient, registry, planStore, cfg.DefaultAIModel)
+		aiHandler = handlerai.New(orchestrator)
+		l.Info("AI assistant enabled",
+			slog.String("model", cfg.DefaultAIModel),
+			slog.String("newapi_url", cfg.NewAPIBaseURL))
 	} else {
-		l.Warn("billing integration disabled (PLATFORM_INTERNAL_KEY not set)")
+		l.Warn("AI assistant disabled (NEWAPI_API_KEY not set)")
 	}
 
 	// Build AuthMiddleware when ZITADEL_DOMAIN is set. In dev it can be empty;
@@ -203,7 +253,8 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}
 
 	h := health.New(cfg.ServiceVersion)
-	r := router.New(h, authMW, productHandler, unitHandler, authHandler, stockHandler, billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler)
+	r := router.New(h, authMW, productHandler, unitHandler, authHandler, stockHandler,
+		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
