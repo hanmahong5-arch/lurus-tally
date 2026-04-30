@@ -13,3 +13,7 @@ data:
   JWT_AUDIENCE: ""
   SHUTDOWN_TIMEOUT: "5s"
   MIGRATE_ON_BOOT: "true"
+  # AI assistant — routes LLM calls through lurus newapi (never upstream directly)
+  NEWAPI_BASE_URL: "https://newapi.lurus.cn/v1"
+  DEFAULT_AI_MODEL: "deepseek-v4-flash"
+  AI_PLAN_TTL_SECONDS: "1800"
