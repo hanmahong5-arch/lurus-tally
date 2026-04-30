@@ -29,16 +29,25 @@ const (
 	jwksCacheTTL = 1 * time.Hour
 )
 
+// TenantLookup resolves a Zitadel sub to a tally tenant UUID using the
+// user_identity_mapping table. Returns uuid.Nil when the user is not yet
+// onboarded (first-time user pre-/setup), so the middleware can let the
+// request proceed and only /me + /tenant/profile work without tenant_id.
+type TenantLookup func(ctx context.Context, sub string) (uuid.UUID, error)
+
 // AuthMiddleware returns a Gin middleware that validates RS256 JWTs issued by the
 // given issuer. It fetches public keys from jwksURL (JWKS endpoint) and caches
 // them for jwksCacheTTL.
 //
 // On success it writes into the Gin context:
 //   - CtxKeyZitadelSub  → Zitadel sub claim (string)
-//   - CtxKeyTenantID    → tally tenant UUID (uuid.UUID, if tally_tenant_id claim present)
+//   - CtxKeyTenantID    → tally tenant UUID, resolved from (1) tally_tenant_id
+//     custom claim, falling back to (2) tenantLookup(sub) against
+//     user_identity_mapping. Skipped when tenantLookup is nil or the user
+//     hasn't onboarded yet.
 //
 // On failure it aborts with 401.
-func NewAuthMiddleware(jwksURL, expectedIssuer string) gin.HandlerFunc {
+func NewAuthMiddleware(jwksURL, expectedIssuer string, tenantLookup TenantLookup) gin.HandlerFunc {
 	cache := jwk.NewCache(context.Background())
 	_ = cache.Register(jwksURL, jwk.WithRefreshInterval(jwksCacheTTL))
 
@@ -96,14 +105,31 @@ func NewAuthMiddleware(jwksURL, expectedIssuer string) gin.HandlerFunc {
 			}
 		}
 
-		// Inject tenant_id if present in custom claim.
+		// Inject tenant_id — first try the JWT custom claim (preferred path,
+		// avoids a DB hit), then fall back to the user_identity_mapping
+		// lookup. Lookup result of uuid.Nil is normal for first-time users
+		// pre-/setup; downstream handlers must still allow /me + /tenant/profile.
+		var tenantID uuid.UUID
 		if rawTenantID, ok := tok.Get(tallyTenantIDClaim); ok {
-			switch v := rawTenantID.(type) {
-			case string:
-				if parsed, err := uuid.Parse(v); err == nil {
-					c.Set(CtxKeyTenantID, parsed)
+			if s, ok := rawTenantID.(string); ok {
+				if parsed, err := uuid.Parse(s); err == nil {
+					tenantID = parsed
 				}
 			}
+		}
+		if tenantID == uuid.Nil && tenantLookup != nil && sub != "" {
+			id, err := tenantLookup(c.Request.Context(), sub)
+			if err != nil {
+				slog.Error("auth middleware: tenant lookup failed",
+					slog.String("sub", sub),
+					slog.Any("error", err),
+				)
+			} else {
+				tenantID = id
+			}
+		}
+		if tenantID != uuid.Nil {
+			c.Set(CtxKeyTenantID, tenantID)
 		}
 
 		c.Next()

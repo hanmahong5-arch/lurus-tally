@@ -12,6 +12,8 @@ const PAGES = [
   { path: "/sales", expectVisible: /销售|新增销售/i, label: "sales" },
   { path: "/finance/exchange-rates", expectVisible: /汇率|币种|exchange/i, label: "finance" },
   { path: "/subscription", expectVisible: /订阅与计费|套餐/i, label: "subscription" },
+  // /finance must not 404 — sidebar bug regression guard.
+  { path: "/finance", expectVisible: /汇率|币种|exchange/i, label: "finance-index" },
 ] as const
 
 function attachConsoleCollector(page: Page) {
@@ -52,9 +54,20 @@ for (const { path: routePath, expectVisible, label } of PAGES) {
       .isVisible()
       .catch(() => false)
     expect(has404Heading, `${routePath} shows 404 heading`).toBe(false)
+    expect(bodyText, `${routePath} contains 'This page could not be found'`).not.toMatch(
+      /This page could not be found/i,
+    )
 
     // No application crash overlays
     expect(bodyText).not.toMatch(/Application error|Internal Server Error/i)
+
+    // No backend / API error surfaces in the visible page body. Any literal
+    // "Error:" text, "tenant_id required", "unauthorized", "not_found" or
+    // "internal server error" coming through means a request failed and the
+    // UI rendered the error state — that's a regression we want to catch.
+    expect(bodyText, `${routePath} shows backend error in body`).not.toMatch(
+      /Error:|tenant_id required|^unauthorized$|not_found:/i,
+    )
 
     // Critical errors only — filter known noise
     const critical = consoleErrors.filter(

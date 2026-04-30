@@ -1,6 +1,7 @@
 package middleware_test
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"encoding/json"
@@ -115,7 +116,7 @@ func TestAuthMiddleware_NoToken_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn")
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -133,7 +134,7 @@ func TestAuthMiddleware_InvalidJWT_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn")
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -152,7 +153,7 @@ func TestAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn")
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil)
 	engine := newEngineWithAuth(t, m)
 
 	token := signToken(t, priv, "test-kid", "user-sub-123", "https://auth.lurus.cn",
@@ -174,7 +175,7 @@ func TestAuthMiddleware_ValidJWT_InjectsUserID(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn")
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil)
 	engine := newEngineWithAuth(t, m)
 
 	tenantID := uuid.New().String()
@@ -203,13 +204,88 @@ func TestAuthMiddleware_ValidJWT_InjectsUserID(t *testing.T) {
 	}
 }
 
+// TestAuthMiddleware_TenantLookupFallback_InjectsTenantID verifies that when
+// the JWT lacks the tally_tenant_id custom claim, the middleware uses the
+// tenantLookup callback to resolve tenant_id from sub.
+func TestAuthMiddleware_TenantLookupFallback_InjectsTenantID(t *testing.T) {
+	priv := generateTestRSAKey(t)
+	jwksJSON := buildJWKS(t, priv, "test-kid")
+	srv := mockJWKSServer(t, jwksJSON)
+
+	expectedTenant := uuid.New()
+	lookupCalledWithSub := ""
+	lookup := func(_ context.Context, sub string) (uuid.UUID, error) {
+		lookupCalledWithSub = sub
+		return expectedTenant, nil
+	}
+
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", lookup)
+	engine := newEngineWithAuth(t, m)
+
+	// Token has NO tally_tenant_id claim — lookup must fill the gap.
+	token := signToken(t, priv, "test-kid", "user-sub-abc", "https://auth.lurus.cn",
+		time.Now().Add(1*time.Hour), nil)
+
+	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: body=%s", rec.Code, rec.Body.String())
+	}
+	if lookupCalledWithSub != "user-sub-abc" {
+		t.Errorf("expected lookup called with sub=user-sub-abc, got %q", lookupCalledWithSub)
+	}
+	var body map[string]string
+	_ = json.NewDecoder(rec.Body).Decode(&body)
+	if body["tenant_id"] != expectedTenant.String() {
+		t.Errorf("expected tenant_id=%s injected from lookup, got %q",
+			expectedTenant, body["tenant_id"])
+	}
+}
+
+// TestAuthMiddleware_TenantLookup_FirstTimeUser_NoTenantInjected verifies that
+// when the lookup returns uuid.Nil (first-time user, no mapping yet), the
+// request still succeeds but tenant_id stays empty so handlers can return 401.
+func TestAuthMiddleware_TenantLookup_FirstTimeUser_NoTenantInjected(t *testing.T) {
+	priv := generateTestRSAKey(t)
+	jwksJSON := buildJWKS(t, priv, "test-kid")
+	srv := mockJWKSServer(t, jwksJSON)
+
+	lookup := func(_ context.Context, _ string) (uuid.UUID, error) {
+		return uuid.Nil, nil
+	}
+
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", lookup)
+	engine := newEngineWithAuth(t, m)
+
+	token := signToken(t, priv, "test-kid", "first-time-user", "https://auth.lurus.cn",
+		time.Now().Add(1*time.Hour), nil)
+
+	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var body map[string]string
+	_ = json.NewDecoder(rec.Body).Decode(&body)
+	// Test handler reads c.Get → returns "<nil>" string when missing.
+	if body["tenant_id"] != "<nil>" {
+		t.Errorf("expected tenant_id=<nil> for first-time user, got %q", body["tenant_id"])
+	}
+}
+
 // TestAuthMiddleware_WrongIssuer_Returns401 verifies wrong issuer → 401.
 func TestAuthMiddleware_WrongIssuer_Returns401(t *testing.T) {
 	priv := generateTestRSAKey(t)
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn")
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil)
 	engine := newEngineWithAuth(t, m)
 
 	// Token signed with correct key but wrong issuer.

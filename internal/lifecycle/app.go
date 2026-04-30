@@ -4,12 +4,14 @@
 package lifecycle
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
@@ -178,7 +180,21 @@ func NewApp(cfg *config.Config) (*App, error) {
 	if cfg.ZitadelDomain != "" {
 		issuer := "https://" + cfg.ZitadelDomain
 		jwksURL := issuer + "/oauth/v2/keys"
-		authMW = middleware.NewAuthMiddleware(jwksURL, issuer)
+		// Resolve tenant_id from user_identity_mapping for already-onboarded
+		// users. uuid.Nil is returned for first-time users (no mapping yet) —
+		// in that case the middleware lets the request through and only
+		// /me + /tenant/profile work; business handlers will return 401.
+		tenantLookup := func(ctx context.Context, sub string) (uuid.UUID, error) {
+			mapping, err := tenantStore.GetMappingBySub(ctx, sub)
+			if err != nil {
+				return uuid.Nil, err
+			}
+			if mapping == nil {
+				return uuid.Nil, nil
+			}
+			return mapping.TenantID, nil
+		}
+		authMW = middleware.NewAuthMiddleware(jwksURL, issuer, tenantLookup)
 		l.Info("auth middleware enabled",
 			slog.String("issuer", issuer),
 			slog.String("jwks_url", jwksURL))

@@ -40,6 +40,7 @@ interface FlashMessage {
 export function SubscriptionPlansView() {
   const [overview, setOverview] = useState<BillingOverview | null>(null)
   const [overviewError, setOverviewError] = useState<string | null>(null)
+  const [overviewSettled, setOverviewSettled] = useState(false)
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("wallet")
   const [pendingPlan, setPendingPlan] = useState<string | null>(null)
   const [flash, setFlash] = useState<FlashMessage | null>(null)
@@ -49,15 +50,28 @@ export function SubscriptionPlansView() {
     let cancelled = false
     getBillingOverview()
       .then((ov) => {
-        if (!cancelled) setOverview(ov)
+        if (cancelled) return
+        setOverview(ov)
+        setOverviewSettled(true)
       })
       .catch((err: Error) => {
         if (cancelled) return
+        // not_found = platform has no account record yet for this Zitadel
+        // user. Treat as a fresh free-tier account so the plan grid still
+        // renders without a scary error banner. Subscribe will lazy-create
+        // the account on platform side via /billing/subscribe.
+        if (err instanceof BillingError && err.code === "not_found") {
+          setOverview(null)
+          setOverviewError(null)
+          setOverviewSettled(true)
+          return
+        }
         const detail =
           err instanceof BillingError
             ? `${err.code}: ${err.message}`
             : err.message
         setOverviewError(detail)
+        setOverviewSettled(true)
       })
     return () => {
       cancelled = true
@@ -111,7 +125,7 @@ export function SubscriptionPlansView() {
 
   return (
     <div className="space-y-6">
-      <OverviewBar overview={overview} error={overviewError} />
+      <OverviewBar overview={overview} error={overviewError} settled={overviewSettled} />
 
       <PaymentMethodPicker value={paymentMethod} onChange={setPaymentMethod} />
 
@@ -225,9 +239,11 @@ function PaymentMethodPicker({
 function OverviewBar({
   overview,
   error,
+  settled,
 }: {
   overview: BillingOverview | null
   error: string | null
+  settled: boolean
 }) {
   if (error) {
     return (
@@ -236,10 +252,21 @@ function OverviewBar({
       </div>
     )
   }
-  if (!overview) {
+  if (!settled) {
     return (
       <div className="rounded-md border border-border bg-muted/30 px-4 py-2 text-sm text-muted-foreground">
         正在加载账户信息…
+      </div>
+    )
+  }
+  if (!overview) {
+    // Settled but no overview = brand-new account (platform returned not_found).
+    return (
+      <div className="flex flex-wrap items-center gap-4 rounded-md border border-border bg-card px-4 py-3 text-sm">
+        <span className="text-muted-foreground">钱包余额：</span>
+        <span className="font-mono tabular-nums">¥0.00</span>
+        <span className="text-muted-foreground">当前套餐：</span>
+        <span className="font-medium">free（免费版）</span>
       </div>
     )
   }

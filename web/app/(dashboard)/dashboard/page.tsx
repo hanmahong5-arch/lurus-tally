@@ -15,7 +15,7 @@ export default async function DashboardPage({
     { href: "/products", title: "商品管理", description: "SKU、单位、分类、价格", emoji: "📦" },
     { href: "/purchases", title: "采购管理", description: "进货单、入库、批次", emoji: "🛒" },
     { href: "/sales", title: "销售管理", description: "销售单、出库、对账", emoji: "📊" },
-    { href: "/finance", title: "财务管理", description: "汇率、币种、成本", emoji: "💰" },
+    { href: "/finance/exchange-rates", title: "财务管理", description: "汇率、币种、成本", emoji: "💰" },
     { href: "/subscription", title: "订阅与计费", description: "套餐、钱包、账单", emoji: "💳" },
   ]
   if (profileType === "retail") {
