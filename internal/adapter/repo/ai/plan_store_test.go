@@ -7,16 +7,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
 	repoai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/ai"
+	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
 )
 
 // inMemRedis is a minimal in-memory Redis mock for tests.
 type inMemRedis struct {
-	data    map[string]string
-	expiry  map[string]time.Time
-	getErr  error
-	setErr  error
+	data   map[string]string
+	expiry map[string]time.Time
+	getErr error
+	setErr error
 }
 
 func newInMemRedis() *inMemRedis {

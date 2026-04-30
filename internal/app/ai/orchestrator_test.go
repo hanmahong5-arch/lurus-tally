@@ -14,7 +14,7 @@ import (
 // --- mock PlanStore ---
 
 type mockPlanStore struct {
-	plans  map[string]*domainai.Plan
+	plans   map[string]*domainai.Plan
 	saveErr error
 }
 

@@ -34,7 +34,7 @@ type StockRow struct {
 	ProductCode string
 	Qty         decimal.Decimal
 	// UnitCost is the weighted average cost per unit in CNY (stored as decimal).
-	UnitCost    decimal.Decimal
+	UnitCost decimal.Decimal
 	// LastMovedAt is the timestamp of the most recent stock movement (for dead stock calc).
 	LastMovedAt time.Time
 	// AvgDailySales is a pre-computed daily sales qty average from the past 30d.
@@ -232,7 +232,7 @@ func ToolDefs() []llmclient.Tool {
 type DispatchResult struct {
 	ToolCallID string
 	Name       string
-	Content    string // JSON string to pass back to LLM
+	Content    string         // JSON string to pass back to LLM
 	Plan       *domainai.Plan // non-nil only for destructive tools
 }
 
@@ -346,10 +346,10 @@ func (r *Registry) listLowStock(ctx context.Context, tenantID uuid.UUID, argsJSO
 	}
 
 	type item struct {
-		Name        string `json:"name"`
-		Code        string `json:"code"`
-		Qty         string `json:"qty"`
-		ROP         string `json:"rop"`
+		Name         string `json:"name"`
+		Code         string `json:"code"`
+		Qty          string `json:"qty"`
+		ROP          string `json:"rop"`
 		DaysOfSupply string `json:"days_of_supply"`
 	}
 	var items []item
@@ -361,19 +361,19 @@ func (r *Registry) listLowStock(ctx context.Context, tenantID uuid.UUID, argsJSO
 			if d.LessThanOrEqual(decimal.NewFromInt(int64(threshDays))) {
 				daysOfSupply = d.StringFixed(1)
 				items = append(items, item{
-					Name:        s.ProductName,
-					Code:        s.ProductCode,
-					Qty:         s.Qty.StringFixed(2),
-					ROP:         rop.StringFixed(2),
+					Name:         s.ProductName,
+					Code:         s.ProductCode,
+					Qty:          s.Qty.StringFixed(2),
+					ROP:          rop.StringFixed(2),
 					DaysOfSupply: daysOfSupply,
 				})
 			}
 		} else if s.Qty.LessThan(rop) {
 			items = append(items, item{
-				Name:        s.ProductName,
-				Code:        s.ProductCode,
-				Qty:         s.Qty.StringFixed(2),
-				ROP:         rop.StringFixed(2),
+				Name:         s.ProductName,
+				Code:         s.ProductCode,
+				Qty:          s.Qty.StringFixed(2),
+				ROP:          rop.StringFixed(2),
 				DaysOfSupply: "N/A",
 			})
 		}
@@ -401,11 +401,11 @@ func (r *Registry) listDeadStock(ctx context.Context, tenantID uuid.UUID, argsJS
 	}
 	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 	type item struct {
-		Name       string `json:"name"`
-		Code       string `json:"code"`
-		Qty        string `json:"qty"`
-		Value      string `json:"value_cny"`
-		DaysSince  int    `json:"days_since_last_movement"`
+		Name      string `json:"name"`
+		Code      string `json:"code"`
+		Qty       string `json:"qty"`
+		Value     string `json:"value_cny"`
+		DaysSince int    `json:"days_since_last_movement"`
 	}
 	var items []item
 	for _, s := range rows {
@@ -455,9 +455,9 @@ func (r *Registry) abcClassify(ctx context.Context, tenantID uuid.UUID) (string,
 	})
 
 	var (
-		aCnt, bCnt, cCnt     int
-		aRev, bRev, cRev     decimal.Decimal
-		cumulative            = decimal.Zero
+		aCnt, bCnt, cCnt int
+		aRev, bRev, cRev decimal.Decimal
+		cumulative       = decimal.Zero
 	)
 	for _, p := range list {
 		share := p.rev.Div(total)
@@ -482,9 +482,9 @@ func (r *Registry) abcClassify(ctx context.Context, tenantID uuid.UUID) (string,
 	}
 
 	return jsonMarshal(map[string]interface{}{
-		"a": map[string]interface{}{"sku_count": aCnt, "revenue_share": safeShare(aRev)},
-		"b": map[string]interface{}{"sku_count": bCnt, "revenue_share": safeShare(bRev)},
-		"c": map[string]interface{}{"sku_count": cCnt, "revenue_share": safeShare(cRev)},
+		"a":          map[string]interface{}{"sku_count": aCnt, "revenue_share": safeShare(aRev)},
+		"b":          map[string]interface{}{"sku_count": bCnt, "revenue_share": safeShare(bRev)},
+		"c":          map[string]interface{}{"sku_count": cCnt, "revenue_share": safeShare(cRev)},
 		"total_skus": len(list),
 		"period":     "365d",
 	})
@@ -612,8 +612,8 @@ func (r *Registry) grossMarginSummary(ctx context.Context, tenantID uuid.UUID, a
 	}
 
 	type scored struct {
-		name        string
-		avgMargin   decimal.Decimal
+		name      string
+		avgMargin decimal.Decimal
 	}
 	items := make([]scored, 0, len(aggMap))
 	for _, a := range aggMap {
@@ -729,11 +729,11 @@ func (r *Registry) proposePriceChange(ctx context.Context, tenantID uuid.UUID, a
 	}
 
 	result, err := jsonMarshal(map[string]interface{}{
-		"plan_id":        plan.ID.String(),
-		"affected_count": len(products),
-		"description":    plan.Preview.Description,
+		"plan_id":               plan.ID.String(),
+		"affected_count":        len(products),
+		"description":           plan.Preview.Description,
 		"requires_confirmation": true,
-		"message": "This operation requires user confirmation. A plan card has been shown to the user.",
+		"message":               "This operation requires user confirmation. A plan card has been shown to the user.",
 	})
 	return plan, result, err
 }
@@ -774,11 +774,11 @@ func (r *Registry) proposeCreatePurchaseDraft(ctx context.Context, tenantID uuid
 	}
 
 	result, err := jsonMarshal(map[string]interface{}{
-		"plan_id":              plan.ID.String(),
-		"item_count":           len(args.Items),
-		"description":          plan.Preview.Description,
+		"plan_id":               plan.ID.String(),
+		"item_count":            len(args.Items),
+		"description":           plan.Preview.Description,
 		"requires_confirmation": true,
-		"message":              "This operation requires user confirmation. A plan card has been shown to the user.",
+		"message":               "This operation requires user confirmation. A plan card has been shown to the user.",
 	})
 	return plan, result, err
 }
@@ -828,11 +828,11 @@ func (r *Registry) proposeBulkStockAdjust(ctx context.Context, tenantID uuid.UUI
 	}
 
 	result, err := jsonMarshal(map[string]interface{}{
-		"plan_id":              plan.ID.String(),
-		"affected_count":       len(products),
-		"description":          plan.Preview.Description,
+		"plan_id":               plan.ID.String(),
+		"affected_count":        len(products),
+		"description":           plan.Preview.Description,
 		"requires_confirmation": true,
-		"message":              "This operation requires user confirmation. A plan card has been shown to the user.",
+		"message":               "This operation requires user confirmation. A plan card has been shown to the user.",
 	})
 	return plan, result, err
 }

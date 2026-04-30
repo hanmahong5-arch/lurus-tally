@@ -24,8 +24,8 @@ func init() {
 // --- stubs ---
 
 type stubOrchestrator struct {
-	streamOut *appai.ChatOutput
-	streamErr error
+	streamOut  *appai.ChatOutput
+	streamErr  error
 	confirmOut *domainai.Plan
 	confirmErr error
 	cancelErr  error

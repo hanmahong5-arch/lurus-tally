@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
 	"github.com/google/uuid"
+	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
 )
 
 // RedisClient is the minimal Redis interface required by the plan store.
