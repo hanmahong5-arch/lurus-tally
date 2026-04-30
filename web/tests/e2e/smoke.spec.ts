@@ -41,12 +41,20 @@ for (const { path: routePath, expectVisible, label } of PAGES) {
 
     expect(resp?.status(), `HTTP status for ${routePath}`).toBeLessThan(400)
 
+    // Wait for the expected content to appear — handles streaming SSR + redirect
+    // chains by polling instead of capturing innerText at one instant.
+    await expect(page.locator("body"), `visible text on ${routePath}`).toContainText(
+      expectVisible,
+      { timeout: 10_000 },
+    )
+
     // Take a screenshot for visual review
     await page.screenshot({ path: path.join(SCREEN_DIR, `${label}.png`), fullPage: true })
 
-    // Check expected content is actually visible (not raw HTML — visible text)
+    // After the expected content has rendered, snapshot the body for negative
+    // assertions. innerText (visible text only) avoids matching raw HTML
+    // attributes / hidden text in the suspense fallback shell.
     const bodyText = (await page.locator("body").innerText()).slice(0, 4000)
-    expect(bodyText, `visible text on ${routePath}`).toMatch(expectVisible)
 
     // Page must NOT show Next.js 404 page (the visible "404 / This page could not be found")
     const has404Heading = await page
