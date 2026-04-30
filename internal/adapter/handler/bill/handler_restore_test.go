@@ -21,15 +21,15 @@ func TestBillHandler_RestorePurchase_ReturnsOKOnCancelledBill(t *testing.T) {
 	billID := uuid.New()
 	now := time.Now()
 	repo.bills[billID] = &domain.BillHead{
-		ID:          billID,
-		TenantID:    tenantID,
-		BillNo:      "PO-20260101-0001",
-		BillType:    domain.BillTypePurchase,
-		Status:      domain.StatusCancelled,
-		CreatorID:   tenantID,
-		BillDate:    now,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:        billID,
+		TenantID:  tenantID,
+		BillNo:    "PO-20260101-0001",
+		BillType:  domain.BillTypePurchase,
+		Status:    domain.StatusCancelled,
+		CreatorID: tenantID,
+		BillDate:  now,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	r := newRouter(newTestHandler(repo))
@@ -57,15 +57,15 @@ func TestBillHandler_RestorePurchase_Returns409OnApprovedBill(t *testing.T) {
 	billID := uuid.New()
 	now := time.Now()
 	repo.bills[billID] = &domain.BillHead{
-		ID:          billID,
-		TenantID:    tenantID,
-		BillNo:      "PO-20260101-0002",
-		BillType:    domain.BillTypePurchase,
-		Status:      domain.StatusApproved,
-		CreatorID:   tenantID,
-		BillDate:    now,
-		CreatedAt:   now,
-		UpdatedAt:   now,
+		ID:        billID,
+		TenantID:  tenantID,
+		BillNo:    "PO-20260101-0002",
+		BillType:  domain.BillTypePurchase,
+		Status:    domain.StatusApproved,
+		CreatorID: tenantID,
+		BillDate:  now,
+		CreatedAt: now,
+		UpdatedAt: now,
 	}
 
 	r := newRouter(newTestHandler(repo))

@@ -18,13 +18,13 @@ import (
 
 // Handler groups all purchase bill Gin handlers.
 type Handler struct {
-	create   *appbill.CreatePurchaseDraftUseCase
-	update   *appbill.UpdatePurchaseDraftUseCase
-	approve  *appbill.ApprovePurchaseUseCase
-	cancel   *appbill.CancelPurchaseUseCase
-	list     *appbill.ListPurchasesUseCase
-	get      *appbill.GetPurchaseUseCase
-	restore  *appbill.RestorePurchaseUseCase
+	create  *appbill.CreatePurchaseDraftUseCase
+	update  *appbill.UpdatePurchaseDraftUseCase
+	approve *appbill.ApprovePurchaseUseCase
+	cancel  *appbill.CancelPurchaseUseCase
+	list    *appbill.ListPurchasesUseCase
+	get     *appbill.GetPurchaseUseCase
+	restore *appbill.RestorePurchaseUseCase
 }
 
 // New creates a Handler wired to the provided use cases.
