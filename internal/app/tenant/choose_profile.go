@@ -145,21 +145,27 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 // can still finish onboarding even if platform is briefly unavailable. The
 // next ChooseProfile invocation (and any future reconcile worker) will
 // re-attempt because platform's upsert is idempotent on zitadel_sub.
+//
+// When the JWT carries no `email` claim (Zitadel admin users, username-only
+// or phone-OTP logins) we synthesize a placeholder so platform still owns a
+// canonical account row. The placeholder will be overwritten on a future
+// call once the user adds a real email and signs in again.
 func (uc *ChooseProfileUseCase) upsertPlatformAccount(ctx context.Context, in ChooseProfileInput) {
 	if uc.upserter == nil {
 		// Platform integration disabled (PLATFORM_INTERNAL_KEY unset). Same
 		// behaviour as billing handler — degrade gracefully.
 		return
 	}
-	if in.Email == "" {
-		// Platform requires email. Skip but record so ops can spot the gap.
-		uc.logger.Warn("platform account upsert skipped: empty email",
-			slog.String("zitadel_sub", in.ZitadelSub))
-		return
+	email := in.Email
+	if email == "" {
+		email = in.ZitadelSub + "@zitadel.local"
+		uc.logger.Info("platform account upsert: synthesized email placeholder",
+			slog.String("zitadel_sub", in.ZitadelSub),
+			slog.String("synthesized_email", email))
 	}
 	acc, err := uc.upserter.UpsertAccount(ctx, platformclient.UpsertAccountRequest{
 		ZitadelSub:  in.ZitadelSub,
-		Email:       in.Email,
+		Email:       email,
 		DisplayName: in.DisplayName,
 	})
 	if err != nil {

@@ -304,10 +304,12 @@ func TestChooseProfile_NilUpserter_NoOp(t *testing.T) {
 	}
 }
 
-// TestChooseProfile_EmptyEmail_SkipsUpsert verifies platform's email-required
-// rule is honoured client-side: we don't even attempt the call when email is
-// empty, so platform's 400 doesn't show up as a noisy WARN.
-func TestChooseProfile_EmptyEmail_SkipsUpsert(t *testing.T) {
+// TestChooseProfile_EmptyEmail_SynthesizesPlaceholder verifies that a Zitadel
+// user with no email claim (admin / username-only / phone-OTP) still gets a
+// platform account upsert with a stable placeholder email so wallet and
+// subscription can attach. The placeholder is overwritten on a later call
+// once the user adds a real email.
+func TestChooseProfile_EmptyEmail_SynthesizesPlaceholder(t *testing.T) {
 	store := newStubBootstrapStore()
 	upserter := &stubUpserter{}
 	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
@@ -319,7 +321,12 @@ func TestChooseProfile_EmptyEmail_SkipsUpsert(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("empty email path must succeed: %v", err)
 	}
-	if upserter.callCount() != 0 {
-		t.Errorf("expected upsert to be skipped on empty email, got %d calls", upserter.callCount())
+	if upserter.callCount() != 1 {
+		t.Fatalf("expected upsert with synthesized email, got %d calls", upserter.callCount())
+	}
+	got := upserter.calls[0]
+	want := "sub-no-email-005@zitadel.local"
+	if got.Email != want {
+		t.Errorf("expected synthesized email %q, got %q", want, got.Email)
 	}
 }
