@@ -10,7 +10,32 @@ import (
 	repoTenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	appTenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/tenant"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 )
+
+// stubUpserter records calls and lets tests inject failures. Mirrors the
+// production *platformclient.Client surface ChooseProfileUseCase needs.
+type stubUpserter struct {
+	mu        sync.Mutex
+	calls     []platformclient.UpsertAccountRequest
+	returnErr error
+}
+
+func (s *stubUpserter) UpsertAccount(_ context.Context, req platformclient.UpsertAccountRequest) (*platformclient.Account, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, req)
+	if s.returnErr != nil {
+		return nil, s.returnErr
+	}
+	return &platformclient.Account{ID: 42, ZitadelSub: req.ZitadelSub, Email: req.Email}, nil
+}
+
+func (s *stubUpserter) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.calls)
+}
 
 // stubBootstrapStore is an in-memory BootstrapStore for unit testing the use case.
 // It mirrors the production *sql.DB-backed implementation but holds state in maps.
@@ -67,7 +92,7 @@ func (s *stubBootstrapStore) Bootstrap(_ context.Context, in repoTenant.Bootstra
 // a brand-new sub triggers atomic creation of tenant + mapping + profile.
 func TestChooseProfile_FreshUser_BootstrapsTenantAndProfile(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 
 	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub:  "sub-fresh-001",
@@ -93,7 +118,7 @@ func TestChooseProfile_FreshUser_BootstrapsTenantAndProfile(t *testing.T) {
 // profile_type returns the existing profile without error (no-op).
 func TestChooseProfile_IdempotentSameType(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 	in := appTenant.ChooseProfileInput{
 		ZitadelSub:  "sub-idem-002",
 		ProfileType: "retail",
@@ -116,7 +141,7 @@ func TestChooseProfile_IdempotentSameType(t *testing.T) {
 // profile type after first set returns ErrProfileAlreadySet.
 func TestChooseProfile_DifferentTypeAfterSet_ReturnsConflict(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 	sub := "sub-conflict-003"
 
 	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
@@ -136,7 +161,7 @@ func TestChooseProfile_DifferentTypeAfterSet_ReturnsConflict(t *testing.T) {
 // TestChooseProfile_InvalidType_ReturnsInvalidProfileType verifies validation.
 func TestChooseProfile_InvalidType_ReturnsInvalidProfileType(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub: "sub-bad", ProfileType: "invalid_type",
@@ -149,7 +174,7 @@ func TestChooseProfile_InvalidType_ReturnsInvalidProfileType(t *testing.T) {
 // TestChooseProfile_HybridRejected verifies "hybrid" (admin-only) is rejected.
 func TestChooseProfile_HybridRejected(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub: "sub-hyb", ProfileType: "hybrid",
@@ -162,7 +187,7 @@ func TestChooseProfile_HybridRejected(t *testing.T) {
 // TestChooseProfile_MissingSub_Rejected verifies the use case requires a sub.
 func TestChooseProfile_MissingSub_Rejected(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ProfileType: "retail",
@@ -176,12 +201,125 @@ func TestChooseProfile_MissingSub_Rejected(t *testing.T) {
 func TestChooseProfile_BootstrapFailure_Surfaces(t *testing.T) {
 	store := newStubBootstrapStore()
 	store.bootstrapEr = errors.New("db connection lost")
-	uc := appTenant.NewChooseProfileUseCase(store)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub: "sub-fail", ProfileType: "retail",
 	})
 	if err == nil {
 		t.Error("expected bootstrap error to propagate, got nil")
+	}
+}
+
+// TestChooseProfile_FreshUser_UpsertsPlatformAccount verifies the happy path
+// also provisions an account on lurus-platform so wallet/subscription work
+// from the very first login.
+func TestChooseProfile_FreshUser_UpsertsPlatformAccount(t *testing.T) {
+	store := newStubBootstrapStore()
+	upserter := &stubUpserter{}
+	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
+
+	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub:  "sub-platform-001",
+		Email:       "bob@example.com",
+		DisplayName: "Bob",
+		ProfileType: "retail",
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if upserter.callCount() != 1 {
+		t.Fatalf("expected exactly 1 platform upsert call, got %d", upserter.callCount())
+	}
+	got := upserter.calls[0]
+	if got.ZitadelSub != "sub-platform-001" || got.Email != "bob@example.com" || got.DisplayName != "Bob" {
+		t.Errorf("upsert payload mismatch: %+v", got)
+	}
+}
+
+// TestChooseProfile_PlatformUpsertFailure_DoesNotBlockOnboarding verifies that
+// a 5xx / network failure on platform side leaves the local tenant intact and
+// the use case still returns the new profile to the caller.
+func TestChooseProfile_PlatformUpsertFailure_DoesNotBlockOnboarding(t *testing.T) {
+	store := newStubBootstrapStore()
+	upserter := &stubUpserter{returnErr: errors.New("platform 503 unavailable")}
+	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
+
+	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub:  "sub-blip-002",
+		Email:       "carol@example.com",
+		ProfileType: "retail",
+	})
+	if err != nil {
+		t.Fatalf("upsert failure must not propagate: %v", err)
+	}
+	if p == nil || p.ProfileType != domain.ProfileTypeRetail {
+		t.Errorf("expected retail profile despite upsert failure, got %+v", p)
+	}
+	if upserter.callCount() != 1 {
+		t.Errorf("expected upsert to be attempted once, got %d", upserter.callCount())
+	}
+}
+
+// TestChooseProfile_ReturningUser_HealsByReUpserting verifies that a returning
+// user (mapping already exists) still triggers an idempotent upsert so a
+// previous platform-side failure self-heals on the next /tenant/profile call.
+func TestChooseProfile_ReturningUser_HealsByReUpserting(t *testing.T) {
+	store := newStubBootstrapStore()
+	// Pre-seed: tenant + mapping + profile already exist (returning user).
+	tenantID := uuid.New()
+	store.mappings["sub-return-003"] = &domain.UserIdentityMapping{
+		ID: uuid.New(), TenantID: tenantID, ZitadelSub: "sub-return-003",
+		Email: "dave@example.com", Role: "admin", IsOwner: true,
+	}
+	prof, _ := domain.NewTenantProfile(tenantID, domain.ProfileTypeCrossBorder)
+	store.profiles[tenantID] = prof
+
+	upserter := &stubUpserter{}
+	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
+
+	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub:  "sub-return-003",
+		Email:       "dave@example.com",
+		ProfileType: "cross_border",
+	}); err != nil {
+		t.Fatalf("idempotent re-call must succeed: %v", err)
+	}
+	if upserter.callCount() != 1 {
+		t.Errorf("expected returning-user heal to call upsert once, got %d", upserter.callCount())
+	}
+}
+
+// TestChooseProfile_NilUpserter_NoOp verifies the use case still works in
+// dev clusters where PLATFORM_INTERNAL_KEY is unset (upserter is nil).
+func TestChooseProfile_NilUpserter_NoOp(t *testing.T) {
+	store := newStubBootstrapStore()
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+
+	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub:  "sub-nil-004",
+		Email:       "eve@example.com",
+		ProfileType: "retail",
+	}); err != nil {
+		t.Fatalf("nil upserter must be a no-op, not an error: %v", err)
+	}
+}
+
+// TestChooseProfile_EmptyEmail_SkipsUpsert verifies platform's email-required
+// rule is honoured client-side: we don't even attempt the call when email is
+// empty, so platform's 400 doesn't show up as a noisy WARN.
+func TestChooseProfile_EmptyEmail_SkipsUpsert(t *testing.T) {
+	store := newStubBootstrapStore()
+	upserter := &stubUpserter{}
+	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
+
+	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub:  "sub-no-email-005",
+		Email:       "",
+		ProfileType: "retail",
+	}); err != nil {
+		t.Fatalf("empty email path must succeed: %v", err)
+	}
+	if upserter.callCount() != 0 {
+		t.Errorf("expected upsert to be skipped on empty email, got %d calls", upserter.callCount())
 	}
 }

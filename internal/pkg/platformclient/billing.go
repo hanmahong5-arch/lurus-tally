@@ -62,6 +62,34 @@ type SubscriptionCheckoutResponse struct {
 	Subscription *SubscriptionSnapshot `json:"subscription,omitempty"`
 }
 
+// UpsertAccountRequest is the body for POST /internal/v1/accounts/upsert.
+// Platform requires zitadel_sub + email; the rest are best-effort metadata.
+type UpsertAccountRequest struct {
+	ZitadelSub      string `json:"zitadel_sub"`
+	Email           string `json:"email"`
+	DisplayName     string `json:"display_name,omitempty"`
+	AvatarURL       string `json:"avatar_url,omitempty"`
+	ReferrerAffCode string `json:"referrer_aff_code,omitempty"`
+}
+
+// UpsertAccount creates or updates the platform account record keyed by
+// zitadel_sub. Idempotent — second call with the same sub returns the same
+// account row. Tally calls this on first /setup so platform owns the
+// canonical wallet / subscription / VIP record from the very first login.
+func (c *Client) UpsertAccount(ctx context.Context, req UpsertAccountRequest) (*Account, error) {
+	if req.ZitadelSub == "" {
+		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "zitadel_sub is required"}
+	}
+	if req.Email == "" {
+		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "email is required"}
+	}
+	var out Account
+	if err := c.do(ctx, http.MethodPost, "/internal/v1/accounts/upsert", req, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
 // GetAccountByZitadelSub looks up the platform account record for a Zitadel sub.
 // Returns *Error{Code: ErrCodeNotFound} when no account is provisioned yet.
 func (c *Client) GetAccountByZitadelSub(ctx context.Context, sub string) (*Account, error) {
