@@ -1,4 +1,4 @@
-package platformclient
+package platform
 
 import (
 	"context"
