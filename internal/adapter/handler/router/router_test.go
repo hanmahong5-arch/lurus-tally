@@ -19,7 +19,7 @@ func init() {
 // authMW is also nil in tests so we exercise pure route registration.
 func newTestRouter() *gin.Engine {
 	h := health.New("dev")
-	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 func TestRouter_HealthzRouteRegistered(t *testing.T) {
@@ -262,6 +262,32 @@ func TestRouter_AuthRoutesRegistered(t *testing.T) {
 		r.ServeHTTP(w, req)
 		if w.Code == http.StatusNotFound {
 			t.Errorf("%s %s returned 404 — route not registered", tc.method, tc.path)
+		}
+	}
+}
+
+// TestRouter_RegistersNurseryDictRoutes verifies all nursery dict routes are registered (Story 28.1).
+func TestRouter_RegistersNurseryDictRoutes(t *testing.T) {
+	r := newTestRouter()
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/nursery-dict"},
+		{http.MethodPost, "/api/v1/nursery-dict"},
+		{http.MethodGet, "/api/v1/nursery-dict/some-id"},
+		{http.MethodPut, "/api/v1/nursery-dict/some-id"},
+		{http.MethodDelete, "/api/v1/nursery-dict/some-id"},
+		{http.MethodPost, "/api/v1/nursery-dict/some-id/restore"},
+	}
+
+	for _, tc := range routes {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(tc.method, tc.path, nil)
+		r.ServeHTTP(w, req)
+		if w.Code == http.StatusNotFound {
+			t.Errorf("%s %s returned 404 — nursery dict route not registered", tc.method, tc.path)
 		}
 	}
 }

@@ -19,6 +19,7 @@ import (
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
+	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
@@ -28,6 +29,7 @@ import (
 	repoai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/ai"
 	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
+	repohorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/horticulture"
 	repopayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/payment"
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
@@ -37,6 +39,7 @@ import (
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
+	apphorticulture "github.com/hanmahong5-arch/lurus-tally/internal/app/horticulture"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
@@ -254,9 +257,20 @@ func NewApp(cfg *config.Config) (*App, error) {
 		l.Warn("auth middleware disabled (ZITADEL_DOMAIN not set) — /api/v1 is unauthenticated")
 	}
 
+	// Wire horticulture nursery dictionary (Story 28.1).
+	dictRepo := repohorticulture.New(db)
+	dictHandler := handlerhorticulture.NewDictHandler(
+		apphorticulture.NewCreateUseCase(dictRepo),
+		apphorticulture.NewGetByIDUseCase(dictRepo),
+		apphorticulture.NewListUseCase(dictRepo),
+		apphorticulture.NewUpdateUseCase(dictRepo),
+		apphorticulture.NewDeleteUseCase(dictRepo),
+		apphorticulture.NewRestoreUseCase(dictRepo),
+	)
+
 	h := health.New(cfg.ServiceVersion)
 	r := router.New(h, authMW, productHandler, unitHandler, authHandler, stockHandler,
-		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler)
+		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
