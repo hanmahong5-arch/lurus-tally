@@ -5,19 +5,17 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
-	"os"
+
+	migrationdata "github.com/hanmahong5-arch/lurus-tally/migrations/data"
 )
 
-// SeedNurseryDict inserts nursery species from the given SQL file when SEED_NURSERY_DICT=true.
-// It is idempotent: rows with the seed tenant_id are skipped on conflict
-// (the SQL file uses ON CONFLICT (tenant_id, name) DO NOTHING).
-//
-// sqlPath is the filesystem path to migrations/data/nursery_seed.sql.
-// The function reads the file and executes it within a single transaction.
-func SeedNurseryDict(ctx context.Context, db *sql.DB, sqlPath string, log *slog.Logger) error {
-	data, err := os.ReadFile(sqlPath)
+// SeedNurseryDict loads the embedded nursery_seed.sql when SEED_NURSERY_DICT=true.
+// It is idempotent: the SQL uses ON CONFLICT (tenant_id, name) DO NOTHING.
+// Reading from migrations/data embed.FS avoids filesystem dependence (scratch image safe).
+func SeedNurseryDict(ctx context.Context, db *sql.DB, log *slog.Logger) error {
+	data, err := migrationdata.FS.ReadFile("nursery_seed.sql")
 	if err != nil {
-		return fmt.Errorf("seed nursery dict: read sql file %q: %w", sqlPath, err)
+		return fmt.Errorf("seed nursery dict: read embedded sql: %w", err)
 	}
 
 	tx, err := db.BeginTx(ctx, nil)

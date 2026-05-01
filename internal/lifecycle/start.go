@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
-	"path/filepath"
 )
 
 // Start runs database migrations (when MigrateOnBoot is true), then begins listening for HTTP
@@ -30,8 +29,7 @@ func (a *App) Start(ctx context.Context) error {
 	// Load nursery seed data when SEED_NURSERY_DICT=true.
 	// Default is OFF so automated test environments are never polluted.
 	if os.Getenv("SEED_NURSERY_DICT") == "true" {
-		seedPath := filepath.Join("migrations", "data", "nursery_seed.sql")
-		if err := SeedNurseryDict(ctx, a.db, seedPath, a.log); err != nil {
+		if err := SeedNurseryDict(ctx, a.db, a.log); err != nil {
 			a.log.Error("nursery seed failed", slog.String("error", err.Error()))
 			// Non-fatal: log but do not abort startup.
 		}
