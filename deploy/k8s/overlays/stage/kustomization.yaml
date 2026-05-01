@@ -6,4 +6,4 @@ images:
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
     newTag: main-f78da4b
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-f78da4b
+    newTag: main-471a56b
