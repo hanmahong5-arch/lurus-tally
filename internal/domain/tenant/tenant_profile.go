@@ -12,9 +12,10 @@ import (
 type ProfileType string
 
 const (
-	ProfileTypeCrossBorder ProfileType = "cross_border"
-	ProfileTypeRetail      ProfileType = "retail"
-	ProfileTypeHybrid      ProfileType = "hybrid" // reserved for admin backend; not user-selectable
+	ProfileTypeCrossBorder  ProfileType = "cross_border"
+	ProfileTypeRetail       ProfileType = "retail"
+	ProfileTypeHybrid       ProfileType = "hybrid"       // reserved for admin backend; not user-selectable
+	ProfileTypeHorticulture ProfileType = "horticulture" // vertical pack: nursery / landscape engineering
 )
 
 // InventoryMethod represents the costing/inventory valuation method.
@@ -42,7 +43,7 @@ func defaultInventoryMethod(p ProfileType) InventoryMethod {
 var ErrProfileAlreadySet = errors.New("tenant profile already set")
 
 // ErrInvalidProfileType is returned when an unsupported profile_type is provided.
-var ErrInvalidProfileType = errors.New("invalid profile type: must be 'cross_border' or 'retail'")
+var ErrInvalidProfileType = errors.New("invalid profile type: must be 'cross_border', 'retail', or 'horticulture'")
 
 // TenantProfile is the profile record for a tenant.
 type TenantProfile struct {
@@ -54,10 +55,23 @@ type TenantProfile struct {
 	UpdatedAt       time.Time       `json:"updated_at"`
 }
 
+// userSelectableProfiles lists the profile types a user may choose during onboarding.
+// hybrid is intentionally excluded — it is admin-only.
+var userSelectableProfiles = map[ProfileType]bool{
+	ProfileTypeCrossBorder:  true,
+	ProfileTypeRetail:       true,
+	ProfileTypeHorticulture: true,
+}
+
+// IsUserSelectableProfile reports whether pt is a valid user-selectable profile type.
+func IsUserSelectableProfile(pt ProfileType) bool {
+	return userSelectableProfiles[pt]
+}
+
 // NewTenantProfile builds a new TenantProfile with sensible defaults for the given type.
 // It validates that profile_type is one of the user-selectable values (not hybrid).
 func NewTenantProfile(tenantID uuid.UUID, pt ProfileType) (*TenantProfile, error) {
-	if pt != ProfileTypeCrossBorder && pt != ProfileTypeRetail {
+	if !userSelectableProfiles[pt] {
 		return nil, ErrInvalidProfileType
 	}
 	now := time.Now().UTC()

@@ -2,7 +2,7 @@
 
 import { createContext, useContext } from "react"
 
-export type ProfileType = "cross_border" | "retail" | "hybrid" | null
+export type ProfileType = "cross_border" | "retail" | "hybrid" | "horticulture" | null
 
 export interface ProfileContextValue {
   profileType: ProfileType

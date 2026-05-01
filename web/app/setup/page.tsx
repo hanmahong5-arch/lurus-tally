@@ -37,7 +37,7 @@ export default async function SetupPage({
   async function submitProfile(formData: FormData) {
     "use server"
     const profileType = formData.get("profile_type") as ProfileType | null
-    if (profileType !== "cross_border" && profileType !== "retail") {
+    if (profileType !== "cross_border" && profileType !== "retail" && profileType !== "horticulture") {
       redirect("/setup?error=invalid")
     }
     const s = await auth()
@@ -75,7 +75,7 @@ export default async function SetupPage({
           </div>
         ) : null}
 
-        <form action={submitProfile} className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        <form action={submitProfile} className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <ProfileOption
             value="retail"
             title="零售 / 批发"
@@ -87,6 +87,12 @@ export default async function SetupPage({
             title="跨境贸易"
             description="进出口、跨境电商。库存按 FIFO 批次计价；自动多币种、汇率、HS Code 支持。"
             highlights={["🌐 多币种 + 汇率", "🚢 报关 / HS Code", "📈 批次成本可追溯"]}
+          />
+          <ProfileOption
+            value="horticulture"
+            title="苗木 / 园林工程"
+            description="苗圃、园林公司、工程方。苗木字典、项目制核算、价格分级，内置 200+ 常用苗木品种。"
+            highlights={["🌿 苗木字典 + 价格历史", "🏗️ 项目制损益核算", "📸 现场拍照存档"]}
           />
         </form>
 

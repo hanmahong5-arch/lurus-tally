@@ -68,4 +68,36 @@ describe("DashboardSidebar", () => {
 
     expect(screen.getByRole("link", { name: /商品/ })).toBeInTheDocument()
   })
+
+  it("TestDashboardSidebar_HorticultureProfile_ShowsDictionaryLink: horticulture shows 苗木字典", () => {
+    mockUseProfile.mockReturnValue({ profileType: "horticulture" })
+
+    render(<DashboardSidebar />)
+
+    expect(screen.getByRole("link", { name: /苗木字典/ })).toBeInTheDocument()
+  })
+
+  it("TestDashboardSidebar_CrossBorderProfile_HidesDictionaryLink: cross_border hides 苗木字典", () => {
+    mockUseProfile.mockReturnValue({ profileType: "cross_border" })
+
+    render(<DashboardSidebar />)
+
+    expect(screen.queryByRole("link", { name: /苗木字典/ })).not.toBeInTheDocument()
+  })
+
+  it("TestDashboardSidebar_RetailProfile_HidesDictionaryLink: retail hides 苗木字典", () => {
+    mockUseProfile.mockReturnValue({ profileType: "retail" })
+
+    render(<DashboardSidebar />)
+
+    expect(screen.queryByRole("link", { name: /苗木字典/ })).not.toBeInTheDocument()
+  })
+
+  it("TestDashboardSidebar_HorticultureProfile_ShowsProjectsLink: projects is core and always shown", () => {
+    mockUseProfile.mockReturnValue({ profileType: "horticulture" })
+
+    render(<DashboardSidebar />)
+
+    expect(screen.getByRole("link", { name: /项目/ })).toBeInTheDocument()
+  })
 })
