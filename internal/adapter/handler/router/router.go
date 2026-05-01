@@ -14,6 +14,7 @@ import (
 	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
+	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
 )
@@ -33,7 +34,7 @@ func notImplemented(c *gin.Context) {
 // The engine mode (release/debug) is controlled by GIN_MODE or gin.SetMode.
 //
 //nolint:cyclop // router wiring is intentionally long
-func New(h *health.Handler, authMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler) *gin.Engine {
+func New(h *health.Handler, authMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
@@ -149,6 +150,18 @@ func New(h *health.Handler, authMW gin.HandlerFunc, ph *handlerproduct.Handler, 
 			api.PUT("/nursery-dict/:id", notImplemented)
 			api.DELETE("/nursery-dict/:id", notImplemented)
 			api.POST("/nursery-dict/:id/restore", notImplemented)
+		}
+
+		// Project CRUD (Story 28.2).
+		if projh != nil {
+			projh.RegisterRoutes(api)
+		} else {
+			api.GET("/projects", notImplemented)
+			api.POST("/projects", notImplemented)
+			api.GET("/projects/:id", notImplemented)
+			api.PUT("/projects/:id", notImplemented)
+			api.DELETE("/projects/:id", notImplemented)
+			api.POST("/projects/:id/restore", notImplemented)
 		}
 	}
 

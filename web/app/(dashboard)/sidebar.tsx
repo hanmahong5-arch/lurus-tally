@@ -17,6 +17,7 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { href: "/finance/exchange-rates", label: "财务管理", icon: "💰" },
   { href: "/subscription", label: "订阅与计费", icon: "💳" },
   { href: "/dictionary", label: "苗木字典", icon: "🌿" },
+  { href: "/projects", label: "项目", icon: "🏗️" },
 ]
 
 /**

@@ -22,6 +22,7 @@ import (
 	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
+	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
@@ -32,6 +33,7 @@ import (
 	repohorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/horticulture"
 	repopayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/payment"
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
+	repoprojectrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/project"
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
@@ -42,6 +44,7 @@ import (
 	apphorticulture "github.com/hanmahong5-arch/lurus-tally/internal/app/horticulture"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
+	appprojectuc "github.com/hanmahong5-arch/lurus-tally/internal/app/project"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	apptenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
 	appunit "github.com/hanmahong5-arch/lurus-tally/internal/app/unit"
@@ -268,9 +271,20 @@ func NewApp(cfg *config.Config) (*App, error) {
 		apphorticulture.NewRestoreUseCase(dictRepo),
 	)
 
+	// Wire project CRUD (Story 28.2).
+	projectRepo := repoprojectrepo.New(db)
+	projectHandler := handlerproject.NewProjectHandler(
+		appprojectuc.NewCreateUseCase(projectRepo),
+		appprojectuc.NewGetByIDUseCase(projectRepo),
+		appprojectuc.NewListUseCase(projectRepo),
+		appprojectuc.NewUpdateUseCase(projectRepo),
+		appprojectuc.NewDeleteUseCase(projectRepo),
+		appprojectuc.NewRestoreUseCase(projectRepo),
+	)
+
 	h := health.New(cfg.ServiceVersion)
 	r := router.New(h, authMW, productHandler, unitHandler, authHandler, stockHandler,
-		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler)
+		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
