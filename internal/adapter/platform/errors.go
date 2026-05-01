@@ -1,7 +1,7 @@
-// Package platformclient is the HTTP client used by Tally to call lurus-platform's
-// internal billing/identity API. It mirrors the typed-error contract that platform
-// exposes (HTTP status + error_code body) so callers can branch cleanly.
-package platformclient
+// Package platform is the HTTP client used by Tally to call lurus-platform's
+// internal billing/identity/notification API. It mirrors the typed-error contract
+// that platform exposes (HTTP status + error_code body) so callers can branch cleanly.
+package platform
 
 import (
 	"errors"
@@ -27,7 +27,7 @@ const (
 	ErrCodeUnknown ErrCode = "unknown"
 )
 
-// Error is the typed error returned by every platformclient call.
+// Error is the typed error returned by every platform client call.
 // HTTPStatus is the raw status (or 0 if the request never completed).
 // Body holds the trimmed response body for diagnostics.
 type Error struct {

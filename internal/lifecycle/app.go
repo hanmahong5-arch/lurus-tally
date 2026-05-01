@@ -48,10 +48,11 @@ import (
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	apptenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
 	appunit "github.com/hanmahong5-arch/lurus-tally/internal/app/unit"
+	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/platform"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/logger"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
 	"github.com/redis/go-redis/v9"
 )
@@ -112,9 +113,9 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// Build the platform client up front so the same client serves both
 	// ChooseProfile (account provisioning) and the billing handler. Empty
 	// PLATFORM_INTERNAL_KEY → nil client → both code paths degrade gracefully.
-	var platClient *platformclient.Client
+	var platClient *platform.Client
 	if cfg.PlatformInternalKey != "" {
-		pc, perr := platformclient.New(platformclient.Config{
+		pc, perr := platform.New(platform.Config{
 			BaseURL: cfg.PlatformBaseURL,
 			APIKey:  cfg.PlatformInternalKey,
 		})
@@ -127,6 +128,32 @@ func NewApp(cfg *config.Config) (*App, error) {
 	} else {
 		l.Warn("platform integration disabled (PLATFORM_INTERNAL_KEY not set)")
 	}
+
+	// Wire NATS publisher + notification client. When NATS_URL is empty or
+	// unreachable, NoOpFallback keeps the service bootable in dev.
+	natsNoOp := cfg.NATSURL == ""
+	natsPub, natsPubErr := adapternats.NewPublisher(adapternats.Config{
+		URL:          cfg.NATSURL,
+		NoOpFallback: natsNoOp,
+	})
+	if natsPubErr != nil {
+		// NATS is non-critical — degrade to noop and log the failure.
+		l.Warn("NATS publisher unavailable, falling back to noop",
+			slog.String("nats_url", cfg.NATSURL),
+			slog.String("error", natsPubErr.Error()))
+		natsPub, _ = adapternats.NewPublisher(adapternats.Config{NoOpFallback: true})
+	}
+	notifyMode := "nats"
+	if natsNoOp {
+		notifyMode = "noop"
+	}
+	notifyClient := platform.NewNotificationClient(platform.NotificationConfig{
+		NATSPublisher: natsPub,
+		NotifyURL:     cfg.PlatformNotifyURL,
+		APIKey:        cfg.PlatformInternalKey,
+	})
+	l.Info("notification: enabled", slog.String("mode", notifyMode))
+	_ = notifyClient // capability ready; business events wired in subsequent stories
 
 	authHandler := handlerAuth.New(
 		apptenant.NewChooseProfileUseCase(tenantStore, platClient, l),

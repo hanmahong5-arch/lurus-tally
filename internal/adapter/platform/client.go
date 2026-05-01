@@ -1,4 +1,4 @@
-package platformclient
+package platform
 
 import (
 	"bytes"
@@ -41,10 +41,10 @@ type Config struct {
 // New constructs a Client. Returns an error when BaseURL or APIKey is empty.
 func New(cfg Config) (*Client, error) {
 	if strings.TrimSpace(cfg.BaseURL) == "" {
-		return nil, fmt.Errorf("platformclient: BaseURL is required")
+		return nil, fmt.Errorf("platform: BaseURL is required")
 	}
 	if strings.TrimSpace(cfg.APIKey) == "" {
-		return nil, fmt.Errorf("platformclient: APIKey is required")
+		return nil, fmt.Errorf("platform: APIKey is required")
 	}
 	timeout := cfg.Timeout
 	if timeout <= 0 {

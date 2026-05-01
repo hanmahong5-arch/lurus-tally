@@ -37,6 +37,10 @@ type Config struct {
 	// against the issuer's JWKS.
 	ZitadelDomain string // ZITADEL_DOMAIN: e.g. auth.lurus.cn — issuer + JWKS derived from this
 
+	// Notification service — Tally can publish events to platform notification.
+	// When PlatformNotifyURL is empty it defaults to the in-cluster address.
+	PlatformNotifyURL string // PLATFORM_NOTIFY_URL: e.g. http://notification.lurus-platform.svc:18900
+
 	// AI assistant — routed through lurus newapi (newapi.lurus.cn).
 	// When NewAPIBaseURL is empty the AI routes return 501.
 	NewAPIBaseURL    string // NEWAPI_BASE_URL: e.g. https://newapi.lurus.cn/v1
@@ -104,6 +108,8 @@ func Load() (*Config, error) {
 		PlatformBaseURL: optional("PLATFORM_BASE_URL",
 			"http://platform-core.lurus-platform.svc:18104"),
 		PlatformInternalKey: optional("PLATFORM_INTERNAL_KEY", ""),
+		PlatformNotifyURL: optional("PLATFORM_NOTIFY_URL",
+			"http://notification.lurus-platform.svc:18900"),
 		ZitadelDomain:       optional("ZITADEL_DOMAIN", ""),
 		NewAPIBaseURL:       optional("NEWAPI_BASE_URL", "https://newapi.lurus.cn/v1"),
 		NewAPIKey:           optional("NEWAPI_API_KEY", ""),
