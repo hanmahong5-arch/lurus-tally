@@ -18,11 +18,11 @@ export interface MeResponse {
   display_name: string
   role: string
   is_owner: boolean
-  profile_type: "" | "cross_border" | "retail" | "hybrid"
+  profile_type: "" | "cross_border" | "retail" | "hybrid" | "horticulture"
   is_first_time: boolean
 }
 
-export type ProfileType = "cross_border" | "retail"
+export type ProfileType = "cross_border" | "retail" | "horticulture"
 
 export interface TenantProfile {
   id: string

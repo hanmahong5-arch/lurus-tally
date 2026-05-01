@@ -304,6 +304,26 @@ func TestChooseProfile_NilUpserter_NoOp(t *testing.T) {
 	}
 }
 
+// TestChooseProfile_AcceptsHorticulture verifies that the horticulture profile
+// is a valid user-selectable type and boots a fresh tenant correctly.
+func TestChooseProfile_AcceptsHorticulture(t *testing.T) {
+	store := newStubBootstrapStore()
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+
+	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub:  "sub-horti-001",
+		Email:       "nursery@example.com",
+		DisplayName: "Green Thumb",
+		ProfileType: "horticulture",
+	})
+	if err != nil {
+		t.Fatalf("horticulture profile should be accepted, got error: %v", err)
+	}
+	if p.ProfileType != domain.ProfileTypeHorticulture {
+		t.Errorf("expected horticulture, got %s", p.ProfileType)
+	}
+}
+
 // TestChooseProfile_EmptyEmail_SynthesizesPlaceholder verifies that a Zitadel
 // user with no email claim (admin / username-only / phone-OTP) still gets a
 // platform account upsert with a stable placeholder email so wallet and

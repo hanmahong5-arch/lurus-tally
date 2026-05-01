@@ -10,7 +10,7 @@ import type {
   Product,
 } from "@/lib/api/products"
 
-type ProfileType = "cross_border" | "retail" | "hybrid" | null
+type ProfileType = "cross_border" | "retail" | "hybrid" | "horticulture" | null
 
 interface ProductFormProps {
   /** When provided, the form renders in edit mode pre-populated with this product */

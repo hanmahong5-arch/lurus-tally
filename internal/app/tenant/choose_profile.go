@@ -36,7 +36,7 @@ type ChooseProfileInput struct {
 	ZitadelSub  string // required
 	Email       string // optional but recommended
 	DisplayName string // optional
-	ProfileType string // "cross_border" | "retail"
+	ProfileType string // "cross_border" | "retail" | "horticulture"
 }
 
 // ChooseProfileUseCase implements first-login onboarding.
@@ -73,7 +73,7 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 	}
 
 	pt := domain.ProfileType(in.ProfileType)
-	if pt != domain.ProfileTypeCrossBorder && pt != domain.ProfileTypeRetail {
+	if !domain.IsUserSelectableProfile(pt) {
 		return nil, fmt.Errorf("choose profile: %w", domain.ErrInvalidProfileType)
 	}
 

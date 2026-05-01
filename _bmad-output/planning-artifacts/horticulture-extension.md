@@ -240,3 +240,26 @@ erDiagram
 **理由**: 苗木字典是所有后续 epic 的数据底座；先把它跑通，让用户立刻看到"输入'红枫'有 8 个候选"的体验，再扩散。
 
 下一阶段 = S28.2（project 表 + 列表页）。
+
+---
+
+## 11. Pack 化里程碑
+
+### 当前状态（Track F，2026-05-01）
+
+Sidebar profile gate 已落地：
+
+- `ProfileTypeHorticulture = "horticulture"` 加入 `internal/domain/tenant/` 常量集，并进入 `userSelectableProfiles`（可通过 `IsUserSelectableProfile()` 查询）。
+- `ChooseProfileUseCase.Execute()` 验证逻辑更新，horticulture 为合法用户自选 profile。
+- 前端 `NavItem.industry?: string[]` 字段落地；`BASE_NAV_ITEMS` 中"苗木字典"标注 `industry: ["horticulture"]`，对 cross_border / retail / hybrid tenant 不可见。
+- `/setup` 页增加苗木 / 园林工程选项卡片；`ProfileType`（`lib/api/me.ts` + `lib/profile.tsx`）已扩展。
+
+### 下一阶段（占位 Story 28.X，待规划）
+
+把 `internal/{domain,app,adapter}/horticulture/` 抽成独立可拔插模块：
+
+- 独立目录 `internal/domain/horticulture/`、`internal/app/horticulture/`、`internal/adapter/{handler,repo}/horticulture/`
+- 生命周期注册：在 `lifecycle/wire.go` 中按 `tenant_profile.profile_type == 'horticulture'` 条件挂载路由
+- 前端 feature flag 也改为按 `profileType === 'horticulture'` 动态 import
+
+**红线**：core（products / purchases / sales / payments）不得 import horticulture pack；horticulture pack 可 import core domain 类型。

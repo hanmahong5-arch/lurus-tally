@@ -8,6 +8,8 @@ interface NavItem {
   href: string
   label: string
   icon?: string
+  /** When set, this item is only shown to tenants whose profileType is in the list. */
+  industry?: string[]
 }
 
 const BASE_NAV_ITEMS: NavItem[] = [
@@ -16,7 +18,7 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { href: "/sales", label: "销售管理", icon: "📊" },
   { href: "/finance/exchange-rates", label: "财务管理", icon: "💰" },
   { href: "/subscription", label: "订阅与计费", icon: "💳" },
-  { href: "/dictionary", label: "苗木字典", icon: "🌿" },
+  { href: "/dictionary", label: "苗木字典", icon: "🌿", industry: ["horticulture"] },
   { href: "/projects", label: "项目", icon: "🏗️" },
 ]
 
@@ -28,7 +30,9 @@ export function DashboardSidebar() {
   const { profileType } = useProfile()
   const pathname = usePathname()
 
-  const navItems = [...BASE_NAV_ITEMS]
+  const navItems = BASE_NAV_ITEMS.filter(
+    (item) => !item.industry || (profileType !== null && item.industry.includes(profileType))
+  )
 
   return (
     <nav className="flex w-56 flex-col gap-1 border-r border-border bg-background p-3">
