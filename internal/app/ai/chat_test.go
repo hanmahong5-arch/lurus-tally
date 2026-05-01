@@ -30,12 +30,6 @@ func (m *mockMemoryClient) Add(ctx context.Context, userID, content string, meta
 	return &memorusclient.Memory{Content: content}, nil
 }
 
-// --- mock LLM client ---
-
-type mockLLMChat struct {
-	response string
-}
-
 // TestChat_WithMemorusEnabled_AugmentsContext verifies that when memorus returns
 // memories, they are prepended to the system context in the orchestrator input.
 // We verify this by confirming buildMessages returns more tokens when memories present.
