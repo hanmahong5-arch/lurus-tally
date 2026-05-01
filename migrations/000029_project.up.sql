@@ -21,7 +21,7 @@ CREATE TABLE tally.project (
 CREATE INDEX idx_project_tenant   ON tally.project(tenant_id);
 CREATE INDEX idx_project_status   ON tally.project(tenant_id, status);
 CREATE INDEX idx_project_customer ON tally.project(customer_id) WHERE customer_id IS NOT NULL;
-CREATE INDEX idx_project_name_trgm ON tally.project USING GIN (name gin_trgm_ops);
+CREATE INDEX idx_project_name_trgm ON tally.project USING GIN (name tally.gin_trgm_ops);
 
 -- RLS: strict tenant isolation (no shared seed for project).
 ALTER TABLE tally.project ENABLE ROW LEVEL SECURITY;
