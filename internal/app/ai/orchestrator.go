@@ -26,6 +26,7 @@ type Orchestrator struct {
 	llm       *llmclient.Client
 	registry  *Registry
 	planStore PlanStore
+	memory    MemoryClient // nil when memorus disabled
 	model     string
 }
 
@@ -40,6 +41,13 @@ func NewOrchestrator(llm *llmclient.Client, registry *Registry, planStore PlanSt
 		planStore: planStore,
 		model:     model,
 	}
+}
+
+// WithMemory attaches a MemoryClient to the orchestrator for recall + write-back.
+// Passing nil disables memory (same as default).
+func (o *Orchestrator) WithMemory(mc MemoryClient) *Orchestrator {
+	o.memory = mc
+	return o
 }
 
 // systemPrompt is the static inventory assistant persona.
@@ -78,7 +86,13 @@ const maxToolRounds = 6
 // Chat executes one user turn (non-streaming). Builds the full message sequence,
 // runs tool-call rounds, and returns the final text + any plans.
 func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, error) {
-	messages := buildMessages(in)
+	// Memory recall: augment user message with relevant past context.
+	userID := in.TenantID.String()
+	augmented := AugmentMessagesWithMemoryOrFallback(o.memory, ctx, userID, in.UserMessage)
+	inAugmented := in
+	inAugmented.UserMessage = augmented
+
+	messages := buildMessages(inAugmented)
 	tools := ToolDefs()
 
 	var plans []*domainai.Plan
@@ -98,6 +112,9 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 		// If no tool calls, we have the final answer.
 		if len(choice.Message.ToolCalls) == 0 {
 			content, _ := extractContent(choice.Message.Content)
+			// Async write-back: summarise this turn to memorus (non-blocking).
+			summary := BuildMemorySummary(in.TenantID, in.UserMessage, content)
+			AsyncWriteMemory(o.memory, userID, summary, map[string]any{"source": "tally-ai"})
 			return &ChatOutput{
 				AssistantText: content,
 				Plans:         plans,
@@ -143,7 +160,13 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 // StreamChat executes one user turn and streams the response via onChunk.
 // Tool calls are executed synchronously before streaming begins.
 func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk func(string)) (*ChatOutput, error) {
-	messages := buildMessages(in)
+	// Memory recall: augment user message with relevant past context.
+	userID := in.TenantID.String()
+	augmented := AugmentMessagesWithMemoryOrFallback(o.memory, ctx, userID, in.UserMessage)
+	inAugmented := in
+	inAugmented.UserMessage = augmented
+
+	messages := buildMessages(inAugmented)
 	tools := ToolDefs()
 
 	var plans []*domainai.Plan
@@ -176,6 +199,9 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 			if streamErr != nil {
 				return nil, fmt.Errorf("orchestrator: stream final: %w", streamErr)
 			}
+			// Async write-back: summarise this turn to memorus (non-blocking).
+			summary := BuildMemorySummary(in.TenantID, in.UserMessage, finalText)
+			AsyncWriteMemory(o.memory, userID, summary, map[string]any{"source": "tally-ai"})
 			return &ChatOutput{
 				AssistantText: finalText,
 				Plans:         plans,

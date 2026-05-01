@@ -43,6 +43,12 @@ type Config struct {
 	NewAPIKey        string // NEWAPI_API_KEY: bearer token for newapi (injected via secret)
 	DefaultAIModel   string // DEFAULT_AI_MODEL: model name (default "deepseek-v4-flash")
 	AIPlanTTLSeconds int    // AI_PLAN_TTL_SECONDS: destructive plan TTL (default 1800)
+
+	// Memory — memorus integration (http://memorus.lurus-system.svc:8880).
+	// Both must be set to enable memory recall in the AI Drawer.
+	// When either is empty: log "memorus: disabled", AI still works without recall.
+	MemoryBaseURL string // MEMORUS_BASE_URL: e.g. http://memorus.lurus-system.svc:8880
+	MemoryAPIKey  string // MEMORUS_API_KEY: X-API-Key header value
 }
 
 // required reads an environment variable and returns a descriptive error when absent.
@@ -109,5 +115,7 @@ func Load() (*Config, error) {
 		NewAPIKey:           optional("NEWAPI_API_KEY", ""),
 		DefaultAIModel:      optional("DEFAULT_AI_MODEL", "deepseek-v4-flash"),
 		AIPlanTTLSeconds:    aiPlanTTL,
+		MemoryBaseURL:       optional("MEMORUS_BASE_URL", "http://memorus.lurus-system.svc:8880"),
+		MemoryAPIKey:        optional("MEMORUS_API_KEY", ""),
 	}, nil
 }

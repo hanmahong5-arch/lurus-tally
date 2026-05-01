@@ -51,6 +51,7 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/logger"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/memorusclient"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
 	"github.com/redis/go-redis/v9"
@@ -223,6 +224,26 @@ func NewApp(cfg *config.Config) (*App, error) {
 			repoai.NewSQLExchangeRateRepo(db),
 		)
 		orchestrator := appai.NewOrchestrator(llmClient, registry, planStore, cfg.DefaultAIModel)
+
+		// Wire memorus memory client when both env vars are set.
+		// Returns (nil, nil) when either is empty — orchestrator degrades gracefully.
+		if cfg.MemoryAPIKey != "" {
+			memClient, merr := memorusclient.New(memorusclient.Config{
+				BaseURL: cfg.MemoryBaseURL,
+				APIKey:  cfg.MemoryAPIKey,
+			})
+			if merr != nil {
+				return nil, fmt.Errorf("lifecycle: cannot init memorus client: %w", merr)
+			}
+			if memClient != nil {
+				orchestrator.WithMemory(memClient)
+				l.Info("memorus memory enabled",
+					slog.String("memorus_url", cfg.MemoryBaseURL))
+			}
+		} else {
+			l.Info("memorus: disabled (MEMORUS_API_KEY not set)")
+		}
+
 		aiHandler = handlerai.New(orchestrator)
 		l.Info("AI assistant enabled",
 			slog.String("model", cfg.DefaultAIModel),
