@@ -349,10 +349,6 @@ func isPgUniqueViolation(err error) bool {
 	if errors.As(err, &pe) {
 		return pe.SQLState() == pgUniqueViolation
 	}
-	// lib/pq fallback
-	type pqErr interface {
-		Code() string
-	}
 	// Check error string as last resort.
 	return strings.Contains(err.Error(), pgUniqueViolation) ||
 		strings.Contains(err.Error(), "unique constraint") ||
