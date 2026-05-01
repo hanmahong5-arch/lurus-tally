@@ -1,9 +1,13 @@
 import { auth } from "@/auth"
 import { NextResponse } from "next/server"
 
-// Middleware applies to dashboard, setup, and POS routes.
+// Middleware applies to all app routes except: /login (the sign-in page itself),
+// /api/* (NextAuth handlers + the proxy route which has its own session check),
+// and Next.js internals/static. Using a negative matcher avoids the "(dashboard)
+// is a route group, not a URL segment" bug where /products, /dictionary,
+// /projects etc. silently bypassed auth.
 export const config = {
-  matcher: ["/(dashboard|setup|pos)(.*)"],
+  matcher: ["/((?!login|api|_next|favicon.ico).*)"],
 }
 
 export default auth((req) => {
