@@ -37,11 +37,35 @@ type Config struct {
 
 // Publisher sends PSI_EVENTS to NATS JetStream.
 // Obtain one via NewPublisher; always call Close when done.
+//
+// Two API surfaces co-exist:
+//
+//  1. Untyped (legacy): Publish(ctx, subject, payload). Caller owns the wire
+//     format end-to-end. Kept for backward compatibility with existing call
+//     sites; new code should prefer the typed methods below.
+//  2. Typed (preferred): PublishX(ctx, tenantID, payload). Wraps the payload
+//     in a canonical Event envelope (event_id / occurred_at / source) and
+//     routes to the correct subject. See events.go + payloads.go for the
+//     event taxonomy.
 type Publisher interface {
 	// Publish serialises payload as JSON and publishes it to the given subject.
 	// subject should be a dot-separated string, e.g. "PSI_EVENTS.project.status_changed".
 	// Errors are returned but should not block the caller's main path.
 	Publish(ctx context.Context, subject string, payload any) error
+
+	// PublishStockMovementRecorded emits PSI_EVENTS.stock.movement_recorded.
+	PublishStockMovementRecorded(ctx context.Context, tenantID string, payload StockMovementRecordedPayload) error
+	// PublishStockSnapshotUpdated emits PSI_EVENTS.stock.snapshot_updated.
+	PublishStockSnapshotUpdated(ctx context.Context, tenantID string, payload StockSnapshotUpdatedPayload) error
+	// PublishBillCreated emits PSI_EVENTS.bill.created.
+	PublishBillCreated(ctx context.Context, tenantID string, payload BillCreatedPayload) error
+	// PublishBillApproved emits PSI_EVENTS.bill.approved.
+	PublishBillApproved(ctx context.Context, tenantID string, payload BillApprovedPayload) error
+	// PublishBillRejected emits PSI_EVENTS.bill.rejected.
+	PublishBillRejected(ctx context.Context, tenantID string, payload BillRejectedPayload) error
+	// PublishLowStockAlert emits PSI_EVENTS.alert.low_stock.
+	PublishLowStockAlert(ctx context.Context, tenantID string, payload LowStockAlertPayload) error
+
 	// Close drains and closes the underlying NATS connection.
 	Close() error
 }

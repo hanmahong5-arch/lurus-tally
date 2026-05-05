@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/platform"
 )
 
@@ -32,6 +33,28 @@ func (f *fakePublisher) Publish(_ context.Context, subject string, payload any) 
 }
 
 func (f *fakePublisher) Close() error { return nil }
+
+// Typed publisher stubs — exercised only via interface satisfaction here.
+// NotificationClient still uses untyped Publish; these are present so
+// fakePublisher implements the full adapternats.Publisher contract.
+func (f *fakePublisher) PublishStockMovementRecorded(_ context.Context, _ string, _ adapternats.StockMovementRecordedPayload) error {
+	return f.err
+}
+func (f *fakePublisher) PublishStockSnapshotUpdated(_ context.Context, _ string, _ adapternats.StockSnapshotUpdatedPayload) error {
+	return f.err
+}
+func (f *fakePublisher) PublishBillCreated(_ context.Context, _ string, _ adapternats.BillCreatedPayload) error {
+	return f.err
+}
+func (f *fakePublisher) PublishBillApproved(_ context.Context, _ string, _ adapternats.BillApprovedPayload) error {
+	return f.err
+}
+func (f *fakePublisher) PublishBillRejected(_ context.Context, _ string, _ adapternats.BillRejectedPayload) error {
+	return f.err
+}
+func (f *fakePublisher) PublishLowStockAlert(_ context.Context, _ string, _ adapternats.LowStockAlertPayload) error {
+	return f.err
+}
 
 func TestNotifyAsync_PublishesToCorrectSubject(t *testing.T) {
 	pub := &fakePublisher{}
