@@ -38,6 +38,16 @@ func New(
 	}
 }
 
+// RegisterRoutes mounts read-only stock routes onto the given router group.
+// POST /movements is intentionally NOT exposed: stock mutations must flow
+// through bill approval (Epic 6/7) to keep movement -> reference_id integrity.
+// A dev-only POST may be enabled in future via a separate guarded group.
+func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
+	rg.GET("/stock/snapshots", h.ListSnapshots)
+	rg.GET("/stock/snapshots/:product_id/:warehouse_id", h.GetSnapshot)
+	rg.GET("/stock/movements", h.ListMovements)
+}
+
 // postMovementRequest is the JSON body for POST /api/v1/stock/movements.
 type postMovementRequest struct {
 	ProductID     uuid.UUID  `json:"product_id"     binding:"required"`

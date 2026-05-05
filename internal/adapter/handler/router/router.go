@@ -78,6 +78,15 @@ func New(h *health.Handler, authMW gin.HandlerFunc, ph *handlerproduct.Handler, 
 			units.DELETE("/:id", unitHandler(uh, (*handlerunit.Handler).Delete))
 		}
 
+		// Stock query routes (read-only; mutations go through bill approval).
+		if sh != nil {
+			sh.RegisterRoutes(api)
+		} else {
+			api.GET("/stock/snapshots", notImplemented)
+			api.GET("/stock/snapshots/:product_id/:warehouse_id", notImplemented)
+			api.GET("/stock/movements", notImplemented)
+		}
+
 		// Purchase bill routes (Story 6.1).
 		if bh != nil {
 			bh.RegisterRoutes(api)

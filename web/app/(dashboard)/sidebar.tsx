@@ -14,6 +14,7 @@ interface NavItem {
 
 const BASE_NAV_ITEMS: NavItem[] = [
   { href: "/products", label: "商品管理", icon: "📦" },
+  { href: "/stock", label: "库存", icon: "🏬" },
   { href: "/purchases", label: "采购管理", icon: "🛒" },
   { href: "/sales", label: "销售管理", icon: "📊" },
   { href: "/finance/exchange-rates", label: "财务管理", icon: "💰" },

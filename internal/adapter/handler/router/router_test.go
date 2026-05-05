@@ -292,6 +292,45 @@ func TestRouter_RegistersProjectRoutes(t *testing.T) {
 	}
 }
 
+// TestRouter_StockRoutesRegistered verifies read-only stock query routes are registered.
+// POST /movements is intentionally NOT exposed via the router; stock mutations flow
+// through bill approval (Epic 6/7).
+func TestRouter_StockRoutesRegistered(t *testing.T) {
+	r := newTestRouter()
+
+	routes := []struct {
+		method string
+		path   string
+	}{
+		{http.MethodGet, "/api/v1/stock/snapshots"},
+		{http.MethodGet, "/api/v1/stock/snapshots/some-product/some-warehouse"},
+		{http.MethodGet, "/api/v1/stock/movements"},
+	}
+
+	for _, tc := range routes {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(tc.method, tc.path, nil)
+		r.ServeHTTP(w, req)
+		if w.Code == http.StatusNotFound {
+			t.Errorf("%s %s returned 404 — stock route not registered", tc.method, tc.path)
+		}
+	}
+}
+
+// TestRouter_StockMovementPostNotExposed verifies POST /api/v1/stock/movements
+// is NOT registered: stock mutations must go through bill approval (Epic 6/7).
+func TestRouter_StockMovementPostNotExposed(t *testing.T) {
+	r := newTestRouter()
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/stock/movements", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusNotFound && w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("POST /api/v1/stock/movements should not be exposed; got %d", w.Code)
+	}
+}
+
 // TestRouter_RegistersNurseryDictRoutes verifies all nursery dict routes are registered (Story 28.1).
 func TestRouter_RegistersNurseryDictRoutes(t *testing.T) {
 	r := newTestRouter()

@@ -45,34 +45,34 @@ const (
 // Movement is the append-only record of one stock change event.
 // QtyBase is always expressed in the product's base unit.
 type Movement struct {
-	ID            uuid.UUID
-	TenantID      uuid.UUID
-	ProductID     uuid.UUID
-	WarehouseID   uuid.UUID
-	Direction     Direction
-	QtyBase       decimal.Decimal // quantity in base unit, always positive
-	UnitCost      decimal.Decimal // per-base-unit cost
-	TotalCost     decimal.Decimal // QtyBase * UnitCost (set by calculator)
-	ReferenceType ReferenceType
-	ReferenceID   *uuid.UUID
-	OccurredAt    time.Time
-	CreatedBy     *uuid.UUID
-	Note          string
-	CreatedAt     time.Time
+	ID            uuid.UUID       `json:"id"`
+	TenantID      uuid.UUID       `json:"tenant_id"`
+	ProductID     uuid.UUID       `json:"product_id"`
+	WarehouseID   uuid.UUID       `json:"warehouse_id"`
+	Direction     Direction       `json:"direction"`
+	QtyBase       decimal.Decimal `json:"qty_base"`
+	UnitCost      decimal.Decimal `json:"unit_cost"`
+	TotalCost     decimal.Decimal `json:"total_cost"`
+	ReferenceType ReferenceType   `json:"reference_type"`
+	ReferenceID   *uuid.UUID      `json:"reference_id,omitempty"`
+	OccurredAt    time.Time       `json:"occurred_at"`
+	CreatedBy     *uuid.UUID      `json:"created_by,omitempty"`
+	Note          string          `json:"note,omitempty"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 
 // Snapshot represents the current materialised state of inventory for one SKU in one warehouse.
 // It is always maintained by the CostEngine — callers must never UPDATE it directly.
 type Snapshot struct {
-	ID           uuid.UUID
-	TenantID     uuid.UUID
-	ProductID    uuid.UUID
-	WarehouseID  uuid.UUID
-	OnHandQty    decimal.Decimal
-	AvailableQty decimal.Decimal
-	UnitCost     decimal.Decimal
-	CostStrategy string
-	UpdatedAt    time.Time
+	ID           uuid.UUID       `json:"id"`
+	TenantID     uuid.UUID       `json:"tenant_id"`
+	ProductID    uuid.UUID       `json:"product_id"`
+	WarehouseID  uuid.UUID       `json:"warehouse_id"`
+	OnHandQty    decimal.Decimal `json:"on_hand_qty"`
+	AvailableQty decimal.Decimal `json:"available_qty"`
+	UnitCost     decimal.Decimal `json:"unit_cost"`
+	CostStrategy string          `json:"cost_strategy"`
+	UpdatedAt    time.Time       `json:"updated_at"`
 }
 
 // CostStrategy constants match the CHECK constraint in the migration.
