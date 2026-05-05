@@ -12,10 +12,8 @@ const ProfileContext = createContext<ProfileContextValue>({ profileType: null })
 
 /**
  * ProfileProvider wraps a subtree with a known profileType value.
- * Story 2.1 TODO: replace stub with real NextAuth session value.
- * When Story 2.1 is done, update the dashboard layout to call
- * `auth()` (server-side), extract `session.user.profileType`,
- * and pass it as `value` to ProfileProvider.
+ * Wired in app/(dashboard)/layout.tsx via NextAuth `auth()` →
+ * `session.user.profileType` (populated by jwt callback fetching /api/v1/me).
  */
 export function ProfileProvider({
   value,
@@ -30,18 +28,16 @@ export function ProfileProvider({
 }
 
 /**
- * useProfile returns the current profile type.
+ * useProfile returns the current profile type from context.
  *
- * STUB: always returns { profileType: 'cross_border' } until Story 2.1
- * implements real NextAuth session integration.
- *
- * Story 2.1 TODO: remove the hardcoded stub below. The ProfileProvider
- * in the dashboard layout will supply the real value from the session.
+ * Falls back to `cross_border` only when the context value is null — this
+ * happens in dev mode without an authenticated session, or in unit tests
+ * that don't wrap a ProfileProvider. Production-authenticated users always
+ * have a non-null profileType (middleware redirects first-time users to /setup
+ * before any dashboard route renders).
  */
 export function useProfile(): ProfileContextValue {
   const ctx = useContext(ProfileContext)
-  // Stub: fall back to cross_border for development.
-  // Story 2.1 TODO: remove this override — trust the context value directly.
   if (ctx.profileType === null) {
     return { profileType: "cross_border" }
   }
