@@ -71,8 +71,10 @@ ssh root@100.122.83.20 "kubectl -n lurus-tally rollout status deploy/tally-backe
 ssh root@100.122.83.20 "kubectl -n lurus-tally rollout status deploy/tally-web --timeout=180s"
 ssh root@100.122.83.20 "kubectl -n lurus-tally get pods,svc,ingressroute"
 
-# 健康检查
-curl -fsS https://tally-stage.lurus.cn/internal/v1/tally/ready
+# 健康检查 — /ready 真实 ping DB(必需)/Redis(可选)。
+# 200 = ready；503 = not_ready（响应体含具体哪个 dep 挂了）。
+# rollout status 阶段若长时间卡 0/1 ready，先看这个。
+curl -fsS https://tally-stage.lurus.cn/internal/v1/tally/ready | jq .
 curl -fsS https://tally-stage.lurus.cn/  # 前端 200 即可
 
 # 烟测（需 X-Tenant-ID，dev 模式下）

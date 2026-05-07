@@ -225,13 +225,19 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}
 
 	// Wire AI assistant. Requires NEWAPI_API_KEY; when absent, AI routes return 501.
-	var aiHandler *handlerai.Handler
+	// rdb is hoisted so the readiness probe can ping it when AI is enabled. When
+	// AI is disabled, Redis is not opened at all and is not part of the readiness
+	// contract — degraded but bootable.
+	var (
+		aiHandler *handlerai.Handler
+		rdb       *redis.Client
+	)
 	if cfg.NewAPIKey != "" {
 		rdbOpts, rerr := redis.ParseURL(cfg.RedisURL)
 		if rerr != nil {
 			return nil, fmt.Errorf("lifecycle: cannot parse REDIS_URL for AI store: %w", rerr)
 		}
-		rdb := redis.NewClient(rdbOpts)
+		rdb = redis.NewClient(rdbOpts)
 		planTTL := time.Duration(cfg.AIPlanTTLSeconds) * time.Second
 		planStore := repoai.New(repoai.NewGoRedisAdapter(rdb), planTTL)
 
@@ -330,7 +336,17 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appprojectuc.NewRestoreUseCase(projectRepo),
 	)
 
-	h := health.New(cfg.ServiceVersion)
+	// Build readiness probe deps. DB is required (service can't function without it);
+	// Redis is optional — only present when AI is enabled, and even then a Redis
+	// outage should not pull the pod from k8s endpoints because non-AI endpoints
+	// are still serviceable.
+	healthDeps := []health.Dep{
+		{Name: "db", Pinger: dbPinger{db}, Required: true},
+	}
+	if rdb != nil {
+		healthDeps = append(healthDeps, health.Dep{Name: "redis", Pinger: redisPinger{rdb}, Required: false})
+	}
+	h := health.New(cfg.ServiceVersion, healthDeps...)
 	r := router.New(h, authMW, productHandler, unitHandler, authHandler, stockHandler,
 		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler)
 
@@ -347,3 +363,13 @@ func NewApp(cfg *config.Config) (*App, error) {
 		db:     db,
 	}, nil
 }
+
+// dbPinger adapts *sql.DB to the health.Pinger interface.
+type dbPinger struct{ db *sql.DB }
+
+func (d dbPinger) Ping(ctx context.Context) error { return d.db.PingContext(ctx) }
+
+// redisPinger adapts *redis.Client to the health.Pinger interface.
+type redisPinger struct{ c *redis.Client }
+
+func (p redisPinger) Ping(ctx context.Context) error { return p.c.Ping(ctx).Err() }

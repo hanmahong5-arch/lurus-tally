@@ -65,6 +65,9 @@ spec:
               port: 18200
             initialDelaySeconds: 5
             periodSeconds: 10
+            # Allow the 2s app-level dep probe budget plus network overhead;
+            # default 1s would race the DB ping during cold connections.
+            timeoutSeconds: 3
             failureThreshold: 3
           volumeMounts:
             - name: tmp
