@@ -1,6 +1,24 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* ── Tally v2.5 brand-spec tokens ────────────────────────────── */
+:root {
+  --paper: #F5F2E8;
+  --bg: #E8E4D6;
+  --ink: #14130F;
+  --rule: #D6D2C2;
+  --brand-accent: #FF5D1F;
+  --ok: #1F7A4F;
+  --warn: #B8821F;
+  --err: #B3392B;
+  --info: #2D4A8A;
+  /* Typography scale */
+  --font-ui: "Inter Tight", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
 
 /* ── shadcn/ui base layer ─────────────────────────────────────── */
 @layer base {
@@ -58,8 +76,9 @@
   }
   body {
     @apply bg-background text-foreground;
-    /* Chinese-optimised font stack (ux-benchmarks.md §6) */
+    /* UI: Inter Tight for Latin glyphs, CJK fallback for Chinese */
     font-family:
+      "Inter Tight",
       "PingFang SC",
       "HarmonyOS Sans SC",
       "Hiragino Sans GB",
@@ -68,7 +87,13 @@
       -apple-system,
       BlinkMacSystemFont,
       sans-serif;
+    font-size: 13px;
     /* Looser line-height for CJK characters */
-    line-height: 1.7;
+    line-height: 1.5;
+  }
+
+  /* Mono: JetBrains Mono for data/labels (SKU, amounts, codes) */
+  code, kbd, pre, [data-mono] {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
   }
 }
