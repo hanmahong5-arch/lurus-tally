@@ -3,6 +3,10 @@
 // Both endpoints require the user's access_token in Authorization header.
 // In server components / server actions, retrieve the token from the NextAuth
 // session via auth() and pass it to these helpers explicitly.
+//
+// Intentionally does NOT use the browser-only apiFetch — these helpers are
+// callable from Server Components and hit the in-cluster backend URL directly,
+// not the /api/proxy session-bound bridge.
 
 const BACKEND_URL =
   // Browser: same-origin proxied through Next.js

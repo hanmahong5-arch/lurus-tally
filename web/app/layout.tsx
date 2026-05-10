@@ -1,5 +1,6 @@
 import type { Metadata } from "next"
 import { ThemeProvider } from "next-themes"
+import { ToastProvider } from "@/components/providers/toast-provider"
 import "@/app/globals.css"
 
 export const metadata: Metadata = {
@@ -21,7 +22,7 @@ export default function RootLayout({
           enableSystem={false}
           disableTransitionOnChange
         >
-          {children}
+          <ToastProvider>{children}</ToastProvider>
         </ThemeProvider>
       </body>
     </html>

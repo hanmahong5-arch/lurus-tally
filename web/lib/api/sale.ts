@@ -3,6 +3,7 @@
  * Covers: create draft, approve, cancel, list, get (with payments), quick-checkout.
  */
 
+import { apiFetch } from "./client"
 import { type BillStatus, type BillItem, type BillLineItemInput } from "./purchase"
 
 export type { BillStatus, BillItem, BillLineItemInput }
@@ -87,32 +88,11 @@ export interface ListSaleBillsParams {
   tenantId?: string
 }
 
-const BASE = "/api/proxy"
-
-function headers(tenantId?: string): HeadersInit {
-  const h: Record<string, string> = { "Content-Type": "application/json" }
-  if (tenantId) h["X-Tenant-ID"] = tenantId
-  return h
-}
-
-async function handleResponse<T>(res: Response, operation: string): Promise<T> {
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.message ?? body.error ?? `${operation}: HTTP ${res.status}`)
-  }
-  return res.json() as Promise<T>
-}
-
 export async function createSaleBill(
   body: CreateSaleBillRequest,
   tenantId?: string
 ): Promise<{ bill_id: string; bill_no: string }> {
-  const res = await fetch(`${BASE}/sale-bills`, {
-    method: "POST",
-    headers: headers(tenantId),
-    body: JSON.stringify(body),
-  })
-  return handleResponse(res, "createSaleBill")
+  return apiFetch("/sale-bills", { method: "POST", body: JSON.stringify(body), tenantId })
 }
 
 export async function updateSaleBill(
@@ -120,12 +100,7 @@ export async function updateSaleBill(
   body: UpdateSaleBillRequest,
   tenantId?: string
 ): Promise<SaleBillHead> {
-  const res = await fetch(`${BASE}/sale-bills/${id}`, {
-    method: "PUT",
-    headers: headers(tenantId),
-    body: JSON.stringify(body),
-  })
-  return handleResponse(res, "updateSaleBill")
+  return apiFetch(`/sale-bills/${id}`, { method: "PUT", body: JSON.stringify(body), tenantId })
 }
 
 export async function approveSaleBill(
@@ -133,60 +108,38 @@ export async function approveSaleBill(
   body: ApproveSaleRequest = {},
   tenantId?: string
 ): Promise<SaleBillHead> {
-  const res = await fetch(`${BASE}/sale-bills/${id}/approve`, {
+  return apiFetch(`/sale-bills/${id}/approve`, {
     method: "POST",
-    headers: headers(tenantId),
     body: JSON.stringify(body),
+    tenantId,
   })
-  return handleResponse(res, "approveSaleBill")
 }
 
-export async function cancelSaleBill(
-  id: string,
-  tenantId?: string
-): Promise<void> {
-  const res = await fetch(`${BASE}/sale-bills/${id}/cancel`, {
-    method: "POST",
-    headers: headers(tenantId),
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.message ?? body.error ?? `cancelSaleBill: HTTP ${res.status}`)
-  }
+export async function cancelSaleBill(id: string, tenantId?: string): Promise<void> {
+  await apiFetch<void>(`/sale-bills/${id}/cancel`, { method: "POST", tenantId })
 }
 
 export async function listSaleBills(
   params: ListSaleBillsParams = {}
 ): Promise<{ items: SaleBillHead[]; total: number }> {
   const { page = 1, size = 20, status, partner_id, tenantId } = params
-  const url = new URL(BASE + "/sale-bills", window.location.origin)
-  url.searchParams.set("page", String(page))
-  url.searchParams.set("size", String(size))
-  if (status !== undefined) url.searchParams.set("status", String(status))
-  if (partner_id) url.searchParams.set("partner_id", partner_id)
-
-  const res = await fetch(url.toString(), { headers: headers(tenantId) })
-  return handleResponse(res, "listSaleBills")
+  const usp = new URLSearchParams({ page: String(page), size: String(size) })
+  if (status !== undefined) usp.set("status", String(status))
+  if (partner_id) usp.set("partner_id", partner_id)
+  return apiFetch(`/sale-bills?${usp.toString()}`, { tenantId })
 }
 
-export async function getSaleBill(
-  id: string,
-  tenantId?: string
-): Promise<SaleBillDetail> {
-  const res = await fetch(`${BASE}/sale-bills/${id}`, {
-    headers: headers(tenantId),
-  })
-  return handleResponse(res, "getSaleBill")
+export async function getSaleBill(id: string, tenantId?: string): Promise<SaleBillDetail> {
+  return apiFetch(`/sale-bills/${id}`, { tenantId })
 }
 
 export async function quickCheckout(
   body: QuickCheckoutRequest,
   tenantId?: string
 ): Promise<QuickCheckoutResult> {
-  const res = await fetch(`${BASE}/sale-bills/quick-checkout`, {
+  return apiFetch("/sale-bills/quick-checkout", {
     method: "POST",
-    headers: headers(tenantId),
     body: JSON.stringify(body),
+    tenantId,
   })
-  return handleResponse(res, "quickCheckout")
 }

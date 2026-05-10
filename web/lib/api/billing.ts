@@ -5,7 +5,12 @@
  * proxy lurus-platform's internal subscription checkout). The frontend only
  * ever talks to its own backend — it never hits platform directly, so the
  * INTERNAL_API_KEY stays inside the cluster.
+ *
+ * Uses apiFetch internally with `silent: true` because billing surfaces its own
+ * domain-specific BillingError (with platform code) rather than the generic toast.
  */
+import { apiFetch } from "./client"
+import { ApiError, NetworkError } from "./errors"
 
 export type BillingCycle = "forever" | "monthly" | "yearly"
 
@@ -65,41 +70,38 @@ export class BillingError extends Error {
   }
 }
 
-const BASE = "/api/proxy"
-
-async function readError(res: Response, fallback: string): Promise<BillingError> {
-  let code = "unknown"
-  let message = fallback
-  try {
-    const body = (await res.json()) as { error?: string; detail?: string; message?: string }
-    if (body.error) code = body.error
-    if (body.detail) message = body.detail
-    else if (body.message) message = body.message
-  } catch {
-    // fall through with defaults
+function toBillingError(err: unknown, fallbackOp: string): never {
+  if (err instanceof ApiError) {
+    const body = (err.body ?? {}) as { error?: string; detail?: string; message?: string }
+    const code = body.error ?? err.code ?? "unknown"
+    const message = body.detail ?? body.message ?? err.message ?? `${fallbackOp}: HTTP ${err.status}`
+    throw new BillingError(code, message, err.status)
   }
-  return new BillingError(code, message, res.status)
+  if (err instanceof NetworkError) {
+    throw new BillingError(err.kind, `${fallbackOp}: ${err.message}`, 0)
+  }
+  throw err
 }
 
 export async function getBillingOverview(): Promise<BillingOverview> {
-  const res = await fetch(`${BASE}/billing/overview`, {
-    headers: { "Content-Type": "application/json" },
-    cache: "no-store",
-  })
-  if (!res.ok) {
-    throw await readError(res, `getBillingOverview: HTTP ${res.status}`)
+  try {
+    return await apiFetch<BillingOverview>("/billing/overview", {
+      cache: "no-store",
+      silent: true,
+    })
+  } catch (err) {
+    toBillingError(err, "getBillingOverview")
   }
-  return res.json()
 }
 
 export async function subscribe(req: SubscribeRequest): Promise<SubscribeResponse> {
-  const res = await fetch(`${BASE}/billing/subscribe`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(req),
-  })
-  if (!res.ok) {
-    throw await readError(res, `subscribe: HTTP ${res.status}`)
+  try {
+    return await apiFetch<SubscribeResponse>("/billing/subscribe", {
+      method: "POST",
+      body: JSON.stringify(req),
+      silent: true,
+    })
+  } catch (err) {
+    toBillingError(err, "subscribe")
   }
-  return res.json()
 }

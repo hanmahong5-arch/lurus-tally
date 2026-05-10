@@ -3,16 +3,7 @@
  * Amounts are represented as strings to avoid JSON floating-point loss.
  * Story 2.1 TODO: replace tenantId param with session-cookie auth.
  */
-
-const BASE = "/api/proxy"
-
-function headers(tenantId?: string): Record<string, string> {
-  const h: Record<string, string> = { "Content-Type": "application/json" }
-  if (tenantId) {
-    h["X-Tenant-ID"] = tenantId
-  }
-  return h
-}
+import { apiFetch } from "./client"
 
 // ── Request / Response types ──────────────────────────────────────────────────
 
@@ -67,27 +58,18 @@ export interface InsufficientStockError {
 
 /**
  * quickCheckout calls POST /api/v1/sale-bills/quick-checkout.
- * Throws an Error with message from the response body on non-2xx status.
- * For 422 insufficient_stock, the error message includes the error code so callers
- * can parse it: `error.message.includes('insufficient_stock')`.
+ * For 422 insufficient_stock the thrown ApiError carries body.error so callers
+ * can branch on `err.body.error === 'insufficient_stock'` or `err.message.includes(...)`.
  */
 export async function quickCheckout(
   req: QuickCheckoutRequest,
   tenantId?: string
 ): Promise<QuickCheckoutResult> {
-  const res = await fetch(`${BASE}/sale-bills/quick-checkout`, {
+  return apiFetch<QuickCheckoutResult>("/sale-bills/quick-checkout", {
     method: "POST",
-    headers: headers(tenantId),
     body: JSON.stringify(req),
+    tenantId,
   })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as Record<string, unknown>
-    throw new Error(
-      (body.error as string | undefined) ??
-        `quickCheckout: HTTP ${res.status}`
-    )
-  }
-  return res.json() as Promise<QuickCheckoutResult>
 }
 
 /**
@@ -98,19 +80,7 @@ export async function listTodaySaleBills(
   tenantId?: string
 ): Promise<SaleBillSummary[]> {
   const today = new Date().toISOString().slice(0, 10)
-  const url = new URL(BASE + "/sale-bills", window.location.origin)
-  url.searchParams.set("date_from", today)
-  url.searchParams.set("date_to", today)
-  url.searchParams.set("page_size", "200")
-
-  const res = await fetch(url.toString(), { headers: headers(tenantId) })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as Record<string, unknown>
-    throw new Error(
-      (body.error as string | undefined) ??
-        `listTodaySaleBills: HTTP ${res.status}`
-    )
-  }
-  const data = await res.json() as { items?: SaleBillSummary[] }
+  const qs = `?date_from=${today}&date_to=${today}&page_size=200`
+  const data = await apiFetch<{ items?: SaleBillSummary[] }>("/sale-bills" + qs, { tenantId })
   return data.items ?? []
 }

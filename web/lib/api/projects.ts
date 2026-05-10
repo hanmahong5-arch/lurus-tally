@@ -2,6 +2,7 @@
  * API wrapper for the project endpoints (Story 28.2).
  * Follows the same fetch + X-Tenant-ID header pattern as nursery-dict.ts.
  */
+import { apiFetch } from "./client"
 
 export type ProjectStatus = "active" | "paused" | "completed" | "cancelled"
 
@@ -42,69 +43,30 @@ export type ProjectCreateInput = Omit<
 >
 export type ProjectUpdateInput = Partial<ProjectCreateInput>
 
-const BASE = "/api/proxy"
-
-function headers(tenantId?: string): HeadersInit {
-  const h: HeadersInit = { "Content-Type": "application/json" }
-  if (tenantId) {
-    ;(h as Record<string, string>)["X-Tenant-ID"] = tenantId
-  }
-  return h
-}
-
 export async function listProjects(
   params: ProjectListParams = {}
 ): Promise<ProjectListResult> {
   const { q, status, customerId, limit = 20, offset = 0, tenantId } = params
-  const url = new URL(BASE + "/projects", window.location.origin)
-  if (q) url.searchParams.set("q", q)
-  if (status) url.searchParams.set("status", status)
-  if (customerId) url.searchParams.set("customer_id", customerId)
-  url.searchParams.set("limit", String(limit))
-  url.searchParams.set("offset", String(offset))
-
-  const res = await fetch(url.toString(), { headers: headers(tenantId) })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(
-      (body as { error?: string }).error ?? `listProjects: HTTP ${res.status}`
-    )
-  }
-  return res.json() as Promise<ProjectListResult>
+  const usp = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (q) usp.set("q", q)
+  if (status) usp.set("status", status)
+  if (customerId) usp.set("customer_id", customerId)
+  return apiFetch<ProjectListResult>(`/projects?${usp.toString()}`, { tenantId })
 }
 
-export async function getProject(
-  id: string,
-  tenantId?: string
-): Promise<ProjectItem> {
-  const res = await fetch(`${BASE}/projects/${id}`, {
-    headers: headers(tenantId),
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(
-      (body as { error?: string }).error ?? `getProject: HTTP ${res.status}`
-    )
-  }
-  return res.json() as Promise<ProjectItem>
+export async function getProject(id: string, tenantId?: string): Promise<ProjectItem> {
+  return apiFetch<ProjectItem>(`/projects/${id}`, { tenantId })
 }
 
 export async function createProject(
   input: ProjectCreateInput,
   tenantId?: string
 ): Promise<ProjectItem> {
-  const res = await fetch(`${BASE}/projects`, {
+  return apiFetch<ProjectItem>("/projects", {
     method: "POST",
-    headers: headers(tenantId),
     body: JSON.stringify(input),
+    tenantId,
   })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(
-      (body as { error?: string }).error ?? `createProject: HTTP ${res.status}`
-    )
-  }
-  return res.json() as Promise<ProjectItem>
 }
 
 export async function updateProject(
@@ -112,49 +74,17 @@ export async function updateProject(
   input: ProjectUpdateInput,
   tenantId?: string
 ): Promise<ProjectItem> {
-  const res = await fetch(`${BASE}/projects/${id}`, {
+  return apiFetch<ProjectItem>(`/projects/${id}`, {
     method: "PUT",
-    headers: headers(tenantId),
     body: JSON.stringify(input),
+    tenantId,
   })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(
-      (body as { error?: string }).error ?? `updateProject: HTTP ${res.status}`
-    )
-  }
-  return res.json() as Promise<ProjectItem>
 }
 
-export async function deleteProject(
-  id: string,
-  tenantId?: string
-): Promise<void> {
-  const res = await fetch(`${BASE}/projects/${id}`, {
-    method: "DELETE",
-    headers: headers(tenantId),
-  })
-  if (!res.ok && res.status !== 204) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(
-      (body as { error?: string }).error ?? `deleteProject: HTTP ${res.status}`
-    )
-  }
+export async function deleteProject(id: string, tenantId?: string): Promise<void> {
+  await apiFetch<void>(`/projects/${id}`, { method: "DELETE", tenantId })
 }
 
-export async function restoreProject(
-  id: string,
-  tenantId?: string
-): Promise<ProjectItem> {
-  const res = await fetch(`${BASE}/projects/${id}/restore`, {
-    method: "POST",
-    headers: headers(tenantId),
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(
-      (body as { error?: string }).error ?? `restoreProject: HTTP ${res.status}`
-    )
-  }
-  return res.json() as Promise<ProjectItem>
+export async function restoreProject(id: string, tenantId?: string): Promise<ProjectItem> {
+  return apiFetch<ProjectItem>(`/projects/${id}/restore`, { method: "POST", tenantId })
 }

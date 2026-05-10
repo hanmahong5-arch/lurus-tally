@@ -9,12 +9,9 @@
  * Field naming follows the rest of the codebase (snake_case JSON). Decimal-typed
  * fields arrive as strings to preserve precision; the UI is responsible for
  * formatting (Number(x).toFixed) at the leaf.
- *
- * NOTE: At the time of writing the backend domain.Snapshot / domain.Movement
- * structs do not yet carry json tags, so the live response may surface PascalCase
- * keys. Whichever form lands, this wrapper expects the contract documented above
- * (snake_case). Backend agent #9 owns the router wiring and DTO normalisation.
  */
+import { apiFetch } from "./client"
+
 export type Direction = "in" | "out" | "adjust"
 
 export type ReferenceType = "purchase" | "sale" | "adjust" | "transfer" | "init"
@@ -64,42 +61,28 @@ export interface ListMovementsParams {
   tenantId?: string
 }
 
-const BASE = "/api/proxy"
-
-function headers(tenantId?: string): HeadersInit {
-  const h: Record<string, string> = { "Content-Type": "application/json" }
-  if (tenantId) h["X-Tenant-ID"] = tenantId
-  return h
-}
-
-async function handleResponse<T>(res: Response, operation: string): Promise<T> {
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.error ?? body.message ?? `${operation}: HTTP ${res.status}`)
-  }
-  return res.json() as Promise<T>
-}
-
 interface ItemsEnvelope<T> {
   items: T[]
 }
 
+function buildQuery(params: Record<string, string | number | undefined>): string {
+  const usp = new URLSearchParams()
+  for (const [k, v] of Object.entries(params)) {
+    if (v !== undefined) usp.set(k, String(v))
+  }
+  const s = usp.toString()
+  return s ? "?" + s : ""
+}
+
 /**
  * List stock snapshots across the tenant, optionally filtered by product or warehouse.
- * The backend returns `{ items: [...] }`; this wrapper unwraps to a plain array.
  */
 export async function listStockSnapshots(
   params: ListSnapshotsParams = {}
 ): Promise<StockSnapshot[]> {
   const { product_id, warehouse_id, limit, offset, tenantId } = params
-  const url = new URL(BASE + "/stock/snapshots", window.location.origin)
-  if (product_id) url.searchParams.set("product_id", product_id)
-  if (warehouse_id) url.searchParams.set("warehouse_id", warehouse_id)
-  if (limit !== undefined) url.searchParams.set("limit", String(limit))
-  if (offset !== undefined) url.searchParams.set("offset", String(offset))
-
-  const res = await fetch(url.toString(), { headers: headers(tenantId) })
-  const body = await handleResponse<ItemsEnvelope<StockSnapshot>>(res, "listStockSnapshots")
+  const qs = buildQuery({ product_id, warehouse_id, limit, offset })
+  const body = await apiFetch<ItemsEnvelope<StockSnapshot>>("/stock/snapshots" + qs, { tenantId })
   return body.items ?? []
 }
 
@@ -110,21 +93,13 @@ export async function listStockMovements(
   params: ListMovementsParams = {}
 ): Promise<StockMovement[]> {
   const { product_id, warehouse_id, limit, offset, tenantId } = params
-  const url = new URL(BASE + "/stock/movements", window.location.origin)
-  if (product_id) url.searchParams.set("product_id", product_id)
-  if (warehouse_id) url.searchParams.set("warehouse_id", warehouse_id)
-  if (limit !== undefined) url.searchParams.set("limit", String(limit))
-  if (offset !== undefined) url.searchParams.set("offset", String(offset))
-
-  const res = await fetch(url.toString(), { headers: headers(tenantId) })
-  const body = await handleResponse<ItemsEnvelope<StockMovement>>(res, "listStockMovements")
+  const qs = buildQuery({ product_id, warehouse_id, limit, offset })
+  const body = await apiFetch<ItemsEnvelope<StockMovement>>("/stock/movements" + qs, { tenantId })
   return body.items ?? []
 }
 
 /**
- * Fetch all warehouse snapshots for a single product. Implemented client-side as
- * a filtered list call so the page works regardless of whether the backend
- * exposes a dedicated `/stock/snapshots/:product_id` route.
+ * Fetch all warehouse snapshots for a single product.
  */
 export async function getProductStock(
   productId: string,

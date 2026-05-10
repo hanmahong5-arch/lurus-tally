@@ -4,6 +4,10 @@
  * POST /api/proxy/ai/chat     — SSE streaming endpoint
  * POST /api/proxy/ai/plans/:id/confirm
  * POST /api/proxy/ai/plans/:id/cancel
+ *
+ * Intentionally does NOT use the shared apiFetch — SSE needs raw stream access,
+ * a long-lived AbortController, and per-event error semantics that the JSON
+ * fast path cannot model.
  */
 
 const BASE = "/api/proxy"

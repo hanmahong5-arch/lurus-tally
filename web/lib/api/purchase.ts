@@ -3,6 +3,7 @@
  * Types: BillHead, BillDetail, BillItem, CreatePurchaseBillRequest, etc.
  * Story 7.1 may extract shared types to web/lib/api/bill.ts.
  */
+import { apiFetch } from "./client"
 
 export type BillStatus = 0 | 2 | 9 // 0=draft, 2=approved, 9=cancelled
 
@@ -85,32 +86,11 @@ export interface ListPurchaseBillsParams {
   tenantId?: string
 }
 
-const BASE = "/api/proxy"
-
-function headers(tenantId?: string): HeadersInit {
-  const h: Record<string, string> = { "Content-Type": "application/json" }
-  if (tenantId) h["X-Tenant-ID"] = tenantId
-  return h
-}
-
-async function handleResponse<T>(res: Response, operation: string): Promise<T> {
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.message ?? body.error ?? `${operation}: HTTP ${res.status}`)
-  }
-  return res.json() as Promise<T>
-}
-
 export async function createPurchaseBill(
   body: CreatePurchaseBillRequest,
   tenantId?: string
 ): Promise<{ bill_id: string; bill_no: string }> {
-  const res = await fetch(`${BASE}/purchase-bills`, {
-    method: "POST",
-    headers: headers(tenantId),
-    body: JSON.stringify(body),
-  })
-  return handleResponse(res, "createPurchaseBill")
+  return apiFetch("/purchase-bills", { method: "POST", body: JSON.stringify(body), tenantId })
 }
 
 export async function updatePurchaseBill(
@@ -118,73 +98,31 @@ export async function updatePurchaseBill(
   body: UpdatePurchaseBillRequest,
   tenantId?: string
 ): Promise<BillHead> {
-  const res = await fetch(`${BASE}/purchase-bills/${id}`, {
-    method: "PUT",
-    headers: headers(tenantId),
-    body: JSON.stringify(body),
-  })
-  return handleResponse(res, "updatePurchaseBill")
+  return apiFetch(`/purchase-bills/${id}`, { method: "PUT", body: JSON.stringify(body), tenantId })
 }
 
-export async function approvePurchaseBill(
-  id: string,
-  tenantId?: string
-): Promise<BillHead> {
-  const res = await fetch(`${BASE}/purchase-bills/${id}/approve`, {
-    method: "POST",
-    headers: headers(tenantId),
-  })
-  return handleResponse(res, "approvePurchaseBill")
+export async function approvePurchaseBill(id: string, tenantId?: string): Promise<BillHead> {
+  return apiFetch(`/purchase-bills/${id}/approve`, { method: "POST", tenantId })
 }
 
-export async function cancelPurchaseBill(
-  id: string,
-  tenantId?: string
-): Promise<void> {
-  const res = await fetch(`${BASE}/purchase-bills/${id}/cancel`, {
-    method: "POST",
-    headers: headers(tenantId),
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.message ?? body.error ?? `cancelPurchaseBill: HTTP ${res.status}`)
-  }
+export async function cancelPurchaseBill(id: string, tenantId?: string): Promise<void> {
+  await apiFetch<void>(`/purchase-bills/${id}/cancel`, { method: "POST", tenantId })
 }
 
 export async function listPurchaseBills(
   params: ListPurchaseBillsParams = {}
 ): Promise<{ items: BillHead[]; total: number }> {
   const { page = 1, size = 20, status, partner_id, tenantId } = params
-  const url = new URL(BASE + "/purchase-bills", window.location.origin)
-  url.searchParams.set("page", String(page))
-  url.searchParams.set("size", String(size))
-  if (status !== undefined) url.searchParams.set("status", String(status))
-  if (partner_id) url.searchParams.set("partner_id", partner_id)
-
-  const res = await fetch(url.toString(), { headers: headers(tenantId) })
-  return handleResponse(res, "listPurchaseBills")
+  const usp = new URLSearchParams({ page: String(page), size: String(size) })
+  if (status !== undefined) usp.set("status", String(status))
+  if (partner_id) usp.set("partner_id", partner_id)
+  return apiFetch(`/purchase-bills?${usp.toString()}`, { tenantId })
 }
 
-export async function getPurchaseBill(
-  id: string,
-  tenantId?: string
-): Promise<BillDetail> {
-  const res = await fetch(`${BASE}/purchase-bills/${id}`, {
-    headers: headers(tenantId),
-  })
-  return handleResponse(res, "getPurchaseBill")
+export async function getPurchaseBill(id: string, tenantId?: string): Promise<BillDetail> {
+  return apiFetch(`/purchase-bills/${id}`, { tenantId })
 }
 
-export async function restorePurchaseBill(
-  id: string,
-  tenantId?: string
-): Promise<void> {
-  const res = await fetch(`${BASE}/purchase-bills/${id}/restore`, {
-    method: "POST",
-    headers: headers(tenantId),
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error(body.message ?? body.error ?? `restorePurchaseBill: HTTP ${res.status}`)
-  }
+export async function restorePurchaseBill(id: string, tenantId?: string): Promise<void> {
+  await apiFetch<void>(`/purchase-bills/${id}/restore`, { method: "POST", tenantId })
 }

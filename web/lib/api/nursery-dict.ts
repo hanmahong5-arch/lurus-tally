@@ -2,6 +2,7 @@
  * API wrapper for the nursery dictionary endpoints (Story 28.1).
  * Follows the same fetch + X-Tenant-ID header pattern as products.ts.
  */
+import { apiFetch } from "./client"
 
 export type NurseryType =
   | "tree"
@@ -51,64 +52,30 @@ export type NurseryDictCreateInput = Omit<
   "id" | "tenant_id" | "created_at" | "updated_at"
 >
 
-const BASE = "/api/proxy"
-
-function headers(tenantId?: string): HeadersInit {
-  const h: HeadersInit = { "Content-Type": "application/json" }
-  if (tenantId) {
-    ;(h as Record<string, string>)["X-Tenant-ID"] = tenantId
-  }
-  return h
-}
-
 export async function listNurseryDict(
   params: NurseryDictListParams = {}
 ): Promise<NurseryDictListResult> {
   const { q, type, isEvergreen, limit = 20, offset = 0, tenantId } = params
-  const url = new URL(BASE + "/nursery-dict", window.location.origin)
-  if (q) url.searchParams.set("q", q)
-  if (type) url.searchParams.set("type", type)
-  if (isEvergreen !== undefined)
-    url.searchParams.set("is_evergreen", String(isEvergreen))
-  url.searchParams.set("limit", String(limit))
-  url.searchParams.set("offset", String(offset))
-
-  const res = await fetch(url.toString(), { headers: headers(tenantId) })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error((body as { error?: string }).error ?? `listNurseryDict: HTTP ${res.status}`)
-  }
-  return res.json() as Promise<NurseryDictListResult>
+  const usp = new URLSearchParams({ limit: String(limit), offset: String(offset) })
+  if (q) usp.set("q", q)
+  if (type) usp.set("type", type)
+  if (isEvergreen !== undefined) usp.set("is_evergreen", String(isEvergreen))
+  return apiFetch<NurseryDictListResult>(`/nursery-dict?${usp.toString()}`, { tenantId })
 }
 
-export async function getNurseryDict(
-  id: string,
-  tenantId?: string
-): Promise<NurseryDictItem> {
-  const res = await fetch(`${BASE}/nursery-dict/${id}`, {
-    headers: headers(tenantId),
-  })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error((body as { error?: string }).error ?? `getNurseryDict: HTTP ${res.status}`)
-  }
-  return res.json() as Promise<NurseryDictItem>
+export async function getNurseryDict(id: string, tenantId?: string): Promise<NurseryDictItem> {
+  return apiFetch<NurseryDictItem>(`/nursery-dict/${id}`, { tenantId })
 }
 
 export async function createNurseryDict(
   input: NurseryDictCreateInput,
   tenantId?: string
 ): Promise<NurseryDictItem> {
-  const res = await fetch(`${BASE}/nursery-dict`, {
+  return apiFetch<NurseryDictItem>("/nursery-dict", {
     method: "POST",
-    headers: headers(tenantId),
     body: JSON.stringify(input),
+    tenantId,
   })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error((body as { error?: string }).error ?? `createNurseryDict: HTTP ${res.status}`)
-  }
-  return res.json() as Promise<NurseryDictItem>
 }
 
 export async function updateNurseryDict(
@@ -116,43 +83,23 @@ export async function updateNurseryDict(
   input: Partial<NurseryDictCreateInput>,
   tenantId?: string
 ): Promise<NurseryDictItem> {
-  const res = await fetch(`${BASE}/nursery-dict/${id}`, {
+  return apiFetch<NurseryDictItem>(`/nursery-dict/${id}`, {
     method: "PUT",
-    headers: headers(tenantId),
     body: JSON.stringify(input),
+    tenantId,
   })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error((body as { error?: string }).error ?? `updateNurseryDict: HTTP ${res.status}`)
-  }
-  return res.json() as Promise<NurseryDictItem>
 }
 
-export async function deleteNurseryDict(
-  id: string,
-  tenantId?: string
-): Promise<void> {
-  const res = await fetch(`${BASE}/nursery-dict/${id}`, {
-    method: "DELETE",
-    headers: headers(tenantId),
-  })
-  if (!res.ok && res.status !== 204) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error((body as { error?: string }).error ?? `deleteNurseryDict: HTTP ${res.status}`)
-  }
+export async function deleteNurseryDict(id: string, tenantId?: string): Promise<void> {
+  await apiFetch<void>(`/nursery-dict/${id}`, { method: "DELETE", tenantId })
 }
 
 export async function restoreNurseryDict(
   id: string,
   tenantId?: string
 ): Promise<NurseryDictItem> {
-  const res = await fetch(`${BASE}/nursery-dict/${id}/restore`, {
+  return apiFetch<NurseryDictItem>(`/nursery-dict/${id}/restore`, {
     method: "POST",
-    headers: headers(tenantId),
+    tenantId,
   })
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}))
-    throw new Error((body as { error?: string }).error ?? `restoreNurseryDict: HTTP ${res.status}`)
-  }
-  return res.json() as Promise<NurseryDictItem>
 }
