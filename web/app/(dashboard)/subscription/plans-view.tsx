@@ -171,7 +171,7 @@ export function SubscriptionPlansView() {
                 <Button
                   className="w-full"
                   variant={isActive ? "outline" : plan.highlight ? "default" : "secondary"}
-                  disabled={isActive || (isPending && pendingPlan === plan.code)}
+                  disabled={isActive || isPending}
                   onClick={() => handleSubscribe(plan)}
                   data-testid={`subscribe-${plan.code}`}
                 >

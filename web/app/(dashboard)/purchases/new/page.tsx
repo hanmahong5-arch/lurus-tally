@@ -232,7 +232,8 @@ export default function NewPurchasePage() {
           <button
             type="button"
             onClick={() => router.back()}
-            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
+            disabled={saving}
+            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
           >
             取消
           </button>
