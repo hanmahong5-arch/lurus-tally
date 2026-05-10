@@ -35,9 +35,13 @@ export default auth((req) => {
   // retail profile or null (first-time / unknown) is allowed through;
   // the layout.tsx server component does the definitive check.
   if (isOnPos && profileType && profileType !== "retail") {
-    return NextResponse.redirect(
-      new URL("/dashboard?error=pos-retail-only", nextUrl.origin)
-    )
+    const res = NextResponse.redirect(new URL("/dashboard", nextUrl.origin))
+    // Flash message — consumed once by ToastProvider on the client and cleared.
+    res.cookies.set("tally-flash", JSON.stringify({
+      level: "warning",
+      text: "POS 收银台仅对零售业态开放",
+    }), { path: "/", maxAge: 30, sameSite: "lax" })
+    return res
   }
 
   return NextResponse.next()

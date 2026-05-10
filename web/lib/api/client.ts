@@ -18,9 +18,25 @@ export interface ApiOptions extends RequestInit {
   tenantId?: string
   /** Skip the global toast and 401 redirect (caller wants to show their own UX). */
   silent?: boolean
+  /**
+   * Override the auto-generated Idempotency-Key. Set to `null` to disable for
+   * streaming or non-idempotent operations the backend explicitly does not
+   * dedupe. Default: a fresh UUID v4 is generated per write request.
+   */
+  idempotencyKey?: string | null
 }
 
 const PROXY_PREFIX = "/api/proxy"
+
+const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"])
+
+function newIdempotencyKey(): string {
+  if (typeof crypto !== "undefined" && typeof crypto.randomUUID === "function") {
+    return crypto.randomUUID()
+  }
+  // Fallback for environments without crypto.randomUUID (very old jsdom).
+  return Date.now().toString(36) + Math.random().toString(36).slice(2, 12)
+}
 
 function buildUrl(path: string): string {
   if (/^https?:\/\//i.test(path)) return path
@@ -80,8 +96,12 @@ async function triggerSignIn(): Promise<void> {
 }
 
 export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<T> {
-  const { tenantId, silent, headers, ...rest } = opts
+  const { tenantId, silent, headers, idempotencyKey, ...rest } = opts
   const finalHeaders = mergeHeaders(headers, tenantId)
+  const method = (rest.method ?? "GET").toUpperCase()
+  if (WRITE_METHODS.has(method) && idempotencyKey !== null && !finalHeaders["Idempotency-Key"]) {
+    finalHeaders["Idempotency-Key"] = idempotencyKey ?? newIdempotencyKey()
+  }
   const url = buildUrl(path)
 
   let res: Response
