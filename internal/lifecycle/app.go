@@ -347,7 +347,16 @@ func NewApp(cfg *config.Config) (*App, error) {
 		healthDeps = append(healthDeps, health.Dep{Name: "redis", Pinger: redisPinger{rdb}, Required: false})
 	}
 	h := health.New(cfg.ServiceVersion, healthDeps...)
-	r := router.New(h, authMW, productHandler, unitHandler, authHandler, stockHandler,
+
+	// Idempotency middleware is opt-in based on Redis availability. Without
+	// Redis the dedup layer is a no-op and the Idempotency-Key header from
+	// the frontend is silently ignored — request semantics are unchanged.
+	var idempotencyMW gin.HandlerFunc
+	if rdb != nil {
+		idempotencyMW = middleware.Idempotency(middleware.NewIdempotencyRedisStore(rdb))
+	}
+
+	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, stockHandler,
 		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler)
 
 	srv := &http.Server{
