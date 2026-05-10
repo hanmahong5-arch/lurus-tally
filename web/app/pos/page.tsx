@@ -199,6 +199,7 @@ export default function PosPage() {
           open={true}
           mode={paymentMode}
           totalAmount={cartNetTotal(cartState)}
+          loading={checkoutLoading}
           onConfirm={handlePaymentConfirm}
           onClose={() => setPaymentMode(null)}
         />

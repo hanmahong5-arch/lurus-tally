@@ -16,6 +16,12 @@ interface PaymentModalProps {
   open: boolean
   mode: PaymentMode
   totalAmount: Decimal
+  /**
+   * When true the confirm button is disabled and shows "处理中…", and ESC /
+   * backdrop-click are ignored. Prevents double-submit while quickCheckout is
+   * in flight, complementing the server-side Idempotency-Key dedup.
+   */
+  loading?: boolean
   onConfirm: (args: PaymentConfirmArgs) => void
   onClose: () => void
 }
@@ -35,6 +41,7 @@ export function PaymentModal({
   open,
   mode,
   totalAmount,
+  loading = false,
   onConfirm,
   onClose,
 }: PaymentModalProps) {
@@ -54,15 +61,17 @@ export function PaymentModal({
     }
   }, [open, mode, totalAmount])
 
-  // Close on ESC
+  // Close on ESC — disabled while loading so an in-flight checkout cannot be
+  // dismissed mid-request (the server still finishes; the client would lose
+  // the result).
   useEffect(() => {
-    if (!open) return
+    if (!open || loading) return
     const handler = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose()
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [open, onClose])
+  }, [open, loading, onClose])
 
   if (!open) return null
 
@@ -94,10 +103,10 @@ export function PaymentModal({
       role="dialog"
       aria-modal="true"
     >
-      {/* Backdrop */}
+      {/* Backdrop — click-to-close is disabled while loading. */}
       <div
         className="absolute inset-0 bg-black/50"
-        onClick={onClose}
+        onClick={loading ? undefined : onClose}
       />
 
       {/* Panel */}
@@ -106,7 +115,8 @@ export function PaymentModal({
           <h2 className="text-lg font-semibold">{MODE_LABELS[mode]}</h2>
           <button
             onClick={onClose}
-            className="text-muted-foreground hover:text-foreground"
+            disabled={loading}
+            className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
             aria-label="关闭"
           >
             ×
@@ -163,10 +173,10 @@ export function PaymentModal({
 
             <button
               onClick={handleCashConfirm}
-              disabled={!paidAmountStr || isNegativeChange}
+              disabled={!paidAmountStr || isNegativeChange || loading}
               className="h-12 w-full rounded-lg bg-emerald-500 text-base font-semibold text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              确认收款
+              {loading ? "处理中…" : "确认收款"}
             </button>
           </div>
         )}
@@ -184,9 +194,10 @@ export function PaymentModal({
             </p>
             <button
               onClick={() => handleQrConfirm(mode)}
-              className="h-12 w-full rounded-lg bg-primary text-base font-semibold text-primary-foreground hover:opacity-90"
+              disabled={loading}
+              className="h-12 w-full rounded-lg bg-primary text-base font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              已收款
+              {loading ? "处理中…" : "已收款"}
             </button>
           </div>
         )}
@@ -210,9 +221,10 @@ export function PaymentModal({
             </div>
             <button
               onClick={handleCreditConfirm}
-              className="h-12 w-full rounded-lg bg-orange-500 text-base font-semibold text-white hover:bg-orange-600"
+              disabled={loading}
+              className="h-12 w-full rounded-lg bg-orange-500 text-base font-semibold text-white hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              确认赊账
+              {loading ? "处理中…" : "确认赊账"}
             </button>
           </div>
         )}
