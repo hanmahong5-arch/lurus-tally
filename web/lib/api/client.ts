@@ -4,6 +4,9 @@
  * Behaviour summary:
  *   - Auto-prefixes /api/proxy unless given an absolute URL
  *   - Auto-sets Content-Type: application/json and X-Tenant-ID
+ *   - Writes (POST/PUT/PATCH/DELETE) get a fresh Idempotency-Key
+ *   - Writes preflight `navigator.onLine === false` → NetworkError("offline") without dispatch
+ *   - GETs may opt into transient retry (5xx / NetworkError) via `retry`
  *   - Network failure → NetworkError (toast unless offline banner is up)
  *   - 401 → trigger re-auth via next-auth signIn, throw UnauthorizedError
  *   - 403 → toast.error("权限不足"), throw ApiError
@@ -24,6 +27,13 @@ export interface ApiOptions extends RequestInit {
    * dedupe. Default: a fresh UUID v4 is generated per write request.
    */
   idempotencyKey?: string | null
+  /**
+   * Max number of automatic retries on transient failures (NetworkError / 5xx).
+   * Only honoured for GET — writes are never retried at this layer because the
+   * server may have applied them before the connection broke. Default: 0.
+   * Backoff is 200ms, 400ms, 800ms... (capped by the number of retries).
+   */
+  retry?: number
 }
 
 const PROXY_PREFIX = "/api/proxy"
@@ -95,47 +105,73 @@ async function triggerSignIn(): Promise<void> {
   }
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
 export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<T> {
-  const { tenantId, silent, headers, idempotencyKey, ...rest } = opts
+  const { tenantId, silent, headers, idempotencyKey, retry, ...rest } = opts
   const finalHeaders = mergeHeaders(headers, tenantId)
   const method = (rest.method ?? "GET").toUpperCase()
-  if (WRITE_METHODS.has(method) && idempotencyKey !== null && !finalHeaders["Idempotency-Key"]) {
+  const isWrite = WRITE_METHODS.has(method)
+  if (isWrite && idempotencyKey !== null && !finalHeaders["Idempotency-Key"]) {
     finalHeaders["Idempotency-Key"] = idempotencyKey ?? newIdempotencyKey()
+  }
+  // Offline preflight — don't fire writes into the void. Reads are still
+  // attempted (the browser may have stale `onLine === false` while a cached
+  // SW or VPN brings the link back).
+  if (isWrite && typeof navigator !== "undefined" && navigator.onLine === false) {
+    if (!silent) await safeToast("error", "网络已断开，请检查后重试")
+    throw new NetworkError("offline", "offline")
   }
   const url = buildUrl(path)
 
-  let res: Response
-  try {
-    res = await fetch(url, { ...rest, headers: finalHeaders })
-  } catch (err) {
-    const offline = typeof navigator !== "undefined" && navigator.onLine === false
-    if (offline) {
-      throw new NetworkError("offline", "offline")
+  const maxRetries = method === "GET" && typeof retry === "number" && retry > 0 ? retry : 0
+  let attempt = 0
+  while (true) {
+    let res: Response
+    try {
+      res = await fetch(url, { ...rest, headers: finalHeaders })
+    } catch (err) {
+      const offline = typeof navigator !== "undefined" && navigator.onLine === false
+      if (offline) {
+        throw new NetworkError("offline", "offline")
+      }
+      if (attempt < maxRetries && (rest.signal == null || !rest.signal.aborted)) {
+        await sleep(200 * 2 ** attempt)
+        attempt++
+        continue
+      }
+      if (!silent) await safeToast("error", "网络异常，请稍后重试")
+      throw new NetworkError("network", (err as Error)?.message ?? "network")
     }
-    if (!silent) await safeToast("error", "网络异常，请稍后重试")
-    throw new NetworkError("network", (err as Error)?.message ?? "network")
-  }
 
-  if (res.ok) {
-    if (res.status === 204) return undefined as unknown as T
-    return (await res.json()) as T
-  }
+    if (res.ok) {
+      if (res.status === 204) return undefined as unknown as T
+      return (await res.json()) as T
+    }
 
-  const { body, message, code } = await readBody(res)
+    const { body, message, code } = await readBody(res)
 
-  if (res.status === 401) {
-    if (!silent) await triggerSignIn()
-    throw new UnauthorizedError(message, body)
-  }
-  if (res.status === 403) {
-    if (!silent) await safeToast("error", "权限不足")
-    throw new ApiError(403, code, message, body)
-  }
-  if (res.status >= 500) {
-    if (!silent) await safeToast("error", "服务暂时不可用")
-    if (typeof console !== "undefined") console.error("[apiFetch] 5xx", url, message)
+    if (res.status === 401) {
+      if (!silent) await triggerSignIn()
+      throw new UnauthorizedError(message, body)
+    }
+    if (res.status === 403) {
+      if (!silent) await safeToast("error", "权限不足")
+      throw new ApiError(403, code, message, body)
+    }
+    if (res.status >= 500) {
+      if (attempt < maxRetries) {
+        await sleep(200 * 2 ** attempt)
+        attempt++
+        continue
+      }
+      if (!silent) await safeToast("error", "服务暂时不可用")
+      if (typeof console !== "undefined") console.error("[apiFetch] 5xx", url, message)
+      throw new ApiError(res.status, code, message, body)
+    }
+    // 4xx other than 401/403 — silent at the client layer; callers decide UX.
     throw new ApiError(res.status, code, message, body)
   }
-  // 4xx other than 401/403 — silent at the client layer; callers decide UX.
-  throw new ApiError(res.status, code, message, body)
 }

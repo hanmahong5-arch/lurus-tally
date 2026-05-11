@@ -78,17 +78,19 @@ export interface ListProductsParams {
   enabled?: boolean
   attributes_filter?: Record<string, unknown>
   tenantId?: string
+  signal?: AbortSignal
+  retry?: number
 }
 
 export async function listProducts(
   params: ListProductsParams = {}
 ): Promise<ListProductsResponse> {
-  const { q, limit = 20, offset = 0, enabled, attributes_filter, tenantId } = params
+  const { q, limit = 20, offset = 0, enabled, attributes_filter, tenantId, signal, retry } = params
   const usp = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (q) usp.set("q", q)
   if (enabled !== undefined) usp.set("enabled", String(enabled))
   if (attributes_filter) usp.set("attributes_filter", JSON.stringify(attributes_filter))
-  return apiFetch<ListProductsResponse>(`/products?${usp.toString()}`, { tenantId })
+  return apiFetch<ListProductsResponse>(`/products?${usp.toString()}`, { tenantId, signal, retry })
 }
 
 export async function getProduct(id: string, tenantId?: string): Promise<Product> {

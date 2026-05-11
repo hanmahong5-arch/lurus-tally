@@ -30,9 +30,12 @@ export const ProductSearch = React.forwardRef<HTMLInputElement, ProductSearchPro
     // Merge the forwarded ref with the internal ref so we can use both
     const inputRef = (ref as React.RefObject<HTMLInputElement>) ?? internalRef
     const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+    // Tracks the in-flight search so a quickly-typed query can abort the prior
+    // request before its response races back and clobbers the newer state.
+    const abortRef = useRef<AbortController | null>(null)
 
     const runSearch = useCallback(
-      async (q: string) => {
+      async (q: string, signal: AbortSignal) => {
         if (!q.trim()) {
           setResults([])
           setNotFound(false)
@@ -48,9 +51,11 @@ export const ProductSearch = React.forwardRef<HTMLInputElement, ProductSearchPro
                 attributes_filter: { barcode: q.trim() },
                 limit: 1,
                 tenantId,
+                signal,
               })
-            : await listProducts({ q: q.trim(), limit: 20, tenantId })
+            : await listProducts({ q: q.trim(), limit: 20, tenantId, signal })
 
+          if (signal.aborted) return
           const items = res.items ?? []
 
           if (isBarcode && items.length === 1) {
@@ -67,9 +72,9 @@ export const ProductSearch = React.forwardRef<HTMLInputElement, ProductSearchPro
             setNotFound(false)
           }
         } catch {
-          setResults([])
+          if (!signal.aborted) setResults([])
         } finally {
-          setLoading(false)
+          if (!signal.aborted) setLoading(false)
         }
       },
       [onSelect, tenantId]
@@ -81,16 +86,22 @@ export const ProductSearch = React.forwardRef<HTMLInputElement, ProductSearchPro
         setNotFound(false)
         setLoading(false)
         if (debounceRef.current) clearTimeout(debounceRef.current)
+        abortRef.current?.abort()
+        abortRef.current = null
         return
       }
 
       if (debounceRef.current) clearTimeout(debounceRef.current)
       debounceRef.current = setTimeout(() => {
-        runSearch(query)
+        abortRef.current?.abort()
+        const ctrl = new AbortController()
+        abortRef.current = ctrl
+        runSearch(query, ctrl.signal)
       }, 200)
 
       return () => {
         if (debounceRef.current) clearTimeout(debounceRef.current)
+        abortRef.current?.abort()
       }
     }, [query, runSearch])
 
@@ -113,7 +124,10 @@ export const ProductSearch = React.forwardRef<HTMLInputElement, ProductSearchPro
         } else if (query.trim()) {
           // Immediate barcode lookup on Enter without waiting for debounce
           if (debounceRef.current) clearTimeout(debounceRef.current)
-          runSearch(query)
+          abortRef.current?.abort()
+          const ctrl = new AbortController()
+          abortRef.current = ctrl
+          runSearch(query, ctrl.signal)
         }
       } else if (e.key === "ArrowDown") {
         e.preventDefault()

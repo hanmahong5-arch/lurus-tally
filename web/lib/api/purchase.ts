@@ -84,6 +84,8 @@ export interface ListPurchaseBillsParams {
   status?: BillStatus
   partner_id?: string
   tenantId?: string
+  signal?: AbortSignal
+  retry?: number
 }
 
 export async function createPurchaseBill(
@@ -112,11 +114,11 @@ export async function cancelPurchaseBill(id: string, tenantId?: string): Promise
 export async function listPurchaseBills(
   params: ListPurchaseBillsParams = {}
 ): Promise<{ items: BillHead[]; total: number }> {
-  const { page = 1, size = 20, status, partner_id, tenantId } = params
+  const { page = 1, size = 20, status, partner_id, tenantId, signal, retry } = params
   const usp = new URLSearchParams({ page: String(page), size: String(size) })
   if (status !== undefined) usp.set("status", String(status))
   if (partner_id) usp.set("partner_id", partner_id)
-  return apiFetch(`/purchase-bills?${usp.toString()}`, { tenantId })
+  return apiFetch(`/purchase-bills?${usp.toString()}`, { tenantId, signal, retry })
 }
 
 export async function getPurchaseBill(id: string, tenantId?: string): Promise<BillDetail> {

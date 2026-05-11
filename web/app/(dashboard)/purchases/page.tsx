@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useState } from "react"
 import Link from "next/link"
 import {
   listPurchaseBills,
@@ -8,6 +8,9 @@ import {
   type BillStatus,
   BILL_STATUS_LABEL,
 } from "@/lib/api/purchase"
+import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { ErrorBanner } from "@/components/ui/error-banner"
+import { formatCNY } from "@/lib/format"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
@@ -32,22 +35,36 @@ export default function PurchasesPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  function load(p: number = page, s: BillStatus | undefined = status) {
-    setLoading(true)
-    setError(null)
-    listPurchaseBills({ page: p, size: 20, status: s, tenantId: devTenantId })
-      .then((res) => {
-        setBills(res.items ?? [])
-        setTotal(res.total)
-      })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false))
-  }
+  const load = useCallback(
+    (
+      p: number,
+      s: BillStatus | undefined,
+      signal?: AbortSignal,
+      isCancelled?: () => boolean,
+    ) => {
+      setLoading(true)
+      setError(null)
+      listPurchaseBills({ page: p, size: 20, status: s, tenantId: devTenantId, signal, retry: 2 })
+        .then((res) => {
+          if (isCancelled?.()) return
+          setBills(res.items ?? [])
+          setTotal(res.total)
+        })
+        .catch((e) => {
+          if (isCancelled?.() || signal?.aborted) return
+          setError(String(e))
+        })
+        .finally(() => {
+          if (isCancelled?.()) return
+          setLoading(false)
+        })
+    },
+    [],
+  )
 
-  useEffect(() => {
-    load(1, undefined)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  useAbortableEffect((signal, isCancelled) => {
+    load(1, undefined, signal, isCancelled)
+  }, [load])
 
   function handleTabChange(s: BillStatus | undefined) {
     setStatus(s)
@@ -92,11 +109,7 @@ export default function PurchasesPage() {
       {loading && (
         <div className="py-12 text-center text-muted-foreground">加载中...</div>
       )}
-      {error && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && bills.length === 0 && (
         <div className="py-12 text-center text-muted-foreground">
           暂无采购单，
@@ -130,7 +143,7 @@ export default function PurchasesPage() {
                         {BILL_STATUS_LABEL[b.status]}
                       </span>
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono">{b.total_amount}</td>
+                    <td className="px-4 py-2.5 text-right font-mono">{formatCNY(b.total_amount)}</td>
                     <td className="px-4 py-2.5 text-muted-foreground">
                       {new Date(b.bill_date).toLocaleDateString("zh-CN")}
                     </td>
@@ -154,7 +167,7 @@ export default function PurchasesPage() {
               <button
                 disabled={page <= 1}
                 onClick={() => { setPage(page - 1); load(page - 1, status) }}
-                className="text-sm px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-40"
+                className="text-sm px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-50"
               >
                 上一页
               </button>
@@ -164,7 +177,7 @@ export default function PurchasesPage() {
               <button
                 disabled={page >= totalPages}
                 onClick={() => { setPage(page + 1); load(page + 1, status) }}
-                className="text-sm px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-40"
+                className="text-sm px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-50"
               >
                 下一页
               </button>

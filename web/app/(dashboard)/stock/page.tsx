@@ -1,12 +1,15 @@
 "use client"
 
-import { useEffect, useMemo, useState } from "react"
+import { useCallback, useMemo, useState } from "react"
 import Link from "next/link"
 import {
   listStockSnapshots,
   type StockSnapshot,
 } from "@/lib/api/stock"
 import { listProducts, type Product } from "@/lib/api/products"
+import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { formatCNY } from "@/lib/format"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 /**
  * Stock list page — GET /api/v1/stock/snapshots.
@@ -22,10 +25,6 @@ function formatDecimal(raw: string | undefined, fractionDigits = 3): string {
   return n.toFixed(fractionDigits)
 }
 
-function formatMoney(raw: string | undefined): string {
-  return formatDecimal(raw, 2)
-}
-
 function shortId(id: string | undefined): string {
   if (!id) return "—"
   return id.slice(0, 8)
@@ -39,26 +38,33 @@ export default function StockPage() {
   const [warehouseFilter, setWarehouseFilter] = useState<string>("")
   const [q, setQ] = useState("")
 
-  function load() {
+  const load = useCallback((signal?: AbortSignal, isCancelled?: () => boolean) => {
     setLoading(true)
     setError(null)
     Promise.all([
-      listStockSnapshots({ tenantId: devTenantId, limit: 200 }),
-      listProducts({ tenantId: devTenantId, limit: 200 }),
+      listStockSnapshots({ tenantId: devTenantId, limit: 200, signal, retry: 2 }),
+      listProducts({ tenantId: devTenantId, limit: 200, signal, retry: 2 }),
     ])
       .then(([snaps, prodResp]) => {
+        if (isCancelled?.()) return
         setSnapshots(snaps)
         const map = new Map<string, Product>()
         for (const p of prodResp.items ?? []) map.set(p.id, p)
         setProducts(map)
       })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(() => {
-    load()
+      .catch((e) => {
+        if (isCancelled?.() || signal?.aborted) return
+        setError(String(e))
+      })
+      .finally(() => {
+        if (isCancelled?.()) return
+        setLoading(false)
+      })
   }, [])
+
+  useAbortableEffect((signal, isCancelled) => {
+    load(signal, isCancelled)
+  }, [load])
 
   // Derive the list of distinct warehouse IDs from the snapshot data so the
   // warehouse filter dropdown only offers values actually present.
@@ -89,7 +95,7 @@ export default function StockPage() {
           </p>
         </div>
         <button
-          onClick={load}
+          onClick={() => load()}
           className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
         >
           刷新
@@ -121,11 +127,7 @@ export default function StockPage() {
       {loading && (
         <div className="py-12 text-center text-muted-foreground">加载中...</div>
       )}
-      {error && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && snapshots.length === 0 && (
         <div className="py-12 text-center text-muted-foreground">
           暂无库存记录。完成一笔采购入库后这里会出现快照。
@@ -188,7 +190,7 @@ export default function StockPage() {
                       {formatDecimal(s.available_qty)}
                     </td>
                     <td className="px-4 py-2.5 text-right font-mono">
-                      {formatMoney(s.unit_cost)}
+                      {formatCNY(s.unit_cost)}
                     </td>
                     <td className="px-4 py-2.5 text-muted-foreground">
                       {s.updated_at ? new Date(s.updated_at).toLocaleString("zh-CN") : "—"}

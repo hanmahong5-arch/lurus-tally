@@ -40,6 +40,8 @@ export interface NurseryDictListParams {
   limit?: number
   offset?: number
   tenantId?: string
+  signal?: AbortSignal
+  retry?: number
 }
 
 export interface NurseryDictListResult {
@@ -55,12 +57,12 @@ export type NurseryDictCreateInput = Omit<
 export async function listNurseryDict(
   params: NurseryDictListParams = {}
 ): Promise<NurseryDictListResult> {
-  const { q, type, isEvergreen, limit = 20, offset = 0, tenantId } = params
+  const { q, type, isEvergreen, limit = 20, offset = 0, tenantId, signal, retry } = params
   const usp = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (q) usp.set("q", q)
   if (type) usp.set("type", type)
   if (isEvergreen !== undefined) usp.set("is_evergreen", String(isEvergreen))
-  return apiFetch<NurseryDictListResult>(`/nursery-dict?${usp.toString()}`, { tenantId })
+  return apiFetch<NurseryDictListResult>(`/nursery-dict?${usp.toString()}`, { tenantId, signal, retry })
 }
 
 export async function getNurseryDict(id: string, tenantId?: string): Promise<NurseryDictItem> {

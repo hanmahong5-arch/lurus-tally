@@ -1,9 +1,11 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useState } from "react"
 import Link from "next/link"
 import { listProducts, deleteProduct, restoreProduct, type Product } from "@/lib/api/products"
 import { globalUndoStack } from "@/lib/undo/undo-stack"
+import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 /**
  * Products list page — GET /api/v1/products
@@ -20,21 +22,28 @@ export default function ProductsPage() {
   const [error, setError] = useState<string | null>(null)
   const [q, setQ] = useState("")
 
-  function load(query?: string) {
+  const load = useCallback((query?: string, signal?: AbortSignal, isCancelled?: () => boolean) => {
     setLoading(true)
     setError(null)
-    listProducts({ q: query, tenantId: devTenantId })
+    listProducts({ q: query, tenantId: devTenantId, signal, retry: 2 })
       .then((res) => {
+        if (isCancelled?.()) return
         setProducts(res.items ?? [])
         setTotal(res.total)
       })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(() => {
-    load()
+      .catch((e) => {
+        if (isCancelled?.() || signal?.aborted) return
+        setError(String(e))
+      })
+      .finally(() => {
+        if (isCancelled?.()) return
+        setLoading(false)
+      })
   }, [])
+
+  useAbortableEffect((signal, isCancelled) => {
+    load(undefined, signal, isCancelled)
+  }, [load])
 
   async function handleDelete(p: Product) {
     // Push undo entry BEFORE the delete call so the entry is never lost if delete fails.
@@ -105,11 +114,7 @@ export default function ProductsPage() {
       {loading && (
         <div className="py-12 text-center text-muted-foreground">加载中...</div>
       )}
-      {error && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && products.length === 0 && (
         <div className="py-12 text-center text-muted-foreground">
           暂无商品，

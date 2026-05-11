@@ -51,6 +51,8 @@ export interface ListSnapshotsParams {
   limit?: number
   offset?: number
   tenantId?: string
+  signal?: AbortSignal
+  retry?: number
 }
 
 export interface ListMovementsParams {
@@ -59,6 +61,8 @@ export interface ListMovementsParams {
   limit?: number
   offset?: number
   tenantId?: string
+  signal?: AbortSignal
+  retry?: number
 }
 
 interface ItemsEnvelope<T> {
@@ -80,9 +84,9 @@ function buildQuery(params: Record<string, string | number | undefined>): string
 export async function listStockSnapshots(
   params: ListSnapshotsParams = {}
 ): Promise<StockSnapshot[]> {
-  const { product_id, warehouse_id, limit, offset, tenantId } = params
+  const { product_id, warehouse_id, limit, offset, tenantId, signal, retry } = params
   const qs = buildQuery({ product_id, warehouse_id, limit, offset })
-  const body = await apiFetch<ItemsEnvelope<StockSnapshot>>("/stock/snapshots" + qs, { tenantId })
+  const body = await apiFetch<ItemsEnvelope<StockSnapshot>>("/stock/snapshots" + qs, { tenantId, signal, retry })
   return body.items ?? []
 }
 
@@ -92,9 +96,9 @@ export async function listStockSnapshots(
 export async function listStockMovements(
   params: ListMovementsParams = {}
 ): Promise<StockMovement[]> {
-  const { product_id, warehouse_id, limit, offset, tenantId } = params
+  const { product_id, warehouse_id, limit, offset, tenantId, signal, retry } = params
   const qs = buildQuery({ product_id, warehouse_id, limit, offset })
-  const body = await apiFetch<ItemsEnvelope<StockMovement>>("/stock/movements" + qs, { tenantId })
+  const body = await apiFetch<ItemsEnvelope<StockMovement>>("/stock/movements" + qs, { tenantId, signal, retry })
   return body.items ?? []
 }
 

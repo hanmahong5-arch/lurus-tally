@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useRef, useState } from "react"
 import {
   listNurseryDict,
   deleteNurseryDict,
@@ -9,6 +9,9 @@ import {
   type NurseryType,
 } from "@/lib/api/nursery-dict"
 import NurseryDictForm from "@/components/horticulture/NurseryDictForm"
+import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useConfirm } from "@/hooks/useConfirm"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 const TYPE_LABELS: Record<NurseryType, string> = {
   tree: "乔木",
@@ -53,9 +56,16 @@ export default function DictionaryPage() {
   const [showDrawer, setShowDrawer] = useState(false)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const confirm = useConfirm()
 
   const load = useCallback(
-    (query: string, type: NurseryType | "", off: number) => {
+    (
+      query: string,
+      type: NurseryType | "",
+      off: number,
+      signal?: AbortSignal,
+      isCancelled?: () => boolean,
+    ) => {
       setLoading(true)
       setError(null)
       listNurseryDict({
@@ -63,21 +73,33 @@ export default function DictionaryPage() {
         type: type || undefined,
         limit: PAGE_SIZE,
         offset: off,
+        signal,
+        retry: 2,
       })
         .then((res) => {
+          if (isCancelled?.()) return
           setItems(res.items ?? [])
           setTotal(res.total)
         })
-        .catch((e) => setError(String(e)))
-        .finally(() => setLoading(false))
+        .catch((e) => {
+          if (isCancelled?.() || signal?.aborted) return
+          setError(String(e))
+        })
+        .finally(() => {
+          if (isCancelled?.()) return
+          setLoading(false)
+        })
     },
     []
   )
 
-  useEffect(() => {
-    load(q, typeFilter, offset)
+  useAbortableEffect(
+    (signal, isCancelled) => {
+      load(q, typeFilter, offset, signal, isCancelled)
+    },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [offset])
+    [offset],
+  )
 
   function handleSearchChange(value: string) {
     setQ(value)
@@ -117,7 +139,13 @@ export default function DictionaryPage() {
   }
 
   async function handleDelete(item: NurseryDictItem) {
-    if (!window.confirm(`确认软删除「${item.name}」?`)) return
+    const ok = await confirm({
+      title: "软删除苗木",
+      body: `确认软删除「${item.name}」？删除后可在筛选中恢复。`,
+      confirmText: "删除",
+      danger: true,
+    })
+    if (!ok) return
     try {
       await deleteNurseryDict(item.id)
       load(q, typeFilter, offset)
@@ -182,11 +210,7 @@ export default function DictionaryPage() {
       {loading && (
         <div className="py-12 text-center text-muted-foreground">加载中...</div>
       )}
-      {error && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && items.length === 0 && (
         <div className="py-12 text-center text-muted-foreground">
           暂无苗木，点击&quot;新增苗木&quot;添加第一个品种
@@ -281,14 +305,14 @@ export default function DictionaryPage() {
             <button
               disabled={offset === 0}
               onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-40"
+              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
             >
               上一页
             </button>
             <button
               disabled={offset + PAGE_SIZE >= total}
               onClick={() => setOffset(offset + PAGE_SIZE)}
-              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-40"
+              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
             >
               下一页
             </button>
