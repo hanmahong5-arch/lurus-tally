@@ -1,7 +1,8 @@
 "use client"
 
-import { useState } from "react"
+import { useRef, useState } from "react"
 import { type AIPlan, confirmPlan, cancelPlan } from "@/lib/api/ai"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 interface PlanCardProps {
   plan: AIPlan
@@ -19,6 +20,9 @@ interface PlanCardProps {
 export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
   const [status, setStatus] = useState<"idle" | "confirming" | "cancelling" | "done">("idle")
   const [error, setError] = useState<string | null>(null)
+  // Synchronous in-flight latch — prevents the extra-fast double click that fires
+  // before React commits the "confirming" state and toggles the disabled prop.
+  const inFlightRef = useRef(false)
 
   if (plan.status !== "pending" || status === "done") {
     return (
@@ -31,6 +35,8 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
   }
 
   const handleConfirm = async () => {
+    if (inFlightRef.current) return
+    inFlightRef.current = true
     setStatus("confirming")
     setError(null)
     try {
@@ -38,12 +44,16 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
       setStatus("done")
       onConfirmed?.()
     } catch (err: unknown) {
-      setError(String(err))
+      setError(err instanceof Error ? err.message : String(err))
       setStatus("idle")
+    } finally {
+      inFlightRef.current = false
     }
   }
 
   const handleCancel = async () => {
+    if (inFlightRef.current) return
+    inFlightRef.current = true
     setStatus("cancelling")
     setError(null)
     try {
@@ -51,8 +61,10 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
       setStatus("done")
       onCancelled?.()
     } catch (err: unknown) {
-      setError(String(err))
+      setError(err instanceof Error ? err.message : String(err))
       setStatus("idle")
+    } finally {
+      inFlightRef.current = false
     }
   }
 
@@ -94,7 +106,7 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
               {plan.preview.sample_rows.length > 5 && (
                 <tr className="border-t border-border">
                   <td colSpan={3} className="px-2 py-1 text-center text-muted-foreground">
-                    …还有 {plan.preview.sample_rows.length - 5} 条
+                    ...还有 {plan.preview.sample_rows.length - 5} 条
                   </td>
                 </tr>
               )}
@@ -105,7 +117,9 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
 
       {/* Error */}
       {error && (
-        <p className="mb-2 text-xs text-destructive">{error}</p>
+        <div className="mb-2">
+          <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>
+        </div>
       )}
 
       {/* Actions */}
@@ -116,7 +130,7 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
           data-testid="plan-confirm-btn"
           className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
         >
-          {status === "confirming" ? "执行中…" : "确认执行"}
+          {status === "confirming" ? "执行中..." : "确认执行"}
         </button>
         <button
           onClick={handleCancel}
@@ -124,7 +138,7 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
           data-testid="plan-cancel-btn"
           className="rounded border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted disabled:opacity-50"
         >
-          {status === "cancelling" ? "取消中…" : "取消"}
+          {status === "cancelling" ? "取消中..." : "取消"}
         </button>
       </div>
     </div>

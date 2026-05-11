@@ -1,14 +1,18 @@
 /**
  * AI assistant API client for Tally.
  *
- * POST /api/proxy/ai/chat     — SSE streaming endpoint
- * POST /api/proxy/ai/plans/:id/confirm
- * POST /api/proxy/ai/plans/:id/cancel
+ * POST /api/proxy/ai/chat     — SSE streaming endpoint (raw fetch + ReadableStream)
+ * POST /api/proxy/ai/plans/:id/confirm — apiFetch (auto Idempotency-Key)
+ * POST /api/proxy/ai/plans/:id/cancel  — apiFetch (auto Idempotency-Key)
  *
- * Intentionally does NOT use the shared apiFetch — SSE needs raw stream access,
- * a long-lived AbortController, and per-event error semantics that the JSON
- * fast path cannot model.
+ * SSE intentionally bypasses apiFetch: it needs raw stream access, a long-lived
+ * AbortController, and per-event error semantics that the JSON fast path cannot
+ * model. The plan confirm/cancel writes go through apiFetch so they pick up the
+ * shared idempotency / retry / offline / toast layer.
  */
+
+import { apiFetch } from "./client"
+import { ApiError, NetworkError } from "./errors"
 
 const BASE = "/api/proxy"
 
@@ -186,28 +190,33 @@ export function streamChat(
 
 /**
  * confirmPlan sends a confirm request for a pending plan.
+ *
+ * Goes through apiFetch so the Idempotency-Key middleware on the backend can
+ * dedupe accidental double submits (rapid double-click, network retry, etc).
+ * `silent: true` keeps the toast UX in the caller's hands — PlanCard renders
+ * its own inline error.
  */
 export async function confirmPlan(planId: string): Promise<void> {
-  const resp = await fetch(`${BASE}/ai/plans/${planId}/confirm`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  })
-  if (!resp.ok) {
-    const body = await resp.json().catch(() => ({})) as { error?: string; detail?: string }
-    throw new Error(body.detail ?? body.error ?? `HTTP ${resp.status}`)
-  }
+  await callPlanAction(planId, "confirm")
 }
 
 /**
  * cancelPlan sends a cancel request for a pending plan.
  */
 export async function cancelPlan(planId: string): Promise<void> {
-  const resp = await fetch(`${BASE}/ai/plans/${planId}/cancel`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-  })
-  if (!resp.ok) {
-    const body = await resp.json().catch(() => ({})) as { error?: string; detail?: string }
-    throw new Error(body.detail ?? body.error ?? `HTTP ${resp.status}`)
+  await callPlanAction(planId, "cancel")
+}
+
+async function callPlanAction(planId: string, action: "confirm" | "cancel"): Promise<void> {
+  try {
+    await apiFetch<unknown>(`${BASE}/ai/plans/${planId}/${action}`, {
+      method: "POST",
+      silent: true,
+    })
+  } catch (err: unknown) {
+    if (err instanceof ApiError || err instanceof NetworkError) {
+      throw new Error(err.message)
+    }
+    throw err
   }
 }
