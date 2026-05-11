@@ -180,7 +180,7 @@ export default function SalesPage() {
               <button
                 disabled={page <= 1}
                 onClick={() => { setPage(page - 1); load(page - 1, status) }}
-                className="text-sm px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-40"
+                className="text-sm px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-50"
               >
                 上一页
               </button>
@@ -190,7 +190,7 @@ export default function SalesPage() {
               <button
                 disabled={page >= totalPages}
                 onClick={() => { setPage(page + 1); load(page + 1, status) }}
-                className="text-sm px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-40"
+                className="text-sm px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-50"
               >
                 下一页
               </button>

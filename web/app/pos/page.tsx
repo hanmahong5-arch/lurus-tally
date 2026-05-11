@@ -15,6 +15,7 @@ import { ProductSearch } from "@/components/pos/product-search"
 import { Cart } from "@/components/pos/cart"
 import { PaymentModal, type PaymentMode } from "@/components/pos/payment-modal"
 import { CheckoutSuccess } from "@/components/pos/checkout-success"
+import { useConfirm } from "@/hooks/useConfirm"
 
 const ProductGrid = lazy(() =>
   import("@/components/pos/product-grid").then((m) => ({ default: m.ProductGrid }))
@@ -66,11 +67,17 @@ export default function PosPage() {
     setCheckoutError(null)
   }, [cartState.items.length])
 
-  const handleCancelRequested = useCallback(() => {
-    if (window.confirm("确认清空购物车？")) {
-      dispatch({ type: "CLEAR_CART" })
-    }
-  }, [])
+  const confirm = useConfirm()
+  const handleCancelRequested = useCallback(async () => {
+    const ok = await confirm({
+      title: "清空购物车",
+      body: "当前购物车中的商品将全部移除，操作不可撤销。",
+      confirmText: "清空",
+      cancelText: "保留",
+      danger: true,
+    })
+    if (ok) dispatch({ type: "CLEAR_CART" })
+  }, [confirm])
 
   usePosHotkeys({
     searchRef: searchRef as React.RefObject<HTMLInputElement | null>,

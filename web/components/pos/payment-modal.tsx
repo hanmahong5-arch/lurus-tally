@@ -17,7 +17,7 @@ interface PaymentModalProps {
   mode: PaymentMode
   totalAmount: Decimal
   /**
-   * When true the confirm button is disabled and shows "处理中…", and ESC /
+   * When true the confirm button is disabled and shows "处理中...", and ESC /
    * backdrop-click are ignored. Prevents double-submit while quickCheckout is
    * in flight, complementing the server-side Idempotency-Key dedup.
    */
@@ -116,7 +116,7 @@ export function PaymentModal({
           <button
             onClick={onClose}
             disabled={loading}
-            className="text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed"
+            className="text-muted-foreground hover:text-foreground disabled:opacity-50 disabled:cursor-not-allowed"
             aria-label="关闭"
           >
             ×
@@ -176,7 +176,7 @@ export function PaymentModal({
               disabled={!paidAmountStr || isNegativeChange || loading}
               className="h-12 w-full rounded-lg bg-emerald-500 text-base font-semibold text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "处理中…" : "确认收款"}
+              {loading ? "处理中..." : "确认收款"}
             </button>
           </div>
         )}
@@ -197,7 +197,7 @@ export function PaymentModal({
               disabled={loading}
               className="h-12 w-full rounded-lg bg-primary text-base font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "处理中…" : "已收款"}
+              {loading ? "处理中..." : "已收款"}
             </button>
           </div>
         )}
@@ -224,7 +224,7 @@ export function PaymentModal({
               disabled={loading}
               className="h-12 w-full rounded-lg bg-orange-500 text-base font-semibold text-white hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "处理中…" : "确认赊账"}
+              {loading ? "处理中..." : "确认赊账"}
             </button>
           </div>
         )}

@@ -326,7 +326,7 @@ export default function ExchangeRatesPage() {
                 <button
                   type="submit"
                   disabled={modalSaving}
-                  className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+                  className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
                 >
                   {modalSaving ? "保存中..." : "保存"}
                 </button>

@@ -9,6 +9,7 @@ import {
   type ProjectStatus,
 } from "@/lib/api/projects"
 import ProjectForm from "@/components/project/ProjectForm"
+import { useConfirm } from "@/hooks/useConfirm"
 
 const STATUS_OPTIONS: { value: ProjectStatus | ""; label: string }[] = [
   { value: "", label: "全部" },
@@ -71,6 +72,7 @@ export default function ProjectsPage() {
   const [showDrawer, setShowDrawer] = useState(false)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const confirm = useConfirm()
 
   const load = useCallback(
     (query: string, status: ProjectStatus | "", off: number) => {
@@ -135,7 +137,13 @@ export default function ProjectsPage() {
   }
 
   async function handleDelete(item: ProjectItem) {
-    if (!window.confirm(`确认软删除「${item.name}」?`)) return
+    const ok = await confirm({
+      title: "软删除项目",
+      body: `确认软删除「${item.name}」？删除后可在筛选中恢复。`,
+      confirmText: "删除",
+      danger: true,
+    })
+    if (!ok) return
     try {
       await deleteProject(item.id)
       load(q, statusFilter, offset)
@@ -271,14 +279,14 @@ export default function ProjectsPage() {
             <button
               disabled={offset === 0}
               onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-40"
+              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
             >
               上一页
             </button>
             <button
               disabled={offset + PAGE_SIZE >= total}
               onClick={() => setOffset(offset + PAGE_SIZE)}
-              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-40"
+              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
             >
               下一页
             </button>

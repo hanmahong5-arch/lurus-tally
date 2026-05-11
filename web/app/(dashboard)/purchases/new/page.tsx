@@ -233,14 +233,14 @@ export default function NewPurchasePage() {
             type="button"
             onClick={() => router.back()}
             disabled={saving}
-            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             取消
           </button>
           <button
             type="submit"
             disabled={saving}
-            className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+            className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             {saving ? "保存中..." : "保存草稿"}
           </button>

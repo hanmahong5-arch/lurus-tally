@@ -14,6 +14,8 @@ import { RateInput } from "@/components/cross-border/rate-input"
 import { useDraft } from "@/hooks/useDraft"
 import { DraftBadge } from "@/components/draft/DraftBadge"
 import { DraftRestoreToast } from "@/components/draft/DraftRestoreToast"
+import { ErrorBanner } from "@/components/ui/error-banner"
+import { formatCNY } from "@/lib/format"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
@@ -329,7 +331,7 @@ function NewSaleInner() {
                   实收金额
                   {totalAmount > 0 && (
                     <span className="ml-2 text-xs text-muted-foreground font-normal">
-                      （应收 ¥ {totalAmount.toFixed(2)}）
+                      （应收 {formatCNY(totalAmount)}）
                     </span>
                   )}
                 </label>
@@ -348,31 +350,27 @@ function NewSaleInner() {
             {/* Change due */}
             {parseFloat(paidAmount) > 0 && parseFloat(paidAmount) > totalAmount && (
               <div className="rounded-md bg-green-500/10 border border-green-500/30 px-4 py-2 text-sm text-green-700">
-                找零：¥ {(parseFloat(paidAmount) - totalAmount).toFixed(2)}
+                找零：{formatCNY(parseFloat(paidAmount) - totalAmount)}
               </div>
             )}
           </div>
         )}
 
-        {error && (
-          <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner>{error}</ErrorBanner>}
 
         <div className="flex justify-end gap-3">
           <button
             type="button"
             onClick={() => router.back()}
             disabled={saving}
-            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-60 disabled:cursor-not-allowed"
+            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
           >
             取消
           </button>
           <button
             type="submit"
             disabled={saving}
-            className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+            className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
           >
             {saving
               ? "处理中..."

@@ -1,6 +1,7 @@
 import Link from "next/link"
 import { auth } from "@/auth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 export default async function DashboardPage({
   searchParams,
@@ -37,9 +38,7 @@ export default async function DashboardPage({
         </header>
 
         {error === "pos-retail-only" ? (
-          <div className="rounded-md bg-destructive/10 p-3 text-sm text-destructive">
-            POS 收银仅对零售模式开放。
-          </div>
+          <ErrorBanner>POS 收银仅对零售模式开放。</ErrorBanner>
         ) : null}
 
         <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">

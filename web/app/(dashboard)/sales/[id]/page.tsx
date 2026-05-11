@@ -171,14 +171,14 @@ export default function SaleDetailPage() {
               <button
                 disabled={acting}
                 onClick={handleCancel}
-                className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-60"
+                className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50"
               >
                 取消单据
               </button>
               <button
                 disabled={acting}
                 onClick={() => setShowApproveForm(!showApproveForm)}
-                className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+                className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
               >
                 审核出库
               </button>
@@ -239,7 +239,7 @@ export default function SaleDetailPage() {
               type="button"
               disabled={acting}
               onClick={handleApprove}
-              className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+              className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
               {acting ? "处理中..." : "确认审核"}
             </button>

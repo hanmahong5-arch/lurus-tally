@@ -146,14 +146,14 @@ export default function PurchaseDetailPage() {
             <button
               disabled={acting}
               onClick={handleCancel}
-              className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-60"
+              className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50"
             >
               取消单据
             </button>
             <button
               disabled={acting}
               onClick={handleApprove}
-              className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+              className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
               审核通过
             </button>

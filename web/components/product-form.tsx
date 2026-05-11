@@ -9,6 +9,7 @@ import type {
   MeasurementStrategy,
   Product,
 } from "@/lib/api/products"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 type ProfileType = "cross_border" | "retail" | "hybrid" | "horticulture" | null
 
@@ -163,11 +164,7 @@ export function ProductForm({
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
-      {error && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-3 py-2 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner>{error}</ErrorBanner>}
 
       <div className="grid grid-cols-2 gap-4">
         <div>

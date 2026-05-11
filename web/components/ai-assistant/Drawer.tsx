@@ -341,7 +341,7 @@ export function AIDrawer() {
         {/* Input */}
         <div className="border-t border-border p-3">
           {isLoading && (
-            <p className="mb-2 text-xs text-muted-foreground animate-pulse">AI 正在思考…</p>
+            <p className="mb-2 text-xs text-muted-foreground animate-pulse">AI 正在思考...</p>
           )}
           <div className="flex gap-2">
             <input
@@ -350,10 +350,10 @@ export function AIDrawer() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
-              placeholder="问我关于库存、销售的问题…"
+              placeholder="问我关于库存、销售的问题..."
               disabled={isLoading}
               data-testid="ai-input"
-              className="flex-1 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm placeholder:text-muted-foreground/60 focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-60"
+              className="flex-1 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm placeholder:text-muted-foreground/60 focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
             />
             <button
               onClick={sendMessage}

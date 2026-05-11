@@ -177,7 +177,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
               if (!e.target.value) setAiMode(false)
             }}
             onKeyDown={handleKeyDown}
-            placeholder={aiMode ? "Ask AI…" : "搜索页面、操作…"}
+            placeholder={aiMode ? "Ask AI..." : "搜索页面、操作..."}
             data-testid="palette-input"
             className="flex-1 bg-transparent py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
             aria-autocomplete="list"

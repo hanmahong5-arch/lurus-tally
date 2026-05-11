@@ -179,7 +179,7 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
               disabled={isEmpty}
               onClick={() => onCheckout(method)}
               data-pos-pay-cash={method === "cash" ? true : undefined}
-              className={`h-16 rounded-lg text-base font-semibold transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${className}`}
+              className={`h-16 rounded-lg text-base font-semibold transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
             >
               {label}
             </button>
@@ -189,14 +189,14 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
           <button
             disabled={isEmpty}
             onClick={() => onCheckout("credit")}
-            className="h-10 rounded-lg border border-orange-400 text-sm font-medium text-orange-600 hover:bg-orange-50 disabled:opacity-40 disabled:cursor-not-allowed"
+            className="h-10 rounded-lg border border-orange-400 text-sm font-medium text-orange-600 hover:bg-orange-50 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             赊账
           </button>
           <button
             disabled={isEmpty}
             onClick={() => dispatch({ type: "CLEAR_CART" })}
-            className="h-10 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:bg-muted disabled:opacity-40 disabled:cursor-not-allowed"
+            className="h-10 rounded-lg border border-border text-sm font-medium text-muted-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
           >
             清空
           </button>

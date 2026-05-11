@@ -7,6 +7,7 @@
 
 import { useState } from "react"
 import { recordPayment, PAY_TYPE_LABEL, type Payment } from "@/lib/api/payment"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 const PAY_METHODS = Object.entries(PAY_TYPE_LABEL).map(([value, label]) => ({
   value,
@@ -162,17 +163,13 @@ export function PaymentForm({
             </div>
           </div>
 
-          {error && (
-            <div className="rounded-md bg-destructive/10 border border-destructive/30 px-3 py-2 text-xs text-destructive">
-              {error}
-            </div>
-          )}
+          {error && <ErrorBanner>{error}</ErrorBanner>}
 
           <div className="flex justify-end">
             <button
               type="submit"
               disabled={saving}
-              className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-60"
+              className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
             >
               {saving ? "处理中..." : "确认收款"}
             </button>
