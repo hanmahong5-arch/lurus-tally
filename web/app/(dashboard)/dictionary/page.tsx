@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useRef, useState } from "react"
+import { toast } from "sonner"
 import {
   listNurseryDict,
   deleteNurseryDict,
@@ -150,7 +151,7 @@ export default function DictionaryPage() {
       await deleteNurseryDict(item.id)
       load(q, typeFilter, offset)
     } catch (e) {
-      alert("删除失败: " + String(e))
+      toast.error("删除失败：" + String(e))
     }
   }
 
@@ -159,7 +160,7 @@ export default function DictionaryPage() {
       await restoreNurseryDict(id)
       load(q, typeFilter, offset)
     } catch (e) {
-      alert("恢复失败: " + String(e))
+      toast.error("恢复失败：" + String(e))
     }
   }
 

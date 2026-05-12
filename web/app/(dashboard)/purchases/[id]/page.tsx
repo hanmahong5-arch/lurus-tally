@@ -14,6 +14,8 @@ import {
 } from "@/lib/api/purchase"
 import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { BillLineEditor, type BillLineItem } from "@/components/bill-line-editor"
+import { useConfirm } from "@/hooks/useConfirm"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
@@ -33,6 +35,8 @@ export default function PurchaseDetailPage() {
   const [actionError, setActionError] = useState<string | null>(null)
   const [acting, setActing] = useState(false)
 
+  const confirm = useConfirm()
+
   const load = useCallback(() => {
     setLoading(true)
     setError(null)
@@ -47,7 +51,8 @@ export default function PurchaseDetailPage() {
   }, [load])
 
   async function handleApprove() {
-    if (!confirm("确认审核通过此采购单？审核后不可取消。")) return
+    const ok = await confirm({ title: "审核通过此采购单", body: "审核后不可取消，将自动更新库存。", confirmText: "确认审核" })
+    if (!ok) return
     setActing(true)
     setActionError(null)
     try {
@@ -98,10 +103,8 @@ export default function PurchaseDetailPage() {
 
   if (error || !detail) {
     return (
-      <div className="p-6">
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive mb-4">
-          {error ?? "采购单不存在"}
-        </div>
+      <div className="p-6 space-y-4">
+        <ErrorBanner hint="请刷新页面重试">{error ?? "采购单不存在"}</ErrorBanner>
         <Link href="/purchases" className="text-sm text-primary hover:underline">
           返回列表
         </Link>
@@ -161,11 +164,7 @@ export default function PurchaseDetailPage() {
         )}
       </div>
 
-      {actionError && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-          {actionError}
-        </div>
-      )}
+      {actionError && <ErrorBanner>{actionError}</ErrorBanner>}
 
       {/* Meta info */}
       <div className="rounded-xl border border-border bg-card p-4 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm">

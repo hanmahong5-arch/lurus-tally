@@ -4,6 +4,8 @@ import { useState, useEffect } from "react"
 import Link from "next/link"
 import Decimal from "decimal.js"
 import { listTodaySaleBills, type SaleBillSummary } from "@/lib/api/pos"
+import { formatCNY } from "@/lib/format"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 // Story 2.1 TODO: replace with session tenantId once auth wired
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
@@ -80,7 +82,7 @@ export default function PosHistoryPage() {
           </div>
           <div className="rounded-xl border border-border bg-background p-4 text-center">
             <div className="text-2xl font-bold tabular-nums text-emerald-600">
-              ¥{totalAmount.toFixed(2)}
+              {formatCNY(totalAmount.toNumber())}
             </div>
             <div className="mt-1 text-xs text-muted-foreground">今日总额</div>
           </div>
@@ -88,7 +90,7 @@ export default function PosHistoryPage() {
             const meta = PAYMENT_METHOD_LABELS[method] ?? { label: method, className: "bg-muted text-muted-foreground" }
             return (
               <div key={method} className="rounded-xl border border-border bg-background p-4 text-center">
-                <div className="text-xl font-bold tabular-nums">¥{amount.toFixed(2)}</div>
+                <div className="text-xl font-bold tabular-nums">{formatCNY(amount.toNumber())}</div>
                 <div className="mt-1">
                   <span className={`rounded-full px-2 py-0.5 text-xs font-medium ${meta.className}`}>
                     {meta.label}
@@ -104,11 +106,7 @@ export default function PosHistoryPage() {
           <div className="py-12 text-center text-sm text-muted-foreground">加载中...</div>
         )}
 
-        {error && (
-          <div className="rounded-lg bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
 
         {!loading && !error && bills.length === 0 && (
           <div className="py-16 text-center text-muted-foreground">今日暂无交易记录</div>
@@ -144,11 +142,11 @@ export default function PosHistoryPage() {
                         {formatTime(bill.created_at)}
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums font-medium">
-                        ¥{bill.total_amount}
+                        {formatCNY(bill.total_amount)}
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums">
                         {receivable.gt(0) ? (
-                          <span className="text-orange-600">¥{receivable.toFixed(2)}</span>
+                          <span className="text-orange-600">{formatCNY(receivable.toNumber())}</span>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}

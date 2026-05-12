@@ -14,6 +14,9 @@ import {
 } from "@/lib/api/sale"
 import { SaleLineEditor, type SaleLineItem } from "@/components/sale-line-editor"
 import { PaymentForm } from "@/components/payment-form"
+import { useConfirm } from "@/hooks/useConfirm"
+import { formatCNY } from "@/lib/format"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
@@ -44,6 +47,8 @@ export default function SaleDetailPage() {
   const [showApproveForm, setShowApproveForm] = useState(false)
   const [paidAmount, setPaidAmount] = useState("")
   const [payMethod, setPayMethod] = useState("cash")
+
+  const confirm = useConfirm()
 
   const load = useCallback(() => {
     setLoading(true)
@@ -80,7 +85,8 @@ export default function SaleDetailPage() {
   }
 
   async function handleCancel() {
-    if (!confirm("确认取消此销售单？")) return
+    const ok = await confirm({ title: "取消此销售单", body: "单据状态将变为已取消，操作不可撤销。", danger: true, confirmText: "确认取消" })
+    if (!ok) return
     setActing(true)
     setActionError(null)
     try {
@@ -120,10 +126,8 @@ export default function SaleDetailPage() {
 
   if (error || !detail) {
     return (
-      <div className="p-6">
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive mb-4">
-          {error ?? "销售单不存在"}
-        </div>
+      <div className="p-6 space-y-4">
+        <ErrorBanner hint="请刷新页面重试">{error ?? "销售单不存在"}</ErrorBanner>
         <Link href="/sales" className="text-sm text-primary hover:underline">
           返回列表
         </Link>
@@ -187,11 +191,7 @@ export default function SaleDetailPage() {
         </div>
       </div>
 
-      {actionError && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-          {actionError}
-        </div>
-      )}
+      {actionError && <ErrorBanner>{actionError}</ErrorBanner>}
 
       {/* Approve form — expanded on click */}
       {isDraft && showApproveForm && (
@@ -214,7 +214,7 @@ export default function SaleDetailPage() {
             </div>
             <div className="space-y-1">
               <label className="text-xs text-muted-foreground">
-                实收金额（应收 ¥{parseFloat(head.total_amount).toFixed(2)}，留空=0）
+                实收金额（应收 {formatCNY(parseFloat(head.total_amount))}，留空=0）
               </label>
               <input
                 type="number"
@@ -255,12 +255,12 @@ export default function SaleDetailPage() {
         </div>
         <div>
           <p className="text-muted-foreground">总金额</p>
-          <p className="font-mono font-medium">¥ {parseFloat(head.total_amount).toFixed(2)}</p>
+          <p className="font-mono font-medium">{formatCNY(parseFloat(head.total_amount))}</p>
         </div>
         <div>
           <p className="text-muted-foreground">已收</p>
           <p className="font-mono font-medium text-green-600">
-            ¥ {parseFloat(head.paid_amount).toFixed(2)}
+            {formatCNY(parseFloat(head.paid_amount))}
           </p>
         </div>
         <div>
@@ -270,7 +270,7 @@ export default function SaleDetailPage() {
               receivable > 0 ? "text-amber-600" : "text-green-600"
             }`}
           >
-            ¥ {receivable.toFixed(2)}
+            {formatCNY(receivable)}
           </p>
         </div>
         {head.remark && (

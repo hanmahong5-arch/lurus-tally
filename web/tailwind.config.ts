@@ -45,6 +45,16 @@ const config: Config = {
         success: "var(--success)",
         warning: "var(--warning)",
         danger: "var(--danger)",
+        // Tally v2.5 brand-spec tokens
+        paper: "var(--paper)",
+        bg: "var(--bg)",
+        ink: "var(--ink)",
+        rule: "var(--rule)",
+        "brand-accent": "var(--brand-accent)",
+        ok: "var(--ok)",
+        warn: "var(--warn)",
+        err: "var(--err)",
+        info: "var(--info)",
       },
       borderRadius: {
         lg: "var(--radius)",
@@ -53,7 +63,10 @@ const config: Config = {
       },
       fontFamily: {
         heading: "var(--font-heading, inherit)",
+        ui: ["Inter Tight", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono", "ui-monospace", "monospace"],
         sans: [
+          "Inter Tight",
           "PingFang SC",
           "HarmonyOS Sans SC",
           "Hiragino Sans GB",

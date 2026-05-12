@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
+import { toast } from "sonner"
 import {
   listProjects,
   deleteProject,
@@ -10,6 +11,7 @@ import {
 } from "@/lib/api/projects"
 import ProjectForm from "@/components/project/ProjectForm"
 import { useConfirm } from "@/hooks/useConfirm"
+import { formatCNY } from "@/lib/format"
 
 const STATUS_OPTIONS: { value: ProjectStatus | ""; label: string }[] = [
   { value: "", label: "全部" },
@@ -148,7 +150,7 @@ export default function ProjectsPage() {
       await deleteProject(item.id)
       load(q, statusFilter, offset)
     } catch (e) {
-      alert("删除失败: " + String(e))
+      toast.error("删除失败：" + String(e))
     }
   }
 
@@ -157,7 +159,7 @@ export default function ProjectsPage() {
       await restoreProject(id)
       load(q, statusFilter, offset)
     } catch (e) {
-      alert("恢复失败: " + String(e))
+      toast.error("恢复失败：" + String(e))
     }
   }
 
@@ -249,7 +251,7 @@ export default function ProjectsPage() {
               {/* Contract amount */}
               {item.contractAmount && (
                 <p className="text-lg font-bold text-foreground mt-1">
-                  ¥{item.contractAmount}
+                  {formatCNY(item.contractAmount)}
                 </p>
               )}
 
@@ -333,7 +335,7 @@ export default function ProjectsPage() {
                 {drawerItem.contractAmount && (
                   <div>
                     <span className="text-muted-foreground">合同金额：</span>
-                    <span>¥{drawerItem.contractAmount}</span>
+                    <span>{formatCNY(drawerItem.contractAmount)}</span>
                   </div>
                 )}
                 {drawerItem.customerId && (

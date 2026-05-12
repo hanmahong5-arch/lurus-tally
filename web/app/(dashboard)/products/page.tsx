@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react"
 import Link from "next/link"
+import { toast } from "sonner"
 import { listProducts, deleteProduct, restoreProduct, type Product } from "@/lib/api/products"
 import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
@@ -63,7 +64,7 @@ export default function ProductsPage() {
     } catch (e) {
       // Delete failed — remove the entry we just pushed so undo doesn't fire.
       globalUndoStack.pop()
-      alert("删除失败: " + String(e))
+      toast.error("删除失败：" + String(e))
     }
   }
 
