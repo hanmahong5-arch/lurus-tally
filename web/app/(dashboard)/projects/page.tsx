@@ -201,12 +201,14 @@ export default function ProjectsPage() {
       {/* Search + filter bar */}
       <div className="mb-4 flex gap-2">
         <input
+          aria-label="搜索项目"
           className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
           placeholder="搜索项目名称或编号..."
           value={q}
           onChange={(e) => handleSearchChange(e.target.value)}
         />
         <select
+          aria-label="按状态筛选"
           className="rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none"
           value={statusFilter}
           onChange={(e) =>

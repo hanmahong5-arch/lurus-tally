@@ -189,12 +189,14 @@ export default function DictionaryPage() {
       {/* Search + filter bar */}
       <div className="mb-4 flex gap-2">
         <input
+          aria-label="搜索苗木"
           className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
           placeholder="搜索苗木名称..."
           value={q}
           onChange={(e) => handleSearchChange(e.target.value)}
         />
         <select
+          aria-label="按类型筛选"
           className="rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none"
           value={typeFilter}
           onChange={(e) => handleTypeChange(e.target.value as NurseryType | "")}
