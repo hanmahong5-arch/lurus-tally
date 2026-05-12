@@ -10,6 +10,7 @@ import { listProducts, type Product } from "@/lib/api/products"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { formatCNY } from "@/lib/format"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { EmptyState } from "@/components/ui/empty-state"
 
 /**
  * Stock list page — GET /api/v1/stock/snapshots.
@@ -105,12 +106,14 @@ export default function StockPage() {
       {/* Toolbar */}
       <div className="mb-4 flex flex-wrap gap-2">
         <input
+          aria-label="搜索库存商品"
           className="flex-1 min-w-[14rem] rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
           placeholder="搜索商品名称、编码、助记码..."
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
         <select
+          aria-label="按仓库筛选"
           value={warehouseFilter}
           onChange={(e) => setWarehouseFilter(e.target.value)}
           className="rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
@@ -129,14 +132,16 @@ export default function StockPage() {
       )}
       {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && snapshots.length === 0 && (
-        <div className="py-12 text-center text-muted-foreground">
-          暂无库存记录。完成一笔采购入库后这里会出现快照。
-        </div>
+        <EmptyState
+          title="暂无库存记录"
+          description="完成一笔采购入库后这里会出现快照"
+        />
       )}
       {!loading && !error && snapshots.length > 0 && filtered.length === 0 && (
-        <div className="py-12 text-center text-muted-foreground">
-          没有匹配的库存。试试清空搜索或仓库筛选。
-        </div>
+        <EmptyState
+          title="没有匹配的库存"
+          description="试试清空搜索或仓库筛选"
+        />
       )}
 
       {!loading && filtered.length > 0 && (

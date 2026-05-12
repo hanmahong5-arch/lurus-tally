@@ -209,8 +209,9 @@ export default function SaleDetailPage() {
           <h2 className="text-sm font-medium">审核并收款（可选）</h2>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">支付方式</label>
+              <label htmlFor="approve-pay-method" className="text-xs text-muted-foreground">支付方式</label>
               <select
+                id="approve-pay-method"
                 className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
                 value={payMethod}
                 onChange={(e) => setPayMethod(e.target.value)}
@@ -223,10 +224,11 @@ export default function SaleDetailPage() {
               </select>
             </div>
             <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">
+              <label htmlFor="approve-paid-amount" className="text-xs text-muted-foreground">
                 实收金额（应收 {formatCNY(parseFloat(head.total_amount))}，留空=0）
               </label>
               <input
+                id="approve-paid-amount"
                 type="number"
                 className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
                 value={paidAmount}

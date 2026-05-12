@@ -10,6 +10,7 @@ import {
 } from "@/lib/api/purchase"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { EmptyState } from "@/components/ui/empty-state"
 import { formatCNY } from "@/lib/format"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
@@ -111,12 +112,15 @@ export default function PurchasesPage() {
       )}
       {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && bills.length === 0 && (
-        <div className="py-12 text-center text-muted-foreground">
-          暂无采购单，
-          <Link href="/purchases/new" className="text-primary underline">
-            立即新建
-          </Link>
-        </div>
+        <EmptyState
+          title="暂无采购单"
+          description="创建第一笔采购单以开始入库"
+          action={
+            <Link href="/purchases/new" className="text-sm text-primary hover:underline">
+              立即新建
+            </Link>
+          }
+        />
       )}
 
       {!loading && bills.length > 0 && (

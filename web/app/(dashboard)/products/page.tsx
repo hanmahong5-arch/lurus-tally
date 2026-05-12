@@ -7,6 +7,7 @@ import { listProducts, deleteProduct, restoreProduct, type Product } from "@/lib
 import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { EmptyState } from "@/components/ui/empty-state"
 
 /**
  * Products list page — GET /api/v1/products
@@ -96,6 +97,7 @@ export default function ProductsPage() {
 
       <div className="mb-4 flex gap-2">
         <input
+          aria-label="搜索商品"
           className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
           placeholder="搜索商品名称、编码、助记码..."
           value={q}
@@ -117,12 +119,15 @@ export default function ProductsPage() {
       )}
       {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && products.length === 0 && (
-        <div className="py-12 text-center text-muted-foreground">
-          暂无商品，
-          <Link href="/products/new" className="text-primary underline">
-            立即新建
-          </Link>
-        </div>
+        <EmptyState
+          title="暂无商品"
+          description="创建第一个商品以开始管理库存"
+          action={
+            <Link href="/products/new" className="text-sm text-primary hover:underline">
+              立即新建
+            </Link>
+          }
+        />
       )}
 
       {!loading && products.length > 0 && (
