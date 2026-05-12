@@ -123,7 +123,7 @@ export default function PosHistoryPage() {
         )}
 
         {!loading && bills.length > 0 && (
-          <div className="overflow-hidden rounded-xl border border-border bg-background">
+          <div className="overflow-x-auto rounded-xl border border-border bg-background">
             <table className="w-full text-sm">
               <thead className="border-b border-border bg-muted/50 text-muted-foreground">
                 <tr>

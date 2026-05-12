@@ -160,7 +160,7 @@ export default function StockDetailPage() {
         {snapshots.length === 0 ? (
           <EmptyState title="该商品暂无库存" description="采购入库后将在此显示仓库分布" />
         ) : (
-          <div className="overflow-hidden rounded-xl border border-border">
+          <div className="overflow-x-auto rounded-xl border border-border">
             <table className="w-full text-sm">
               <thead className="bg-muted/50 text-muted-foreground">
                 <tr>

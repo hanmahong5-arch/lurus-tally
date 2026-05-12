@@ -125,7 +125,7 @@ export default function PurchasesPage() {
 
       {!loading && bills.length > 0 && (
         <>
-          <div className="overflow-hidden rounded-xl border border-border">
+          <div className="overflow-x-auto rounded-xl border border-border">
             <table className="w-full text-sm">
               <thead className="bg-muted/50 text-muted-foreground">
                 <tr>

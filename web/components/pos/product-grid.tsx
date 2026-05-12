@@ -57,7 +57,7 @@ export function ProductGrid({ products, onAdd }: ProductGridProps) {
             : "暂无商品，请先添加商品"}
         </div>
       ) : (
-        <div className="grid grid-cols-4 gap-2 sm:grid-cols-3 overflow-y-auto max-h-[calc(100vh-280px)]">
+        <div className="grid grid-cols-2 gap-2 overflow-y-auto max-h-[calc(100vh-280px)] sm:grid-cols-3 md:grid-cols-4">
           {visibleProducts.map((product) => (
             <button
               key={product.id}

@@ -24,16 +24,16 @@ export default async function POSLayout({
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-900" data-testid="pos-layout">
-      <header className="absolute right-3 top-2 z-10 flex items-center gap-3">
+      <header className="absolute right-2 top-1.5 z-10 flex items-center gap-1.5">
         <Link
           href="/pos/history"
-          className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 transition-colors"
+          className="inline-flex min-h-[36px] items-center rounded-md px-3 py-1.5 text-xs text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 transition-colors"
         >
           今日记录
         </Link>
         <Link
           href="/dashboard"
-          className="rounded-md px-2 py-1 text-xs text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 transition-colors"
+          className="inline-flex min-h-[36px] items-center rounded-md px-3 py-1.5 text-xs text-zinc-500 hover:bg-zinc-200 hover:text-zinc-900 dark:hover:bg-zinc-800 dark:hover:text-zinc-100 transition-colors"
         >
           退出 POS ←
         </Link>

@@ -151,7 +151,7 @@ export default function PosPage() {
   }, [])
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden pt-8">
+    <div className="flex min-h-screen flex-col pt-8 md:h-screen md:overflow-hidden">
       {/* Header */}
       <div className="shrink-0 border-b border-border bg-background px-4 py-2">
         <h1 className="text-base font-semibold">POS 收银台</h1>
@@ -176,10 +176,10 @@ export default function PosPage() {
         </div>
       )}
 
-      {/* Main two-column layout */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Left: 60% — product discovery */}
-        <div className="flex w-3/5 flex-col gap-3 overflow-hidden border-r border-border p-4">
+      {/* Main two-column layout — stacks on mobile, splits 60/40 on md+ */}
+      <div className="flex flex-1 flex-col md:flex-row md:overflow-hidden">
+        {/* Left: product discovery */}
+        <div className="flex w-full flex-col gap-3 border-b border-border p-4 md:w-3/5 md:overflow-hidden md:border-b-0 md:border-r">
           <ProductSearch
             ref={searchRef}
             onSelect={addToCart}
@@ -190,8 +190,8 @@ export default function PosPage() {
           </Suspense>
         </div>
 
-        {/* Right: 40% — cart + checkout */}
-        <div className="flex w-2/5 flex-col overflow-hidden p-4">
+        {/* Right: cart + checkout */}
+        <div className="flex w-full flex-col p-4 md:w-2/5 md:overflow-hidden">
           <Cart
             state={cartState}
             dispatch={dispatch}

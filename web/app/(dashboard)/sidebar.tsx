@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useProfile } from "@/lib/profile"
@@ -24,10 +25,10 @@ const BASE_NAV_ITEMS: NavItem[] = [
 ]
 
 /**
- * DashboardSidebar is the client-side navigation sidebar for the dashboard layout.
- * It shows profile-aware nav items — retail users see the POS link.
+ * Shared nav link list. Used both inside the desktop sidebar and the mobile
+ * drawer so the two views never drift.
  */
-export function DashboardSidebar() {
+function NavLinks() {
   const { profileType } = useProfile()
   const pathname = usePathname()
 
@@ -36,8 +37,7 @@ export function DashboardSidebar() {
   )
 
   return (
-    <nav className="flex w-56 flex-col gap-1 border-r border-border bg-background p-3">
-      {/* POS shortcut — retail only */}
+    <>
       {profileType === "retail" && (
         <Link
           href="/pos"
@@ -56,7 +56,6 @@ export function DashboardSidebar() {
 
       <div className="my-1 border-t border-border" />
 
-      {/* Standard nav items */}
       {navItems.map((item) => (
         <Link
           key={item.href}
@@ -75,6 +74,78 @@ export function DashboardSidebar() {
           {item.label}
         </Link>
       ))}
+    </>
+  )
+}
+
+/**
+ * DashboardSidebar — desktop-only sidebar (md and up). Mobile users get
+ * MobileNav instead.
+ */
+export function DashboardSidebar() {
+  return (
+    <nav className="hidden w-56 flex-col gap-1 border-r border-border bg-background p-3 md:flex">
+      <NavLinks />
     </nav>
+  )
+}
+
+/**
+ * MobileNav — sticky top bar with hamburger + slide-out drawer. Rendered only
+ * below md. Closes automatically when the route changes.
+ */
+export function MobileNav() {
+  const [open, setOpen] = useState(false)
+  const pathname = usePathname()
+
+  useEffect(() => {
+    setOpen(false)
+  }, [pathname])
+
+  return (
+    <>
+      <div className="sticky top-0 z-20 flex h-14 items-center border-b border-border bg-background/95 px-3 backdrop-blur md:hidden">
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          aria-label="打开导航菜单"
+          aria-expanded={open}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-md hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          <span aria-hidden="true" className="text-xl leading-none">
+            ☰
+          </span>
+        </button>
+        <span className="ml-3 text-sm font-medium">Lurus Tally</span>
+      </div>
+
+      {open && (
+        <>
+          <div
+            className="fixed inset-0 z-40 bg-black/50 md:hidden"
+            onClick={() => setOpen(false)}
+            aria-hidden="true"
+          />
+          <nav
+            className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col gap-1 bg-background p-3 shadow-xl md:hidden"
+            role="dialog"
+            aria-modal="true"
+            aria-label="导航菜单"
+          >
+            <div className="mb-2 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="关闭导航菜单"
+                className="inline-flex h-8 w-8 items-center justify-center rounded-md hover:bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <span aria-hidden="true">✕</span>
+              </button>
+            </div>
+            <NavLinks />
+          </nav>
+        </>
+      )}
+    </>
   )
 }

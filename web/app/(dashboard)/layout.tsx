@@ -1,5 +1,5 @@
 import { auth } from "@/auth"
-import { DashboardSidebar } from "./sidebar"
+import { DashboardSidebar, MobileNav } from "./sidebar"
 import { GlobalAI } from "@/components/ai-assistant/GlobalAI"
 import { UndoToastProvider } from "@/components/undo/UndoToastProvider"
 import { ProfileProvider, type ProfileType } from "@/lib/profile"
@@ -32,7 +32,10 @@ export default async function DashboardLayout({
       <ProfileProvider value={{ profileType }}>
         <div className="flex h-screen overflow-hidden">
           <DashboardSidebar />
-          <main className="flex-1 overflow-y-auto">{children}</main>
+          <main className="flex-1 overflow-y-auto">
+            <MobileNav />
+            {children}
+          </main>
           {/* AI assistant: ⌘K Command Palette + Cmd+J Drawer */}
           <GlobalAI />
         </div>
