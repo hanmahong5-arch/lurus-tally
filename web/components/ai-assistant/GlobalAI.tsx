@@ -1,8 +1,20 @@
 "use client"
 
 import { useCallback } from "react"
-import { AIDrawer } from "./Drawer"
-import { CommandPalette } from "@/components/command-palette/Palette"
+import dynamic from "next/dynamic"
+
+// Lazy-load palette + drawer: both are client-only modals that don't need to
+// block first paint. Pulling them out of the dashboard-layout chunk shaves
+// ~10-20 kB off every (dashboard)/* route's First Load JS. ⌘K and ⌘J still
+// bind on client hydration via useGlobalShortcut inside each component.
+const CommandPalette = dynamic(
+  () => import("@/components/command-palette/Palette").then((m) => m.CommandPalette),
+  { ssr: false, loading: () => null },
+)
+const AIDrawer = dynamic(
+  () => import("./Drawer").then((m) => m.AIDrawer),
+  { ssr: false, loading: () => null },
+)
 
 /**
  * GlobalAI mounts both the CommandPalette and the AIDrawer and wires them.
