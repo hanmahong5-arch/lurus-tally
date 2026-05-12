@@ -13,6 +13,7 @@ import NurseryDictForm from "@/components/horticulture/NurseryDictForm"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useConfirm } from "@/hooks/useConfirm"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { EmptyState } from "@/components/ui/empty-state"
 
 const TYPE_LABELS: Record<NurseryType, string> = {
   tree: "乔木",
@@ -213,9 +214,10 @@ export default function DictionaryPage() {
       )}
       {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && items.length === 0 && (
-        <div className="py-12 text-center text-muted-foreground">
-          暂无苗木，点击&quot;新增苗木&quot;添加第一个品种
-        </div>
+        <EmptyState
+          title="暂无苗木"
+          description="点击「新增苗木」添加第一个品种"
+        />
       )}
 
       {/* Table */}

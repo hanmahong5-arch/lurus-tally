@@ -12,6 +12,8 @@ import {
 import ProjectForm from "@/components/project/ProjectForm"
 import { useConfirm } from "@/hooks/useConfirm"
 import { formatCNY } from "@/lib/format"
+import { ErrorBanner } from "@/components/ui/error-banner"
+import { EmptyState } from "@/components/ui/empty-state"
 
 const STATUS_OPTIONS: { value: ProjectStatus | ""; label: string }[] = [
   { value: "", label: "全部" },
@@ -213,15 +215,12 @@ export default function ProjectsPage() {
       {loading && (
         <div className="py-12 text-center text-muted-foreground">加载中...</div>
       )}
-      {error && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && items.length === 0 && (
-        <div className="py-12 text-center text-muted-foreground">
-          暂无项目，点击&quot;新建项目&quot;添加第一个
-        </div>
+        <EmptyState
+          title="暂无项目"
+          description="点击「新建项目」添加第一个"
+        />
       )}
 
       {/* Card grid */}

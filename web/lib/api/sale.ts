@@ -86,6 +86,8 @@ export interface ListSaleBillsParams {
   status?: BillStatus
   partner_id?: string
   tenantId?: string
+  signal?: AbortSignal
+  retry?: number
 }
 
 export async function createSaleBill(
@@ -122,11 +124,11 @@ export async function cancelSaleBill(id: string, tenantId?: string): Promise<voi
 export async function listSaleBills(
   params: ListSaleBillsParams = {}
 ): Promise<{ items: SaleBillHead[]; total: number }> {
-  const { page = 1, size = 20, status, partner_id, tenantId } = params
+  const { page = 1, size = 20, status, partner_id, tenantId, signal, retry } = params
   const usp = new URLSearchParams({ page: String(page), size: String(size) })
   if (status !== undefined) usp.set("status", String(status))
   if (partner_id) usp.set("partner_id", partner_id)
-  return apiFetch(`/sale-bills?${usp.toString()}`, { tenantId })
+  return apiFetch(`/sale-bills?${usp.toString()}`, { tenantId, signal, retry })
 }
 
 export async function getSaleBill(id: string, tenantId?: string, signal?: AbortSignal): Promise<SaleBillDetail> {

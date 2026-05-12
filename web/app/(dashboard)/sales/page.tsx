@@ -1,12 +1,16 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useState } from "react"
 import Link from "next/link"
 import {
   listSaleBills,
   type SaleBillHead,
   type BillStatus,
 } from "@/lib/api/sale"
+import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { ErrorBanner } from "@/components/ui/error-banner"
+import { EmptyState } from "@/components/ui/empty-state"
+import { formatCNY } from "@/lib/format"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
@@ -23,7 +27,6 @@ const STATUS_TABS: { label: string; value: BillStatus | undefined }[] = [
   { label: "已取消", value: 9 },
 ]
 
-// status 0=draft (gray), 2=approved (blue), 9=cancelled (red)
 const STATUS_BADGE: Record<BillStatus, string> = {
   0: "bg-muted text-muted-foreground",
   2: "bg-blue-500/10 text-blue-600",
@@ -38,22 +41,33 @@ export default function SalesPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  function load(p: number = page, s: BillStatus | undefined = status) {
+  const load = useCallback((
+    p: number,
+    s: BillStatus | undefined,
+    signal?: AbortSignal,
+    isCancelled?: () => boolean,
+  ) => {
     setLoading(true)
     setError(null)
-    listSaleBills({ page: p, size: 20, status: s, tenantId: devTenantId })
+    listSaleBills({ page: p, size: 20, status: s, tenantId: devTenantId, signal, retry: 2 })
       .then((res) => {
+        if (isCancelled?.()) return
         setBills(res.items ?? [])
         setTotal(res.total)
       })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false))
-  }
-
-  useEffect(() => {
-    load(1, undefined)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+      .catch((e) => {
+        if (isCancelled?.() || signal?.aborted) return
+        setError(String(e))
+      })
+      .finally(() => {
+        if (isCancelled?.()) return
+        setLoading(false)
+      })
   }, [])
+
+  useAbortableEffect((signal, isCancelled) => {
+    load(1, undefined, signal, isCancelled)
+  }, [load])
 
   function handleTabChange(s: BillStatus | undefined) {
     setStatus(s)
@@ -106,18 +120,17 @@ export default function SalesPage() {
       {loading && (
         <div className="py-12 text-center text-muted-foreground">加载中...</div>
       )}
-      {error && (
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
-      )}
+      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && bills.length === 0 && (
-        <div className="py-12 text-center text-muted-foreground">
-          暂无销售单，
-          <Link href="/sales/new" className="text-primary underline">
-            立即新建
-          </Link>
-        </div>
+        <EmptyState
+          title="暂无销售单"
+          description="创建第一笔销售单以开始出库"
+          action={
+            <Link href="/sales/new" className="text-sm text-primary hover:underline">
+              立即新建
+            </Link>
+          }
+        />
       )}
 
       {!loading && bills.length > 0 && (
@@ -145,12 +158,14 @@ export default function SalesPage() {
                     <td className="px-4 py-2.5 text-muted-foreground">
                       {new Date(b.bill_date).toLocaleDateString("zh-CN")}
                     </td>
-                    <td className="px-4 py-2.5 text-right font-mono">{b.total_amount}</td>
+                    <td className="px-4 py-2.5 text-right font-mono">
+                      {formatCNY(b.total_amount)}
+                    </td>
                     <td className="px-4 py-2.5 text-right font-mono">
                       {parseFloat(b.receivable_amount) > 0 ? (
-                        <span className="text-amber-600">{b.receivable_amount}</span>
+                        <span className="text-amber-600">{formatCNY(b.receivable_amount)}</span>
                       ) : (
-                        <span className="text-green-600">0.00</span>
+                        <span className="text-green-600">{formatCNY(0)}</span>
                       )}
                     </td>
                     <td className="px-4 py-2.5">
