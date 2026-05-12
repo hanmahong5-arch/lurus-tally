@@ -60,6 +60,7 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
                   {/* Qty controls */}
                   <div className="flex items-center gap-1">
                     <button
+                      aria-label="减少数量"
                       onClick={() =>
                         dispatch({
                           type: "SET_QUANTITY",
@@ -67,7 +68,7 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
                           quantity: item.quantity.minus(1),
                         })
                       }
-                      className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm hover:bg-muted"
+                      className="flex h-9 w-9 items-center justify-center rounded-md border border-border text-base hover:bg-muted"
                     >
                       −
                     </button>
@@ -84,10 +85,11 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
                           })
                         }
                       }}
-                      className="h-7 w-12 rounded-md border border-border bg-background text-center text-sm outline-none focus:ring-1 focus:ring-ring"
+                      className="h-9 w-12 rounded-md border border-border bg-background text-center text-sm outline-none focus:ring-1 focus:ring-ring"
                       data-pos-qty={item.productId}
                     />
                     <button
+                      aria-label="增加数量"
                       onClick={() =>
                         dispatch({
                           type: "SET_QUANTITY",
@@ -95,7 +97,7 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
                           quantity: item.quantity.plus(1),
                         })
                       }
-                      className="flex h-7 w-7 items-center justify-center rounded-md border border-border text-sm hover:bg-muted"
+                      className="flex h-9 w-9 items-center justify-center rounded-md border border-border text-base hover:bg-muted"
                     >
                       +
                     </button>
@@ -112,7 +114,7 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
                     onClick={() =>
                       dispatch({ type: "REMOVE_ITEM", productId: item.productId })
                     }
-                    className="flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                    className="flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                   >
                     ×
                   </button>
