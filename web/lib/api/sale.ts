@@ -129,8 +129,8 @@ export async function listSaleBills(
   return apiFetch(`/sale-bills?${usp.toString()}`, { tenantId })
 }
 
-export async function getSaleBill(id: string, tenantId?: string): Promise<SaleBillDetail> {
-  return apiFetch(`/sale-bills/${id}`, { tenantId })
+export async function getSaleBill(id: string, tenantId?: string, signal?: AbortSignal): Promise<SaleBillDetail> {
+  return apiFetch(`/sale-bills/${id}`, { tenantId, signal })
 }
 
 export async function quickCheckout(

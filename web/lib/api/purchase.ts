@@ -121,8 +121,8 @@ export async function listPurchaseBills(
   return apiFetch(`/purchase-bills?${usp.toString()}`, { tenantId, signal, retry })
 }
 
-export async function getPurchaseBill(id: string, tenantId?: string): Promise<BillDetail> {
-  return apiFetch(`/purchase-bills/${id}`, { tenantId })
+export async function getPurchaseBill(id: string, tenantId?: string, signal?: AbortSignal): Promise<BillDetail> {
+  return apiFetch(`/purchase-bills/${id}`, { tenantId, signal })
 }
 
 export async function restorePurchaseBill(id: string, tenantId?: string): Promise<void> {

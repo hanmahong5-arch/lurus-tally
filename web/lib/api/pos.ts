@@ -77,10 +77,11 @@ export async function quickCheckout(
  * Uses today's date in YYYY-MM-DD format for date_from and date_to params.
  */
 export async function listTodaySaleBills(
-  tenantId?: string
+  tenantId?: string,
+  signal?: AbortSignal
 ): Promise<SaleBillSummary[]> {
   const today = new Date().toISOString().slice(0, 10)
   const qs = `?date_from=${today}&date_to=${today}&page_size=200`
-  const data = await apiFetch<{ items?: SaleBillSummary[] }>("/sale-bills" + qs, { tenantId })
+  const data = await apiFetch<{ items?: SaleBillSummary[] }>("/sale-bills" + qs, { tenantId, signal })
   return data.items ?? []
 }

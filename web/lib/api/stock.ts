@@ -107,7 +107,8 @@ export async function listStockMovements(
  */
 export async function getProductStock(
   productId: string,
-  tenantId?: string
+  tenantId?: string,
+  signal?: AbortSignal
 ): Promise<StockSnapshot[]> {
-  return listStockSnapshots({ product_id: productId, tenantId, limit: 100 })
+  return listStockSnapshots({ product_id: productId, tenantId, limit: 100, signal })
 }

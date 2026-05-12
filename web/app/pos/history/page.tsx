@@ -1,11 +1,12 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import Link from "next/link"
 import Decimal from "decimal.js"
 import { listTodaySaleBills, type SaleBillSummary } from "@/lib/api/pos"
 import { formatCNY } from "@/lib/format"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 
 // Story 2.1 TODO: replace with session tenantId once auth wired
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
@@ -36,12 +37,21 @@ export default function PosHistoryPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  useAbortableEffect((signal, isCancelled) => {
     setLoading(true)
-    listTodaySaleBills(devTenantId)
-      .then(setBills)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false))
+    listTodaySaleBills(devTenantId, signal)
+      .then((data) => {
+        if (isCancelled()) return
+        setBills(data)
+      })
+      .catch((e) => {
+        if (isCancelled() || signal.aborted) return
+        setError(String(e))
+      })
+      .finally(() => {
+        if (isCancelled()) return
+        setLoading(false)
+      })
   }, [])
 
   // Compute summary stats

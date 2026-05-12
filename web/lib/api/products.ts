@@ -93,8 +93,8 @@ export async function listProducts(
   return apiFetch<ListProductsResponse>(`/products?${usp.toString()}`, { tenantId, signal, retry })
 }
 
-export async function getProduct(id: string, tenantId?: string): Promise<Product> {
-  return apiFetch<Product>(`/products/${id}`, { tenantId })
+export async function getProduct(id: string, tenantId?: string, signal?: AbortSignal): Promise<Product> {
+  return apiFetch<Product>(`/products/${id}`, { tenantId, signal })
 }
 
 export async function createProduct(

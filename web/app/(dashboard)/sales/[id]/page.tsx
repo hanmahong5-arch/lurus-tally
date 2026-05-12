@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useState, useCallback } from "react"
+import { useState, useCallback } from "react"
+import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useParams, useRouter } from "next/navigation"
 import Link from "next/link"
 import {
@@ -50,17 +51,26 @@ export default function SaleDetailPage() {
 
   const confirm = useConfirm()
 
-  const load = useCallback(() => {
+  const load = useCallback((signal?: AbortSignal, isCancelled?: () => boolean) => {
     setLoading(true)
     setError(null)
-    getSaleBill(id, devTenantId)
-      .then(setDetail)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false))
+    getSaleBill(id, devTenantId, signal)
+      .then((data) => {
+        if (isCancelled?.()) return
+        setDetail(data)
+      })
+      .catch((e) => {
+        if (isCancelled?.() || signal?.aborted) return
+        setError(String(e))
+      })
+      .finally(() => {
+        if (isCancelled?.()) return
+        setLoading(false)
+      })
   }, [id])
 
-  useEffect(() => {
-    load()
+  useAbortableEffect((signal, isCancelled) => {
+    load(signal, isCancelled)
   }, [load])
 
   async function handleApprove() {

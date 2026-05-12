@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import {
@@ -11,6 +11,9 @@ import {
   type Direction,
 } from "@/lib/api/stock"
 import { getProduct, type Product } from "@/lib/api/products"
+import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { formatCNY } from "@/lib/format"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
@@ -68,22 +71,29 @@ export default function StockDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  useAbortableEffect((signal, isCancelled) => {
     if (!productId) return
     setLoading(true)
     setError(null)
     Promise.all([
-      getProduct(productId, devTenantId).catch(() => null),
-      getProductStock(productId, devTenantId),
-      listStockMovements({ product_id: productId, limit: 50, tenantId: devTenantId }),
+      getProduct(productId, devTenantId, signal).catch(() => null),
+      getProductStock(productId, devTenantId, signal),
+      listStockMovements({ product_id: productId, limit: 50, tenantId: devTenantId, signal }),
     ])
       .then(([p, snaps, mvs]) => {
+        if (isCancelled()) return
         setProduct(p)
         setSnapshots(snaps)
         setMovements(mvs)
       })
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false))
+      .catch((e) => {
+        if (isCancelled() || signal.aborted) return
+        setError(String(e))
+      })
+      .finally(() => {
+        if (isCancelled()) return
+        setLoading(false)
+      })
   }, [productId])
 
   // Aggregate total on-hand across warehouses for the header card.
@@ -102,10 +112,8 @@ export default function StockDetailPage() {
 
   if (error) {
     return (
-      <div className="p-6">
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive mb-4">
-          {error}
-        </div>
+      <div className="p-6 space-y-4">
+        <ErrorBanner hint="请刷新页面重试">{error}</ErrorBanner>
         <Link href="/stock" className="text-sm text-primary hover:underline">
           返回库存列表
         </Link>
@@ -177,7 +185,7 @@ export default function StockDetailPage() {
                       {formatDecimal(s.available_qty)}
                     </td>
                     <td className="px-4 py-2.5 text-right font-mono">
-                      {formatDecimal(s.unit_cost, 2)}
+                      {formatCNY(s.unit_cost)}
                     </td>
                     <td className="px-4 py-2.5 text-muted-foreground">
                       {s.updated_at ? new Date(s.updated_at).toLocaleString("zh-CN") : "—"}
