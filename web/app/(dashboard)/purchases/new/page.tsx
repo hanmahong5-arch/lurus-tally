@@ -16,6 +16,7 @@ import { RateInput } from "@/components/cross-border/rate-input"
 import { useDraft } from "@/hooks/useDraft"
 import { DraftBadge } from "@/components/draft/DraftBadge"
 import { DraftRestoreToast } from "@/components/draft/DraftRestoreToast"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
@@ -222,11 +223,7 @@ export default function NewPurchasePage() {
           />
         </div>
 
-        {error && (
-          <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-            {error}
-          </div>
-        )}
+        {error && <ErrorBanner>{error}</ErrorBanner>}
 
         <div className="flex justify-end gap-3">
           <button

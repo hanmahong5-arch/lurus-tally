@@ -16,6 +16,7 @@ import { Cart } from "@/components/pos/cart"
 import { PaymentModal, type PaymentMode } from "@/components/pos/payment-modal"
 import { CheckoutSuccess } from "@/components/pos/checkout-success"
 import { useConfirm } from "@/hooks/useConfirm"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 const ProductGrid = lazy(() =>
   import("@/components/pos/product-grid").then((m) => ({ default: m.ProductGrid }))
@@ -158,14 +159,13 @@ export default function PosPage() {
 
       {/* Checkout error banner */}
       {checkoutError && (
-        <div className="shrink-0 bg-destructive/10 px-4 py-2 text-sm text-destructive border-b border-destructive/20">
-          {checkoutError}
-          <button
-            className="ml-2 underline"
-            onClick={() => setCheckoutError(null)}
+        <div className="shrink-0">
+          <ErrorBanner
+            className="rounded-none border-x-0 border-t-0"
+            onDismiss={() => setCheckoutError(null)}
           >
-            关闭
-          </button>
+            {checkoutError}
+          </ErrorBanner>
         </div>
       )}
 
