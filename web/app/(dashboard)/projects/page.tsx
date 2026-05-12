@@ -242,8 +242,11 @@ export default function ProjectsPage() {
             <div
               key={item.id}
               data-testid="project-card"
-              className="rounded-xl border border-border bg-background p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer"
+              role="button"
+              tabIndex={0}
+              className="rounded-xl border border-border bg-background p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               onClick={() => openDetail(item)}
+              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(item) } }}
             >
               {/* Name + Code */}
               <h3 className="font-semibold text-foreground truncate">
