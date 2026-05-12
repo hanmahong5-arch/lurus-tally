@@ -76,7 +76,7 @@ describe("CommandPalette", () => {
     fireEvent.keyDown(input, { key: "Tab" })
 
     // Placeholder should change to AI mode
-    expect(input).toHaveAttribute("placeholder", "Ask AI…")
+    expect(input).toHaveAttribute("placeholder", "Ask AI...")
   })
 
   it("TestCommandPalette_AIQuerySelected_CallsOnAIQuery", () => {
