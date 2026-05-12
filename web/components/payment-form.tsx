@@ -8,6 +8,7 @@
 import { useState } from "react"
 import { recordPayment, PAY_TYPE_LABEL, type Payment } from "@/lib/api/payment"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { formatCNY } from "@/lib/format"
 
 const PAY_METHODS = Object.entries(PAY_TYPE_LABEL).map(([value, label]) => ({
   value,
@@ -48,7 +49,7 @@ export function PaymentForm({
       return
     }
     if (amt > remaining + 0.001) {
-      setError(`收款金额不能超过应收 ¥${remaining.toFixed(2)}`)
+      setError(`收款金额不能超过应收 ${formatCNY(remaining)}`)
       return
     }
 
@@ -116,7 +117,7 @@ export function PaymentForm({
             remaining > 0 ? "text-amber-600" : "text-green-600"
           }`}
         >
-          ¥ {remaining.toFixed(2)}
+          {formatCNY(remaining)}
         </span>
       </div>
 

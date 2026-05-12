@@ -30,6 +30,8 @@ export interface ProjectListParams {
   limit?: number
   offset?: number
   tenantId?: string
+  signal?: AbortSignal
+  retry?: number
 }
 
 export interface ProjectListResult {
@@ -46,12 +48,12 @@ export type ProjectUpdateInput = Partial<ProjectCreateInput>
 export async function listProjects(
   params: ProjectListParams = {}
 ): Promise<ProjectListResult> {
-  const { q, status, customerId, limit = 20, offset = 0, tenantId } = params
+  const { q, status, customerId, limit = 20, offset = 0, tenantId, signal, retry } = params
   const usp = new URLSearchParams({ limit: String(limit), offset: String(offset) })
   if (q) usp.set("q", q)
   if (status) usp.set("status", status)
   if (customerId) usp.set("customer_id", customerId)
-  return apiFetch<ProjectListResult>(`/projects?${usp.toString()}`, { tenantId })
+  return apiFetch<ProjectListResult>(`/projects?${usp.toString()}`, { tenantId, signal, retry })
 }
 
 export async function getProject(id: string, tenantId?: string): Promise<ProjectItem> {

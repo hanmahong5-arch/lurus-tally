@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useCallback, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
 import {
   getProduct,
@@ -9,12 +9,10 @@ import {
   type CreateProductInput,
 } from "@/lib/api/products"
 import { ProductForm } from "@/components/product-form"
+import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { ErrorBanner } from "@/components/ui/error-banner"
+import Link from "next/link"
 
-/**
- * Product detail / edit page.
- *
- * Story 2.1 TODO: replace devTenantId with tenantId from session.
- */
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
 export default function ProductDetailPage() {
@@ -26,14 +24,26 @@ export default function ProductDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
-  useEffect(() => {
+  const load = useCallback((signal: AbortSignal, isCancelled: () => boolean) => {
     if (!id) return
     setLoading(true)
-    getProduct(id, devTenantId)
-      .then(setProduct)
-      .catch((e) => setError(String(e)))
-      .finally(() => setLoading(false))
+    setError(null)
+    getProduct(id, devTenantId, signal)
+      .then((p) => {
+        if (isCancelled()) return
+        setProduct(p)
+      })
+      .catch((e) => {
+        if (isCancelled() || signal.aborted) return
+        setError(String(e))
+      })
+      .finally(() => {
+        if (isCancelled()) return
+        setLoading(false)
+      })
   }, [id])
+
+  useAbortableEffect(load, [load])
 
   async function handleSubmit(input: CreateProductInput) {
     await updateProduct(id, input, devTenantId)
@@ -47,19 +57,14 @@ export default function ProductDetailPage() {
     )
   }
 
-  if (error) {
+  if (error || !product) {
     return (
-      <div className="p-6">
-        <div className="rounded-md bg-destructive/10 border border-destructive/30 px-4 py-3 text-sm text-destructive">
-          {error}
-        </div>
+      <div className="p-6 space-y-4">
+        <ErrorBanner hint="请刷新页面重试">{error ?? "商品不存在"}</ErrorBanner>
+        <Link href="/products" className="text-sm text-primary hover:underline">
+          返回商品列表
+        </Link>
       </div>
-    )
-  }
-
-  if (!product) {
-    return (
-      <div className="p-6 text-muted-foreground text-sm">商品不存在</div>
     )
   }
 

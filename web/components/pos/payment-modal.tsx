@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react"
 import Decimal from "decimal.js"
+import { formatCNY } from "@/lib/format"
 import type { PaymentMethod } from "@/lib/api/pos"
 
 export type PaymentMode = "cash" | "wechat" | "alipay" | "credit"
@@ -127,7 +128,7 @@ export function PaymentModal({
         <div className="mb-4 rounded-lg bg-muted p-4 text-center">
           <div className="text-sm text-muted-foreground">应收金额</div>
           <div className="mt-1 text-4xl font-bold tabular-nums text-emerald-600">
-            ¥{totalAmount.toFixed(2)}
+            {formatCNY(totalAmount.toNumber())}
           </div>
         </div>
 
@@ -163,7 +164,7 @@ export function PaymentModal({
                   isNegativeChange ? "text-red-500" : "text-foreground"
                 }`}
               >
-                ¥{change.toFixed(2)}
+                {formatCNY(change.toNumber())}
               </span>
             </div>
 

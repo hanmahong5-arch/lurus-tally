@@ -1,6 +1,7 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useRef, useState } from "react"
+import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { toast } from "sonner"
 import {
   listProjects,
@@ -79,7 +80,7 @@ export default function ProjectsPage() {
   const confirm = useConfirm()
 
   const load = useCallback(
-    (query: string, status: ProjectStatus | "", off: number) => {
+    (query: string, status: ProjectStatus | "", off: number, signal?: AbortSignal, isCancelled?: () => boolean) => {
       setLoading(true)
       setError(null)
       listProjects({
@@ -87,19 +88,28 @@ export default function ProjectsPage() {
         status: status || undefined,
         limit: PAGE_SIZE,
         offset: off,
+        signal,
+        retry: 2,
       })
         .then((res) => {
+          if (isCancelled?.()) return
           setItems(res.items ?? [])
           setTotal(res.total)
         })
-        .catch((e) => setError(String(e)))
-        .finally(() => setLoading(false))
+        .catch((e) => {
+          if (isCancelled?.() || signal?.aborted) return
+          setError(String(e))
+        })
+        .finally(() => {
+          if (isCancelled?.()) return
+          setLoading(false)
+        })
     },
     []
   )
 
-  useEffect(() => {
-    load(q, statusFilter, offset)
+  useAbortableEffect((signal, isCancelled) => {
+    load(q, statusFilter, offset, signal, isCancelled)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [offset])
 

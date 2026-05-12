@@ -14,6 +14,7 @@ import { getProduct, type Product } from "@/lib/api/products"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { formatCNY } from "@/lib/format"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { EmptyState } from "@/components/ui/empty-state"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
@@ -157,9 +158,7 @@ export default function StockDetailPage() {
       <section>
         <h2 className="text-sm font-medium text-muted-foreground mb-2">仓库分布</h2>
         {snapshots.length === 0 ? (
-          <div className="rounded-xl border border-border bg-card p-6 text-center text-sm text-muted-foreground">
-            该商品暂无库存。
-          </div>
+          <EmptyState title="该商品暂无库存" description="采购入库后将在此显示仓库分布" />
         ) : (
           <div className="overflow-hidden rounded-xl border border-border">
             <table className="w-full text-sm">
@@ -204,9 +203,7 @@ export default function StockDetailPage() {
           最近变动 <span className="text-xs">（最多 50 条）</span>
         </h2>
         {movements.length === 0 ? (
-          <div className="rounded-xl border border-border bg-card p-6 text-center text-sm text-muted-foreground">
-            暂无变动记录。
-          </div>
+          <EmptyState title="暂无变动记录" description="采购或销售产生入出库后将在此显示" />
         ) : (
           <ol className="space-y-2">
             {movements.map((m) => {

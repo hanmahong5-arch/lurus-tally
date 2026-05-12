@@ -2,6 +2,7 @@
 
 import React from "react"
 import Decimal from "decimal.js"
+import { formatCNY } from "@/lib/format"
 import {
   cartTotal,
   cartNetTotal,
@@ -52,7 +53,7 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
                   <div className="min-w-0 flex-1">
                     <p className="truncate text-sm font-medium">{item.productName}</p>
                     <p className="text-xs text-muted-foreground">
-                      ¥{item.unitPrice.toFixed(2)} / {item.unitName}
+                      {formatCNY(item.unitPrice.toNumber())} / {item.unitName}
                     </p>
                   </div>
 
@@ -102,7 +103,7 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
 
                   {/* Line total */}
                   <div className="w-16 text-right text-sm tabular-nums">
-                    ¥{lineTotal.toFixed(2)}
+                    {formatCNY(lineTotal.toNumber())}
                   </div>
 
                   {/* Remove */}
@@ -162,11 +163,11 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
       <div className="border-t border-border px-4 py-3 text-right">
         {!state.discount.isZero() && (
           <div className="mb-1 text-sm text-muted-foreground">
-            小计 <span className="tabular-nums">¥{subtotal.toFixed(2)}</span>
+            小计 <span className="tabular-nums">{formatCNY(subtotal.toNumber())}</span>
           </div>
         )}
         <div className="text-2xl font-bold tabular-nums text-emerald-600">
-          ¥{total.toFixed(2)}
+          {formatCNY(total.toNumber())}
         </div>
       </div>
 

@@ -8,6 +8,7 @@
 
 import { useCallback } from "react"
 import type { BillLineItemInput } from "@/lib/api/purchase"
+import { formatCNY } from "@/lib/format"
 
 export interface SaleLineItem extends BillLineItemInput {
   _subtotal?: string
@@ -62,8 +63,6 @@ export function SaleLineEditor({ items, onChange, readOnly = false }: Props) {
     },
     [items, onChange]
   )
-
-  const totalAmount = sumSubtotals(items).toFixed(2)
 
   return (
     <div className="space-y-3">
@@ -162,7 +161,7 @@ export function SaleLineEditor({ items, onChange, readOnly = false }: Props) {
       <div className="flex justify-end">
         <div className="flex gap-8 border-t border-border pt-2 font-semibold text-sm">
           <span>合计</span>
-          <span className="font-mono w-28 text-right tabular-nums">¥ {totalAmount}</span>
+          <span className="font-mono w-28 text-right tabular-nums">{formatCNY(sumSubtotals(items))}</span>
         </div>
       </div>
     </div>
