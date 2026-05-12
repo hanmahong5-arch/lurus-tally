@@ -11,6 +11,7 @@ import {
   type CreateRateRequest,
 } from "@/lib/api/currency"
 import { CurrencySelector } from "@/components/cross-border/currency-selector"
+import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 const MAJOR_PAIRS = ["USD", "EUR", "GBP", "JPY", "HKD"]
@@ -106,11 +107,10 @@ export default function ExchangeRatesPage() {
     "w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
 
   // Load current effective rates for the 5 major pairs
-  useEffect(() => {
-    let cancelled = false
+  useAbortableEffect((signal, isCancelled) => {
     Promise.all(
       MAJOR_PAIRS.map(async (from) => {
-        const result = await getRateOn(from, "CNY", today)
+        const result = await getRateOn(from, "CNY", today, signal)
         return {
           from,
           rate: result.rate,
@@ -119,31 +119,28 @@ export default function ExchangeRatesPage() {
         } satisfies CurrentRate
       })
     ).then((rows) => {
-      if (!cancelled) {
-        setCurrentRates(rows)
-        setLoadingRates(false)
-      }
+      if (isCancelled()) return
+      setCurrentRates(rows)
+      setLoadingRates(false)
     }).catch(() => {
-      if (!cancelled) setLoadingRates(false)
+      if (isCancelled() || signal.aborted) return
+      setLoadingRates(false)
     })
-    return () => { cancelled = true }
   }, [today])
 
   // Load 30-day history for selected currency
-  useEffect(() => {
-    let cancelled = false
+  useAbortableEffect((signal, isCancelled) => {
     setLoadingHistory(true)
-    getRateHistory(historyCurrency, "CNY", 30)
+    getRateHistory(historyCurrency, "CNY", 30, signal)
       .then((rates) => {
-        if (!cancelled) {
-          setHistoryRates(rates)
-          setLoadingHistory(false)
-        }
+        if (isCancelled()) return
+        setHistoryRates(rates)
+        setLoadingHistory(false)
       })
       .catch(() => {
-        if (!cancelled) setLoadingHistory(false)
+        if (isCancelled() || signal.aborted) return
+        setLoadingHistory(false)
       })
-    return () => { cancelled = true }
   }, [historyCurrency])
 
   async function handleCreateRate(e: React.FormEvent) {

@@ -47,10 +47,15 @@ export async function getCurrencies(): Promise<Currency[]> {
  * Returns the most recent exchange rate for the given pair on or before `date`.
  * Falls back to { rate: "1", source: "default", warning: "no_rate_found" } when no data exists.
  */
-export async function getRateOn(from: string, to: string, date?: string): Promise<RateResult> {
+export async function getRateOn(
+  from: string,
+  to: string,
+  date?: string,
+  signal?: AbortSignal,
+): Promise<RateResult> {
   const usp = new URLSearchParams({ from, to })
   if (date) usp.set("date", date)
-  return apiFetch<RateResult>(`/exchange-rates?${usp.toString()}`)
+  return apiFetch<RateResult>(`/exchange-rates?${usp.toString()}`, { signal, retry: 2 })
 }
 
 /**
@@ -74,11 +79,13 @@ export async function createRate(
 export async function getRateHistory(
   from: string,
   to: string,
-  days = 30
+  days = 30,
+  signal?: AbortSignal,
 ): Promise<ExchangeRate[]> {
   const usp = new URLSearchParams({ from, to, days: String(days) })
   const data = await apiFetch<{ rates: ExchangeRate[] | null }>(
-    `/exchange-rates/history?${usp.toString()}`
+    `/exchange-rates/history?${usp.toString()}`,
+    { signal, retry: 2 },
   )
   return data.rates ?? []
 }

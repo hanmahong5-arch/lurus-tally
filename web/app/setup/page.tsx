@@ -3,6 +3,7 @@ import { auth } from "@/auth"
 import { chooseProfile, getMe, TallyApiError, type ProfileType } from "@/lib/api/me"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 // Setup is the first-login onboarding screen. The user picks their business
 // type (cross-border vs retail) which determines the inventory method, default
@@ -69,11 +70,7 @@ export default async function SetupPage({
           </p>
         </div>
 
-        {error ? (
-          <div className="rounded-md bg-destructive/10 p-3 text-center text-sm text-destructive">
-            操作失败：{error}
-          </div>
-        ) : null}
+        {error ? <ErrorBanner>操作失败：{error}</ErrorBanner> : null}
 
         <form action={submitProfile} className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <ProfileOption

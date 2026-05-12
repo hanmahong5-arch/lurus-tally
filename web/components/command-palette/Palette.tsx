@@ -183,6 +183,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
             aria-autocomplete="list"
             role="combobox"
             aria-expanded={true}
+            aria-controls="palette-listbox"
           />
           {query.length >= AI_TRIGGER_MIN_CHARS && !aiMode && (
             <span className="ml-2 rounded border border-border bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
@@ -196,6 +197,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
 
         {/* Results */}
         <div
+          id="palette-listbox"
           className="max-h-80 overflow-y-auto py-1"
           role="listbox"
           aria-label="搜索结果"
