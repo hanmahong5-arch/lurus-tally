@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useMemo, useState } from "react"
+import { useRouter } from "next/navigation"
 import Link from "next/link"
 import {
   listStockSnapshots,
@@ -32,6 +33,7 @@ function shortId(id: string | undefined): string {
 }
 
 export default function StockPage() {
+  const router = useRouter()
   const [snapshots, setSnapshots] = useState<StockSnapshot[]>([])
   const [products, setProducts] = useState<Map<string, Product>>(new Map())
   const [loading, setLoading] = useState(true)
@@ -167,9 +169,7 @@ export default function StockPage() {
                   <tr
                     key={`${s.product_id}-${s.warehouse_id}`}
                     className="hover:bg-muted/30 transition-colors cursor-pointer"
-                    onClick={() => {
-                      window.location.href = `/stock/${s.product_id}`
-                    }}
+                    onClick={() => router.push(`/stock/${s.product_id}`)}
                   >
                     <td className="px-4 py-2.5">
                       <Link
