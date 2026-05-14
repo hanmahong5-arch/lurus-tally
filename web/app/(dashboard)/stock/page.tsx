@@ -44,20 +44,25 @@ export default function StockPage() {
   const load = useCallback((signal?: AbortSignal, isCancelled?: () => boolean) => {
     setLoading(true)
     setError(null)
-    Promise.all([
+    // Products only enriches display (name / SKU / mnemonic search). Snapshot
+    // failure should error; product failure should degrade silently so the
+    // user still sees stock numbers (with short-id fallback).
+    Promise.allSettled([
       listStockSnapshots({ tenantId: devTenantId, limit: 200, signal, retry: 2 }),
       listProducts({ tenantId: devTenantId, limit: 200, signal, retry: 2 }),
     ])
-      .then(([snaps, prodResp]) => {
-        if (isCancelled?.()) return
-        setSnapshots(snaps)
-        const map = new Map<string, Product>()
-        for (const p of prodResp.items ?? []) map.set(p.id, p)
-        setProducts(map)
-      })
-      .catch((e) => {
+      .then(([snapRes, prodRes]) => {
         if (isCancelled?.() || signal?.aborted) return
-        setError(String(e))
+        if (snapRes.status === "rejected") {
+          setError(String(snapRes.reason))
+          return
+        }
+        setSnapshots(snapRes.value)
+        const map = new Map<string, Product>()
+        if (prodRes.status === "fulfilled") {
+          for (const p of prodRes.value.items ?? []) map.set(p.id, p)
+        }
+        setProducts(map)
       })
       .finally(() => {
         if (isCancelled?.()) return
