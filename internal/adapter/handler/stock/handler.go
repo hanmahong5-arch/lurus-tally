@@ -120,9 +120,10 @@ func (h *Handler) PostMovement(c *gin.Context) {
 		var ise *appstock.InsufficientStockError
 		if errors.As(err, &ise) {
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error":     "insufficient_stock",
-				"available": ise.Available.String(),
-				"requested": ise.Requested.String(),
+				"error":      "insufficient_stock",
+				"product_id": ise.ProductID.String(),
+				"available":  ise.Available.String(),
+				"requested":  ise.Requested.String(),
 			})
 			return
 		}

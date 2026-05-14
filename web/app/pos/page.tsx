@@ -17,6 +17,7 @@ import { PaymentModal, type PaymentMode } from "@/components/pos/payment-modal"
 import { CheckoutSuccess } from "@/components/pos/checkout-success"
 import { useConfirm } from "@/hooks/useConfirm"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { ApiError } from "@/lib/api/errors"
 
 const ProductGrid = lazy(() =>
   import("@/components/pos/product-grid").then((m) => ({ default: m.ProductGrid }))
@@ -30,6 +31,19 @@ const defaultWarehouseId = process.env.NEXT_PUBLIC_DEFAULT_WAREHOUSE_ID ?? ""
 interface CheckoutResult {
   billNo: string
   totalAmount: string
+}
+
+interface InsufficientStockBody {
+  error: "insufficient_stock"
+  product_id: string
+  available: string
+  requested: string
+}
+
+function isInsufficientStockBody(b: unknown): b is InsufficientStockBody {
+  if (!b || typeof b !== "object") return false
+  const o = b as Record<string, unknown>
+  return o.error === "insufficient_stock" && typeof o.product_id === "string"
 }
 
 /**
@@ -131,17 +145,21 @@ export default function PosPage() {
         setPaymentMode(null)
         setCheckoutResult({ billNo: result.bill_no, totalAmount: total.toFixed(2) })
       } catch (err) {
-        const msg = String(err)
-        if (msg.includes("insufficient_stock")) {
-          setCheckoutError("库存不足，请检查商品库存后重试")
+        if (err instanceof ApiError && err.status === 422 && isInsufficientStockBody(err.body)) {
+          const body = err.body
+          const product = allProducts.find((p) => p.id === body.product_id)
+          const name = product?.name ?? `商品 ${body.product_id.slice(0, 8)}`
+          setCheckoutError(
+            `「${name}」库存不足：可用 ${body.available}，本单需要 ${body.requested}`,
+          )
         } else {
-          setCheckoutError(`结账失败：${msg}`)
+          setCheckoutError(`结账失败：${String(err)}`)
         }
       } finally {
         setCheckoutLoading(false)
       }
     },
-    [cartState]
+    [cartState, allProducts]
   )
 
   const handleSuccessDismiss = useCallback(() => {

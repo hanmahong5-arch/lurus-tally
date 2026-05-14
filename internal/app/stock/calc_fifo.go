@@ -41,11 +41,11 @@ func (f *FIFOCalculator) ValidateMovement(ctx context.Context, tx *sql.Tx, m *do
 	switch m.Direction {
 	case domain.DirectionOut:
 		if m.QtyBase.GreaterThan(available) {
-			return &InsufficientStockError{Available: available, Requested: m.QtyBase}
+			return &InsufficientStockError{ProductID: m.ProductID, Available: available, Requested: m.QtyBase}
 		}
 	case domain.DirectionAdjust:
 		if m.QtyBase.IsNegative() && m.QtyBase.Neg().GreaterThan(available) {
-			return &InsufficientStockError{Available: available, Requested: m.QtyBase.Neg()}
+			return &InsufficientStockError{ProductID: m.ProductID, Available: available, Requested: m.QtyBase.Neg()}
 		}
 	}
 	return nil
@@ -111,7 +111,7 @@ func (f *FIFOCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domai
 
 	case domain.DirectionOut:
 		if m.QtyBase.GreaterThan(oldQty) {
-			return nil, &InsufficientStockError{Available: oldQty, Requested: m.QtyBase}
+			return nil, &InsufficientStockError{ProductID: m.ProductID, Available: oldQty, Requested: m.QtyBase}
 		}
 
 		// Drain oldest lots first (FIFO).
@@ -155,7 +155,7 @@ func (f *FIFOCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domai
 	case domain.DirectionAdjust:
 		newQty = oldQty.Add(m.QtyBase)
 		if newQty.IsNegative() {
-			return nil, &InsufficientStockError{Available: oldQty, Requested: m.QtyBase.Neg()}
+			return nil, &InsufficientStockError{ProductID: m.ProductID, Available: oldQty, Requested: m.QtyBase.Neg()}
 		}
 		newCost = oldCost
 		m.UnitCost = oldCost

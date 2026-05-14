@@ -50,8 +50,10 @@ export interface SaleBillSummary {
 export interface InsufficientStockError {
   error: "insufficient_stock"
   product_id: string
-  available: number
-  requested: number
+  /** Decimal string — backend uses shopspring/decimal to preserve precision. */
+  available: string
+  /** Decimal string — backend uses shopspring/decimal to preserve precision. */
+  requested: string
 }
 
 // ── API functions ─────────────────────────────────────────────────────────────

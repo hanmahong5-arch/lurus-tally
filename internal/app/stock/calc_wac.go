@@ -42,11 +42,11 @@ func (w *WACCalculator) ValidateMovement(ctx context.Context, tx *sql.Tx, m *dom
 	switch m.Direction {
 	case domain.DirectionOut:
 		if m.QtyBase.GreaterThan(available) {
-			return &InsufficientStockError{Available: available, Requested: m.QtyBase}
+			return &InsufficientStockError{ProductID: m.ProductID, Available: available, Requested: m.QtyBase}
 		}
 	case domain.DirectionAdjust:
 		if m.QtyBase.IsNegative() && m.QtyBase.Neg().GreaterThan(available) {
-			return &InsufficientStockError{Available: available, Requested: m.QtyBase.Neg()}
+			return &InsufficientStockError{ProductID: m.ProductID, Available: available, Requested: m.QtyBase.Neg()}
 		}
 	}
 	return nil
@@ -85,7 +85,7 @@ func (w *WACCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domain
 
 	case domain.DirectionOut:
 		if m.QtyBase.GreaterThan(oldQty) {
-			return nil, &InsufficientStockError{Available: oldQty, Requested: m.QtyBase}
+			return nil, &InsufficientStockError{ProductID: m.ProductID, Available: oldQty, Requested: m.QtyBase}
 		}
 		newQty = oldQty.Sub(m.QtyBase)
 		newCost = oldCost
@@ -95,7 +95,7 @@ func (w *WACCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domain
 	case domain.DirectionAdjust:
 		newQty = oldQty.Add(m.QtyBase)
 		if newQty.IsNegative() {
-			return nil, &InsufficientStockError{Available: oldQty, Requested: m.QtyBase.Neg()}
+			return nil, &InsufficientStockError{ProductID: m.ProductID, Available: oldQty, Requested: m.QtyBase.Neg()}
 		}
 		newCost = oldCost
 		m.UnitCost = oldCost
@@ -147,15 +147,17 @@ func buildSnapshot(
 }
 
 // InsufficientStockError is returned when an out/adjust movement would make on_hand_qty negative.
+// ProductID lets the HTTP layer return a structured 422 the UI can map back to a product name.
 type InsufficientStockError struct {
+	ProductID uuid.UUID
 	Available decimal.Decimal
 	Requested decimal.Decimal
 }
 
 func (e *InsufficientStockError) Error() string {
 	return fmt.Sprintf(
-		"stock: insufficient stock: available=%s, requested=%s",
-		e.Available.String(), e.Requested.String(),
+		"stock: insufficient stock: product=%s, available=%s, requested=%s",
+		e.ProductID.String(), e.Available.String(), e.Requested.String(),
 	)
 }
 
