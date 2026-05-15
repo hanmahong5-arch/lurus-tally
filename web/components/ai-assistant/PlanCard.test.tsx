@@ -100,4 +100,48 @@ describe("PlanCard", () => {
     expect(screen.queryByTestId("plan-confirm-btn")).not.toBeInTheDocument()
     expect(screen.getByText(/已确认/)).toBeInTheDocument()
   })
+
+  it("TestPlanCard_RapidDoubleClick_CallsConfirmOnce", async () => {
+    const { confirmPlan } = await import("@/lib/api/ai")
+    // Keep confirmPlan in flight so the inFlightRef + disabled-prop guards
+    // are both exercised: the second click arrives before React commits the
+    // "confirming" state, so disabled is still false — only the synchronous
+    // ref latch can collapse it.
+    let resolveConfirm: () => void = () => {}
+    vi.mocked(confirmPlan).mockImplementation(
+      () => new Promise<void>((resolve) => { resolveConfirm = resolve })
+    )
+
+    render(<PlanCard plan={makePlan()} />)
+
+    const btn = screen.getByTestId("plan-confirm-btn")
+    fireEvent.click(btn)
+    fireEvent.click(btn)
+
+    await waitFor(() => {
+      expect(confirmPlan).toHaveBeenCalledTimes(1)
+    })
+
+    resolveConfirm()
+  })
+
+  it("TestPlanCard_RapidDoubleClick_CallsCancelOnce", async () => {
+    const { cancelPlan } = await import("@/lib/api/ai")
+    let resolveCancel: () => void = () => {}
+    vi.mocked(cancelPlan).mockImplementation(
+      () => new Promise<void>((resolve) => { resolveCancel = resolve })
+    )
+
+    render(<PlanCard plan={makePlan()} />)
+
+    const btn = screen.getByTestId("plan-cancel-btn")
+    fireEvent.click(btn)
+    fireEvent.click(btn)
+
+    await waitFor(() => {
+      expect(cancelPlan).toHaveBeenCalledTimes(1)
+    })
+
+    resolveCancel()
+  })
 })
