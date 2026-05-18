@@ -17,25 +17,25 @@ const (
 	uriSalesRecent        = "tally://bills/sales/recent"
 	uriPurchasesRecent    = "tally://bills/purchases/recent"
 	uriAlertsStockouts    = "tally://alerts/stockouts"
+	uriAlertsLowStock     = "tally://alerts/low-stock"
+	uriAIPlansPending     = "tally://ai/plans/pending"
 
 	mimeJSON = "application/json"
 
 	defaultSnapshotLimit = 200
 	defaultBillsPage     = 50
+	defaultLowStockLimit = 200
 )
 
-// registerResources wires every read-only MCP resource Phase 3 exposes.
+// registerResources wires every read-only MCP resource exposed by tally-mcp.
 //
-// Deferred to Phase 3b (needs backend additions):
-//   - tally://alerts/low-stock — requires joining stock_initial.low_safe_qty
-//     via a dedicated endpoint
-//   - tally://ai/plans/pending — needs GET /api/v1/ai/plans (only POST exists)
-//
-// Implemented:
-//   - tally://inventory/snapshots
-//   - tally://bills/sales/recent
-//   - tally://bills/purchases/recent
-//   - tally://alerts/stockouts (derived client-side: on_hand_qty <= 0)
+// V0 full set (Phase 3 + 3b):
+//   - tally://inventory/snapshots         current stock per (product, warehouse)
+//   - tally://bills/sales/recent          recent sale bills
+//   - tally://bills/purchases/recent      recent purchase bills
+//   - tally://alerts/stockouts            on_hand_qty <= 0 (client-derived)
+//   - tally://alerts/low-stock            available_qty < low_safe_qty (backend join)
+//   - tally://ai/plans/pending            destructive plans awaiting confirmation
 func registerResources(s *server.MCPServer, c *tallyClient) {
 	s.AddResource(
 		mcp.NewResource(
@@ -72,6 +72,24 @@ func registerResources(s *server.MCPServer, c *tallyClient) {
 			mcp.WithMIMEType(mimeJSON),
 		),
 		makeStockoutsHandler(c),
+	)
+	s.AddResource(
+		mcp.NewResource(
+			uriAlertsLowStock,
+			"Low-stock alerts",
+			mcp.WithResourceDescription("SKUs whose available_qty has fallen below the per-warehouse low_safe_qty threshold (configured on stock_initial). Backend joins snapshot + threshold and orders most-deficient first."),
+			mcp.WithMIMEType(mimeJSON),
+		),
+		makeLowStockHandler(c),
+	)
+	s.AddResource(
+		mcp.NewResource(
+			uriAIPlansPending,
+			"Pending AI plans",
+			mcp.WithResourceDescription("Destructive operation plans the AI assistant has proposed but the user has not yet confirmed or cancelled. TTL 30 minutes."),
+			mcp.WithMIMEType(mimeJSON),
+		),
+		makePendingPlansHandler(c),
 	)
 }
 
@@ -135,6 +153,34 @@ func makeStockoutsHandler(c *tallyClient) server.ResourceHandlerFunc {
 			"items":     out,
 			"count":     len(out),
 			"threshold": "on_hand_qty <= 0",
+		})
+	}
+}
+
+func makeLowStockHandler(c *tallyClient) server.ResourceHandlerFunc {
+	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		rows, err := c.ListLowStock(ctx, defaultLowStockLimit)
+		if err != nil {
+			return nil, fmt.Errorf("alerts/low-stock: %w", err)
+		}
+		return wrapJSON(req.Params.URI, map[string]any{
+			"items":     rows,
+			"count":     len(rows),
+			"threshold": "available_qty < low_safe_qty",
+		})
+	}
+}
+
+func makePendingPlansHandler(c *tallyClient) server.ResourceHandlerFunc {
+	return func(ctx context.Context, req mcp.ReadResourceRequest) ([]mcp.ResourceContents, error) {
+		plans, err := c.ListPendingPlans(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("ai/plans/pending: %w", err)
+		}
+		return wrapJSON(req.Params.URI, map[string]any{
+			"items":  plans,
+			"count":  len(plans),
+			"status": "pending",
 		})
 	}
 }
