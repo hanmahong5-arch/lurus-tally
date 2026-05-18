@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -30,6 +31,8 @@ type stubOrchestrator struct {
 	confirmErr error
 	cancelErr  error
 	chunks     []string
+	listOut    []*domainai.Plan
+	listErr    error
 }
 
 func (s *stubOrchestrator) StreamChat(_ context.Context, _ appai.ChatInput, onChunk func(string)) (*appai.ChatOutput, error) {
@@ -45,6 +48,10 @@ func (s *stubOrchestrator) ConfirmPlan(_ context.Context, _, _ uuid.UUID) (*doma
 
 func (s *stubOrchestrator) CancelPlan(_ context.Context, _, _ uuid.UUID) error {
 	return s.cancelErr
+}
+
+func (s *stubOrchestrator) ListPlans(_ context.Context, _ uuid.UUID, _ string) ([]*domainai.Plan, error) {
+	return s.listOut, s.listErr
 }
 
 func newTestEngine(h *handlerai.Handler, tenantID uuid.UUID) *gin.Engine {
@@ -253,5 +260,70 @@ func TestAIHandler_CancelPlan_InvalidPlanID_Returns400(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d", rec.Code)
+	}
+}
+
+// TestAIHandler_ListPlans_ReturnsItems verifies GET /api/v1/ai/plans returns
+// the orchestrator's list and the response carries items + count.
+func TestAIHandler_ListPlans_ReturnsItems(t *testing.T) {
+	tenantID := uuid.New()
+	plan := &domainai.Plan{ID: uuid.New(), TenantID: tenantID, Status: domainai.PlanStatusPending}
+	stub := &stubOrchestrator{listOut: []*domainai.Plan{plan}}
+	h := handlerai.New(stub)
+	e := newTestEngine(h, tenantID)
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/ai/plans?status=pending", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		Items []*domainai.Plan `json:"items"`
+		Count int              `json:"count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Count != 1 || len(resp.Items) != 1 {
+		t.Errorf("count = %d, items len = %d, want 1/1", resp.Count, len(resp.Items))
+	}
+	if resp.Items[0].ID != plan.ID {
+		t.Errorf("returned plan id = %s, want %s", resp.Items[0].ID, plan.ID)
+	}
+}
+
+// TestAIHandler_ListPlans_NoTenant_Returns401 verifies auth guard.
+func TestAIHandler_ListPlans_NoTenant_Returns401(t *testing.T) {
+	h := handlerai.New(&stubOrchestrator{})
+	e := newTestEngine(h, uuid.Nil)
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/ai/plans", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// TestAIHandler_ListPlans_NilSlice_ReturnsEmpty verifies a nil orchestrator
+// result is normalised to [] (never JSON null) so MCP clients can iterate safely.
+func TestAIHandler_ListPlans_NilSlice_ReturnsEmpty(t *testing.T) {
+	stub := &stubOrchestrator{listOut: nil}
+	h := handlerai.New(stub)
+	e := newTestEngine(h, uuid.New())
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/ai/plans", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"items":[]`) {
+		t.Errorf("expected items: [] in body, got: %s", body)
 	}
 }

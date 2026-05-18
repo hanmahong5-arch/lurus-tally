@@ -17,6 +17,9 @@ type PlanStore interface {
 	GetPlan(ctx context.Context, tenantID, planID uuid.UUID) (*domainai.Plan, error)
 	// UpdatePlan updates an existing plan's status.
 	UpdatePlan(ctx context.Context, plan *domainai.Plan) error
+	// ListByTenant returns plans for a tenant. When statusFilter == "" all
+	// statuses are returned; otherwise only matching plans.
+	ListByTenant(ctx context.Context, tenantID uuid.UUID, statusFilter string) ([]*domainai.Plan, error)
 }
 
 // Orchestrator drives the multi-turn tool-calling loop.
@@ -273,6 +276,17 @@ func (o *Orchestrator) CancelPlan(ctx context.Context, tenantID, planID uuid.UUI
 	}
 	plan.Status = domainai.PlanStatusCancelled
 	return o.planStore.UpdatePlan(ctx, plan)
+}
+
+// ListPlans returns plans for tenantID, optionally filtered by status.
+// Backs the GET /api/v1/ai/plans endpoint used by both the web UI and the
+// tally-mcp tally://ai/plans/pending resource (ADR-0011 Phase 3b).
+func (o *Orchestrator) ListPlans(ctx context.Context, tenantID uuid.UUID, statusFilter string) ([]*domainai.Plan, error) {
+	plans, err := o.planStore.ListByTenant(ctx, tenantID, statusFilter)
+	if err != nil {
+		return nil, fmt.Errorf("list plans: %w", err)
+	}
+	return plans, nil
 }
 
 // ErrPlanNotFound is returned when a plan cannot be found in the store.

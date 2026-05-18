@@ -27,6 +27,7 @@ type ChatOrchestrator interface {
 	StreamChat(ctx context.Context, in appai.ChatInput, onChunk func(string)) (*appai.ChatOutput, error)
 	ConfirmPlan(ctx context.Context, tenantID, planID uuid.UUID) (*domainai.Plan, error)
 	CancelPlan(ctx context.Context, tenantID, planID uuid.UUID) error
+	ListPlans(ctx context.Context, tenantID uuid.UUID, statusFilter string) ([]*domainai.Plan, error)
 }
 
 // Handler groups the AI HTTP endpoints.
@@ -45,9 +46,30 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	ai := rg.Group("/ai")
 	{
 		ai.POST("/chat", h.Chat)
+		ai.GET("/plans", h.ListPlans)
 		ai.POST("/plans/:plan_id/confirm", h.ConfirmPlan)
 		ai.POST("/plans/:plan_id/cancel", h.CancelPlan)
 	}
+}
+
+// ListPlans handles GET /api/v1/ai/plans?status=pending.
+// status query param is optional — when omitted returns plans of all statuses.
+func (h *Handler) ListPlans(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "tenant_id required"})
+		return
+	}
+	status := c.Query("status")
+	plans, err := h.orchestrator.ListPlans(c.Request.Context(), tenantID, status)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		return
+	}
+	if plans == nil {
+		plans = []*domainai.Plan{}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": plans, "count": len(plans)})
 }
 
 // chatRequest is the body of POST /api/v1/ai/chat.

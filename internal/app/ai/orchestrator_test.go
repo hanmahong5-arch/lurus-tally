@@ -43,6 +43,20 @@ func (m *mockPlanStore) UpdatePlan(_ context.Context, plan *domainai.Plan) error
 	return nil
 }
 
+func (m *mockPlanStore) ListByTenant(_ context.Context, tenantID uuid.UUID, statusFilter string) ([]*domainai.Plan, error) {
+	out := make([]*domainai.Plan, 0, len(m.plans))
+	for _, p := range m.plans {
+		if p.TenantID != tenantID {
+			continue
+		}
+		if statusFilter != "" && string(p.Status) != statusFilter {
+			continue
+		}
+		out = append(out, p)
+	}
+	return out, nil
+}
+
 // --- mock repos ---
 
 type mockProductRepo struct {

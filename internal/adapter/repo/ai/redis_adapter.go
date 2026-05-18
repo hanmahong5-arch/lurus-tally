@@ -33,3 +33,8 @@ func (a *GoRedisAdapter) Get(ctx context.Context, key string) (string, error) {
 func (a *GoRedisAdapter) Del(ctx context.Context, keys ...string) error {
 	return a.client.Del(ctx, keys...).Err()
 }
+
+// Scan iterates keys matching pattern. Returns (keys, nextCursor, err).
+func (a *GoRedisAdapter) Scan(ctx context.Context, cursor uint64, match string, count int64) ([]string, uint64, error) {
+	return a.client.Scan(ctx, cursor, match, count).Result()
+}

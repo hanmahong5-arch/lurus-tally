@@ -20,6 +20,10 @@ type RedisClient interface {
 	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
 	Get(ctx context.Context, key string) (string, error)
 	Del(ctx context.Context, keys ...string) error
+	// Scan iterates keys matching pattern, returning a batch and the next cursor.
+	// Cursor 0 starts iteration; the call sequence terminates when the returned
+	// cursor is 0 again. Phase 3b — needed for ListByTenant.
+	Scan(ctx context.Context, cursor uint64, match string, count int64) (keys []string, next uint64, err error)
 }
 
 const (
@@ -100,6 +104,52 @@ func (s *RedisPlanStore) UpdatePlan(ctx context.Context, plan *domainai.Plan) er
 		return fmt.Errorf("plan store: redis SET (update): %w", err)
 	}
 	return nil
+}
+
+// ListByTenant returns plans for a tenant, optionally filtered by status.
+// Uses SCAN to walk the namespace tally:ai:plan:<tenant>:* — works for the
+// small populations we expect (TTL 30min × low rate → << 1k keys per tenant).
+// Stale keys that expire mid-iteration are silently skipped.
+//
+// When statusFilter == "" all statuses are returned.
+func (s *RedisPlanStore) ListByTenant(ctx context.Context, tenantID uuid.UUID, statusFilter string) ([]*domainai.Plan, error) {
+	pattern := keyPrefix + tenantID.String() + ":*"
+	const scanBatch = 100
+
+	var allKeys []string
+	var cursor uint64
+	for {
+		keys, next, err := s.client.Scan(ctx, cursor, pattern, scanBatch)
+		if err != nil {
+			return nil, fmt.Errorf("plan store: redis SCAN: %w", err)
+		}
+		allKeys = append(allKeys, keys...)
+		cursor = next
+		if cursor == 0 {
+			break
+		}
+	}
+
+	out := make([]*domainai.Plan, 0, len(allKeys))
+	for _, k := range allKeys {
+		raw, err := s.client.Get(ctx, k)
+		if err != nil {
+			if isNotFound(err) {
+				continue // expired between SCAN and GET — fine
+			}
+			return nil, fmt.Errorf("plan store: redis GET during list: %w", err)
+		}
+		var p domainai.Plan
+		if err := json.Unmarshal([]byte(raw), &p); err != nil {
+			// Skip malformed entries rather than failing the whole list.
+			continue
+		}
+		if statusFilter != "" && string(p.Status) != statusFilter {
+			continue
+		}
+		out = append(out, &p)
+	}
+	return out, nil
 }
 
 // isNotFound checks for Redis nil/not-found errors without importing go-redis.

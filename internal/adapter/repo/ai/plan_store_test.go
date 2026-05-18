@@ -61,6 +61,29 @@ func (r *inMemRedis) Del(_ context.Context, keys ...string) error {
 	return nil
 }
 
+// Scan returns all matching keys in one batch — cursor pagination is not
+// useful for the small populations used in unit tests, so the in-memory
+// implementation just walks the map once and returns cursor=0.
+func (r *inMemRedis) Scan(_ context.Context, _ uint64, match string, _ int64) ([]string, uint64, error) {
+	// Strip trailing "*" if present — these tests use the same glob the
+	// production code uses, but we only need a prefix match here.
+	prefix := match
+	if len(prefix) > 0 && prefix[len(prefix)-1] == '*' {
+		prefix = prefix[:len(prefix)-1]
+	}
+	var out []string
+	now := time.Now()
+	for k := range r.data {
+		if exp, ok := r.expiry[k]; ok && now.After(exp) {
+			continue
+		}
+		if len(prefix) == 0 || (len(k) >= len(prefix) && k[:len(prefix)] == prefix) {
+			out = append(out, k)
+		}
+	}
+	return out, 0, nil
+}
+
 func makePlan(tenantID uuid.UUID) *domainai.Plan {
 	return &domainai.Plan{
 		ID:       uuid.New(),
