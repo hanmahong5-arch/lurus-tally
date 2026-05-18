@@ -6,6 +6,7 @@ package lifecycle
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -32,6 +33,7 @@ import (
 	repoai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/ai"
 	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
+	repoauth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/auth"
 	repohorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/horticulture"
 	repopayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/payment"
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
@@ -40,6 +42,7 @@ import (
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
+	appauth "github.com/hanmahong5-arch/lurus-tally/internal/app/auth"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
@@ -49,6 +52,7 @@ import (
 	appprojectuc "github.com/hanmahong5-arch/lurus-tally/internal/app/project"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	apptenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
+	domainauth "github.com/hanmahong5-arch/lurus-tally/internal/domain/auth"
 	appunit "github.com/hanmahong5-arch/lurus-tally/internal/app/unit"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
@@ -306,7 +310,41 @@ func NewApp(cfg *config.Config) (*App, error) {
 			}
 			return mapping.TenantID, nil
 		}
-		authMW = middleware.NewAuthMiddleware(jwksURL, issuer, tenantLookup)
+		// PAT resolver — short-circuits before JWT path when bearer starts
+		// with tally_pat_. See domain/auth and migration 000031.
+		patRepo := repoauth.New(db)
+		patResolver := func(ctx context.Context, bearer string) (uuid.UUID, []string, error) {
+			prefix, secret, ok := domainauth.ParseBearer(bearer)
+			if !ok {
+				return uuid.Nil, nil, middleware.ErrInvalidPAT
+			}
+			pat, err := patRepo.GetByPrefix(ctx, prefix)
+			if err != nil {
+				if errors.Is(err, appauth.ErrNotFound) {
+					return uuid.Nil, nil, middleware.ErrInvalidPAT
+				}
+				return uuid.Nil, nil, err
+			}
+			if !domainauth.Verify(prefix, secret, pat.Hash) {
+				return uuid.Nil, nil, middleware.ErrInvalidPAT
+			}
+			if !pat.IsActive(time.Now()) {
+				return uuid.Nil, nil, middleware.ErrInvalidPAT
+			}
+			// Best-effort last_used_at touch — don't block the request, don't
+			// fail the auth on a transient DB hiccup. Detached context so the
+			// goroutine survives request cancellation.
+			go func(id uuid.UUID) {
+				bg, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				defer cancel()
+				if err := patRepo.TouchLastUsed(bg, id); err != nil {
+					slog.Debug("auth: touch last_used_at failed", slog.Any("error", err))
+				}
+			}(pat.ID)
+			return pat.TenantID, pat.Scopes, nil
+		}
+
+		authMW = middleware.NewAuthMiddleware(jwksURL, issuer, tenantLookup, patResolver)
 		l.Info("auth middleware enabled",
 			slog.String("issuer", issuer),
 			slog.String("jwks_url", jwksURL))

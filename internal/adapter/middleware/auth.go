@@ -3,6 +3,7 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -12,7 +13,22 @@ import (
 	"github.com/google/uuid"
 	"github.com/lestrrat-go/jwx/v2/jwk"
 	"github.com/lestrrat-go/jwx/v2/jwt"
+
+	domainauth "github.com/hanmahong5-arch/lurus-tally/internal/domain/auth"
 )
+
+// ErrInvalidPAT is the sentinel a PATResolver returns when the bearer is
+// shaped like a PAT but doesn't pass verification (unknown prefix, hash
+// mismatch, revoked, expired). The middleware translates this to a quiet
+// 401 — no log noise, since it's user error not an internal issue.
+var ErrInvalidPAT = errors.New("auth: invalid PAT")
+
+// PATResolver looks up + verifies a tally_pat_ bearer token. On success it
+// returns the tenant_id the token belongs to and the granted scopes. On
+// ErrInvalidPAT the middleware emits a quiet 401; on any other non-nil error
+// the middleware logs the error and emits 401 (treating it as auth failure
+// rather than 500 to avoid leaking internal state).
+type PATResolver func(ctx context.Context, bearer string) (tenantID uuid.UUID, scopes []string, err error)
 
 const (
 	// CtxKeyZitadelSub is the Gin context key where AuthMiddleware injects the Zitadel sub claim.
@@ -35,19 +51,22 @@ const (
 // request proceed and only /me + /tenant/profile work without tenant_id.
 type TenantLookup func(ctx context.Context, sub string) (uuid.UUID, error)
 
-// AuthMiddleware returns a Gin middleware that validates RS256 JWTs issued by the
-// given issuer. It fetches public keys from jwksURL (JWKS endpoint) and caches
-// them for jwksCacheTTL.
+// AuthMiddleware returns a Gin middleware that validates the Authorization
+// bearer using two paths:
+//
+//  1. Personal Access Token (PAT) — if the bearer starts with tally_pat_ and a
+//     non-nil patResolver is provided, the middleware skips JWKS/JWT entirely
+//     and uses the resolver. This is what tally-mcp and other API clients use.
+//  2. Zitadel JWT — RS256, validated against the JWKS at jwksURL with
+//     expectedIssuer enforced.
 //
 // On success it writes into the Gin context:
-//   - CtxKeyZitadelSub  → Zitadel sub claim (string)
-//   - CtxKeyTenantID    → tally tenant UUID, resolved from (1) tally_tenant_id
-//     custom claim, falling back to (2) tenantLookup(sub) against
-//     user_identity_mapping. Skipped when tenantLookup is nil or the user
-//     hasn't onboarded yet.
+//   - CtxKeyZitadelSub  → Zitadel sub claim (string; empty for PAT path)
+//   - CtxKeyTenantID    → tally tenant UUID (PAT or JWT, whichever resolved)
 //
-// On failure it aborts with 401.
-func NewAuthMiddleware(jwksURL, expectedIssuer string, tenantLookup TenantLookup) gin.HandlerFunc {
+// On failure it aborts with 401. patResolver may be nil — in that case PATs
+// are rejected and only JWTs work.
+func NewAuthMiddleware(jwksURL, expectedIssuer string, tenantLookup TenantLookup, patResolver PATResolver) gin.HandlerFunc {
 	cache := jwk.NewCache(context.Background())
 	_ = cache.Register(jwksURL, jwk.WithRefreshInterval(jwksCacheTTL))
 
@@ -58,6 +77,30 @@ func NewAuthMiddleware(jwksURL, expectedIssuer string, tenantLookup TenantLookup
 				"error":  "unauthorized",
 				"detail": "Authorization header with Bearer token is required",
 			})
+			return
+		}
+
+		// PAT short-circuit. We branch on the scheme prefix BEFORE touching
+		// the JWKS path, so PATs (no signing keys involved) are cheap and
+		// don't depend on Zitadel being reachable.
+		if patResolver != nil && strings.HasPrefix(rawToken, domainauth.Scheme) {
+			tenantID, _, err := patResolver(c.Request.Context(), rawToken)
+			if err != nil {
+				if !errors.Is(err, ErrInvalidPAT) {
+					slog.Warn("auth middleware: PAT resolver error",
+						slog.Any("error", err),
+					)
+				}
+				c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{
+					"error":  "unauthorized",
+					"detail": "invalid or expired token",
+				})
+				return
+			}
+			if tenantID != uuid.Nil {
+				c.Set(CtxKeyTenantID, tenantID)
+			}
+			c.Next()
 			return
 		}
 

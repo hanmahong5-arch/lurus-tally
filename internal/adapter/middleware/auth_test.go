@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -116,7 +117,7 @@ func TestAuthMiddleware_NoToken_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -134,7 +135,7 @@ func TestAuthMiddleware_InvalidJWT_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -153,7 +154,7 @@ func TestAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	token := signToken(t, priv, "test-kid", "user-sub-123", "https://auth.lurus.cn",
@@ -175,7 +176,7 @@ func TestAuthMiddleware_ValidJWT_InjectsUserID(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	tenantID := uuid.New().String()
@@ -219,7 +220,7 @@ func TestAuthMiddleware_TenantLookupFallback_InjectsTenantID(t *testing.T) {
 		return expectedTenant, nil
 	}
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", lookup)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", lookup, nil)
 	engine := newEngineWithAuth(t, m)
 
 	// Token has NO tally_tenant_id claim — lookup must fill the gap.
@@ -257,7 +258,7 @@ func TestAuthMiddleware_TenantLookup_FirstTimeUser_NoTenantInjected(t *testing.T
 		return uuid.Nil, nil
 	}
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", lookup)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", lookup, nil)
 	engine := newEngineWithAuth(t, m)
 
 	token := signToken(t, priv, "test-kid", "first-time-user", "https://auth.lurus.cn",
@@ -285,7 +286,7 @@ func TestAuthMiddleware_WrongIssuer_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	// Token signed with correct key but wrong issuer.
@@ -294,6 +295,81 @@ func TestAuthMiddleware_WrongIssuer_Returns401(t *testing.T) {
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// TestAuthMiddleware_PATBearer_ResolvesTenant verifies that a tally_pat_ bearer
+// short-circuits the JWT path and the resolver-returned tenant lands in context.
+func TestAuthMiddleware_PATBearer_ResolvesTenant(t *testing.T) {
+	srv := mockJWKSServer(t, buildJWKS(t, generateTestRSAKey(t), "kid"))
+	wantTenant := uuid.MustParse("00000000-0000-0000-0000-000000000abc")
+
+	called := false
+	resolver := func(_ context.Context, bearer string) (uuid.UUID, []string, error) {
+		called = true
+		if !strings.HasPrefix(bearer, "tally_pat_") {
+			t.Errorf("resolver got non-PAT bearer: %q", bearer)
+		}
+		return wantTenant, []string{"read"}, nil
+	}
+
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, resolver)
+	engine := newEngineWithAuth(t, m)
+
+	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer tally_pat_abcd1234efgh5678ijkl9012mnop3456qrst7890ab")
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if !called {
+		t.Errorf("resolver not invoked for tally_pat_ bearer")
+	}
+	if rec.Code != http.StatusOK {
+		t.Errorf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), wantTenant.String()) {
+		t.Errorf("tenant_id %q not in response body: %s", wantTenant, rec.Body.String())
+	}
+}
+
+// TestAuthMiddleware_PATInvalid_Returns401 verifies resolver-rejected PAT → 401
+// and the JWT path is never tried.
+func TestAuthMiddleware_PATInvalid_Returns401(t *testing.T) {
+	srv := mockJWKSServer(t, buildJWKS(t, generateTestRSAKey(t), "kid"))
+
+	resolver := func(_ context.Context, _ string) (uuid.UUID, []string, error) {
+		return uuid.Nil, nil, middleware.ErrInvalidPAT
+	}
+
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, resolver)
+	engine := newEngineWithAuth(t, m)
+
+	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer tally_pat_invalidinvalidinvalidinvalidinvalidinval")
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for invalid PAT, got %d", rec.Code)
+	}
+}
+
+// TestAuthMiddleware_PATWithNilResolver_FallsThrough verifies that when no
+// PAT resolver is wired, a tally_pat_ bearer is treated as a (malformed) JWT
+// and rejected by the JWT path — not short-circuited.
+func TestAuthMiddleware_PATWithNilResolver_FallsThrough(t *testing.T) {
+	srv := mockJWKSServer(t, buildJWKS(t, generateTestRSAKey(t), "kid"))
+
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
+	engine := newEngineWithAuth(t, m)
+
+	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer tally_pat_abcdefghijklmnopqrstuvwxyz0123456789abcd")
 	rec := httptest.NewRecorder()
 	engine.ServeHTTP(rec, req)
 
