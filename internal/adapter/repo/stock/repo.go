@@ -349,3 +349,55 @@ func (r *Repo) UpdateLotQty(ctx context.Context, tx *sql.Tx, lotID uuid.UUID, qt
 	}
 	return nil
 }
+
+// ListLowStock joins stock_snapshot + product + stock_initial and returns rows
+// where available_qty has fallen below the warehouse's configured low_safe_qty.
+// Ordered by deficit ratio so the most-urgent items come first.
+func (r *Repo) ListLowStock(ctx context.Context, tenantID uuid.UUID, limit int) ([]appstock.LowStockRow, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+	const q = `
+		SELECT
+			ss.tenant_id,
+			ss.product_id,
+			p.code,
+			p.name,
+			ss.warehouse_id,
+			ss.on_hand_qty::text,
+			ss.available_qty::text,
+			si.low_safe_qty::text
+		FROM tally.stock_snapshot ss
+		JOIN tally.product p ON p.id = ss.product_id
+		JOIN tally.stock_initial si
+			ON si.tenant_id = ss.tenant_id
+			AND si.product_id = ss.product_id
+			AND si.warehouse_id = ss.warehouse_id
+		WHERE ss.tenant_id = $1
+			AND si.low_safe_qty IS NOT NULL
+			AND si.low_safe_qty > 0
+			AND ss.available_qty < si.low_safe_qty
+		ORDER BY (ss.available_qty / si.low_safe_qty) ASC
+		LIMIT $2`
+	rows, err := r.db.QueryContext(ctx, q, tenantID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("stock repo: list low stock: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []appstock.LowStockRow
+	for rows.Next() {
+		var row appstock.LowStockRow
+		if err := rows.Scan(
+			&row.TenantID, &row.ProductID, &row.ProductCode, &row.ProductName,
+			&row.WarehouseID, &row.OnHandQty, &row.AvailableQty, &row.LowSafeQty,
+		); err != nil {
+			return nil, fmt.Errorf("stock repo: list low stock scan: %w", err)
+		}
+		out = append(out, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("stock repo: list low stock rows: %w", err)
+	}
+	return out, nil
+}

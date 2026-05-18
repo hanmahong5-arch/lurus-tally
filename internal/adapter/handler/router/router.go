@@ -99,6 +99,7 @@ func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFun
 			api.GET("/stock/snapshots", notImplemented)
 			api.GET("/stock/snapshots/:product_id/:warehouse_id", notImplemented)
 			api.GET("/stock/movements", notImplemented)
+			api.GET("/stock/alerts/low-stock", notImplemented)
 		}
 
 		// Purchase bill routes (Story 6.1).

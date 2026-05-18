@@ -176,6 +176,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appstock.NewGetSnapshotUseCase(stockRepo),
 		appstock.NewListSnapshotsUseCase(stockRepo),
 		appstock.NewListMovementsUseCase(stockRepo),
+		appstock.NewListLowStockUseCase(stockRepo),
 	)
 
 	// Wire bill use cases (Story 6.1: purchase receipt baseline).

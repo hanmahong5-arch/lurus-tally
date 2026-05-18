@@ -21,6 +21,7 @@ type Handler struct {
 	getSnapshot   *appstock.GetSnapshotUseCase
 	listSnapshots *appstock.ListSnapshotsUseCase
 	listMovements *appstock.ListMovementsUseCase
+	listLowStock  *appstock.ListLowStockUseCase
 }
 
 // New constructs the handler. All use cases must be non-nil.
@@ -29,12 +30,14 @@ func New(
 	getSnapshot *appstock.GetSnapshotUseCase,
 	listSnapshots *appstock.ListSnapshotsUseCase,
 	listMovements *appstock.ListMovementsUseCase,
+	listLowStock *appstock.ListLowStockUseCase,
 ) *Handler {
 	return &Handler{
 		record:        record,
 		getSnapshot:   getSnapshot,
 		listSnapshots: listSnapshots,
 		listMovements: listMovements,
+		listLowStock:  listLowStock,
 	}
 }
 
@@ -46,6 +49,28 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/stock/snapshots", h.ListSnapshots)
 	rg.GET("/stock/snapshots/:product_id/:warehouse_id", h.GetSnapshot)
 	rg.GET("/stock/movements", h.ListMovements)
+	rg.GET("/stock/alerts/low-stock", h.ListLowStock)
+}
+
+// ListLowStock handles GET /api/v1/stock/alerts/low-stock.
+// Returns SKUs whose available_qty has fallen below their configured
+// low_safe_qty (per tenant + product + warehouse, set on stock_initial).
+func (h *Handler) ListLowStock(c *gin.Context) {
+	tenantID := resolveTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant_id required"})
+		return
+	}
+	limit := parseIntQuery(c, "limit", 200)
+	rows, err := h.listLowStock.Execute(c.Request.Context(), tenantID, limit)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if rows == nil {
+		rows = []appstock.LowStockRow{}
+	}
+	c.JSON(http.StatusOK, gin.H{"items": rows, "count": len(rows)})
 }
 
 // postMovementRequest is the JSON body for POST /api/v1/stock/movements.
