@@ -22,6 +22,7 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { href: "/subscription", label: "订阅与计费", icon: "💳" },
   { href: "/dictionary", label: "苗木字典", icon: "🌿", industry: ["horticulture"] },
   { href: "/projects", label: "项目", icon: "🏗️" },
+  { href: "/settings/api-keys", label: "API 密钥", icon: "🔑" },
 ]
 
 /**
