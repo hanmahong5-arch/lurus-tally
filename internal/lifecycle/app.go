@@ -394,7 +394,10 @@ func NewApp(cfg *config.Config) (*App, error) {
 		idempotencyMW = middleware.Idempotency(middleware.NewIdempotencyRedisStore(rdb))
 	}
 
-	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, stockHandler,
+	// PAT CRUD handler — reuses the same patRepo wired into the auth middleware.
+	patHandler := handlerAuth.NewPATHandler(repoauth.New(db))
+
+	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
 		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler)
 
 	srv := &http.Server{

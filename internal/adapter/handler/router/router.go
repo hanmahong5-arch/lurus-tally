@@ -36,7 +36,7 @@ func notImplemented(c *gin.Context) {
 // The engine mode (release/debug) is controlled by GIN_MODE or gin.SetMode.
 //
 //nolint:cyclop // router wiring is intentionally long
-func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler) *gin.Engine {
+func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
@@ -64,6 +64,15 @@ func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFun
 			api.GET("/me", notImplemented)
 			api.POST("/tenant/profile", notImplemented)
 			api.POST("/auth/logout", notImplemented)
+		}
+
+		// Personal Access Token CRUD (ADR-0011 Phase 2b).
+		if pat != nil {
+			pat.RegisterRoutes(api)
+		} else {
+			api.POST("/auth/pats", notImplemented)
+			api.GET("/auth/pats", notImplemented)
+			api.DELETE("/auth/pats/:id", notImplemented)
 		}
 
 		products := api.Group("/products")

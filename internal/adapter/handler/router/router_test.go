@@ -19,7 +19,7 @@ func init() {
 // authMW is also nil in tests so we exercise pure route registration.
 func newTestRouter() *gin.Engine {
 	h := health.New("dev")
-	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 func TestRouter_HealthzRouteRegistered(t *testing.T) {
