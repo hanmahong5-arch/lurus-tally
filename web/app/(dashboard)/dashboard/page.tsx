@@ -35,6 +35,13 @@ export default async function DashboardPage({
                 ? "零售/批发模式 · WAC 加权平均"
                 : "选择左侧任一模块开始。"}
           </p>
+          <p className="pt-1 text-xs text-muted-foreground/80">
+            <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘K</kbd>
+            <span className="ml-1">快速搜索任意页面</span>
+            <span className="mx-2 opacity-50">·</span>
+            <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-mono text-[10px]">⌘J</kbd>
+            <span className="ml-1">召唤 AI 助手</span>
+          </p>
         </header>
 
         {error === "pos-retail-only" ? (

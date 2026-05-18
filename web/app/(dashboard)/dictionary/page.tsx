@@ -218,7 +218,15 @@ export default function DictionaryPage() {
       {!loading && !error && items.length === 0 && (
         <EmptyState
           title="暂无苗木"
-          description="点击「新增苗木」添加第一个品种"
+          description="开始建立你的苗木字典，方便后续采购和销售选品"
+          action={
+            <button
+              onClick={openCreate}
+              className="rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted transition-colors"
+            >
+              新增第一个苗木
+            </button>
+          }
         />
       )}
 

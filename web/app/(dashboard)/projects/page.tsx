@@ -231,7 +231,15 @@ export default function ProjectsPage() {
       {!loading && !error && items.length === 0 && (
         <EmptyState
           title="暂无项目"
-          description="点击「新建项目」添加第一个"
+          description="按项目跟踪进度和成本，把苗木和工序串起来"
+          action={
+            <button
+              onClick={openCreate}
+              className="rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted transition-colors"
+            >
+              新建第一个项目
+            </button>
+          }
         />
       )}
 
