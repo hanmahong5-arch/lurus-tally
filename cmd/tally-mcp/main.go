@@ -25,10 +25,12 @@ import (
 	"github.com/mark3labs/mcp-go/server"
 )
 
-const (
-	serverName    = "tally-mcp"
-	serverVersion = "0.1.0"
-)
+const serverName = "tally-mcp"
+
+// serverVersion is overridden at build time via:
+//
+//	go build -ldflags="-X main.serverVersion=<tag>" ./cmd/tally-mcp
+var serverVersion = "dev"
 
 type config struct {
 	BaseURL  string // TALLY_BASE_URL — e.g. https://tally.lurus.cn

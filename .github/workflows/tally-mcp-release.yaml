@@ -1,0 +1,155 @@
+name: Release tally-mcp Binaries
+
+# Tag-driven cross-platform binary release for tally-mcp.
+# Trigger: push a tag matching `tally-mcp-v*` (e.g. `tally-mcp-v0.1.0`) or run
+# manually via workflow_dispatch. Produces 4 binaries (linux/amd64,
+# darwin/amd64, darwin/arm64, windows/amd64) + SHA256SUMS attached to a
+# GitHub Release. See ADR-0011 (phase 3c) for context.
+
+on:
+  push:
+    tags:
+      - 'tally-mcp-v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write  # softprops/action-gh-release creates the GitHub Release
+
+# A partial upload is worse than a slow one — never cancel a release in flight.
+concurrency:
+  group: release-tally-mcp-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build ${{ matrix.os }}/${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: linux
+            arch: amd64
+            ext: ''
+          - os: darwin
+            arch: amd64
+            ext: ''
+          - os: darwin
+            arch: arm64
+            ext: ''
+          - os: windows
+            arch: amd64
+            ext: '.exe'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Test (tally-mcp only)
+        run: go test ./cmd/tally-mcp/...
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          CGO_ENABLED: '0'
+        run: |
+          mkdir -p dist
+          go build \
+            -ldflags="-s -w -X main.serverVersion=${GITHUB_REF_NAME}" \
+            -trimpath \
+            -o "dist/tally-mcp-${GOOS}-${GOARCH}${{ matrix.ext }}" \
+            ./cmd/tally-mcp
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tally-mcp-${{ matrix.os }}-${{ matrix.arch }}
+          path: dist/tally-mcp-*
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all binaries
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: tally-mcp-*
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        working-directory: dist
+        run: |
+          ls -la
+          sha256sum tally-mcp-* > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          generate_release_notes: true
+          files: |
+            dist/tally-mcp-linux-amd64
+            dist/tally-mcp-darwin-amd64
+            dist/tally-mcp-darwin-arm64
+            dist/tally-mcp-windows-amd64.exe
+            dist/SHA256SUMS
+          body: |
+            # tally-mcp ${{ github.ref_name }}
+
+            Model Context Protocol stdio server exposing Tally inventory as
+            agent-callable read resources. See
+            [ADR-0011](https://github.com/hanmahong5-arch/lurus/blob/main/doc/decisions/0011-tally-mcp-server.md)
+            for background.
+
+            ## Install
+
+            1. Create a Personal Access Token in Tally:
+               **Settings → API Keys → New Token**
+            2. Download the binary for your platform below.
+            3. Verify the checksum against `SHA256SUMS`:
+               ```sh
+               sha256sum -c SHA256SUMS --ignore-missing
+               ```
+            4. Make it executable (macOS/Linux):
+               ```sh
+               chmod +x tally-mcp-darwin-arm64
+               ```
+
+            ## Claude Desktop config
+
+            Add to `~/Library/Application Support/Claude/claude_desktop_config.json`
+            (macOS) or `%APPDATA%\Claude\claude_desktop_config.json` (Windows):
+
+            ```json
+            {
+              "mcpServers": {
+                "tally": {
+                  "command": "/absolute/path/to/tally-mcp-darwin-arm64",
+                  "env": {
+                    "TALLY_BASE_URL": "https://tally.lurus.cn",
+                    "TALLY_PAT": "tally_pat_..."
+                  }
+                }
+              }
+            }
+            ```
+
+            ## Available resources (V0, read-only)
+
+            - `tally://inventory/snapshots` — current stock by product × warehouse
+            - `tally://sales/recent` — recent sales orders
+            - `tally://purchases/recent` — recent purchase orders
+            - `tally://alerts/stockouts` — out-of-stock SKUs
+            - `tally://alerts/low-stock` — SKUs below safety stock
+            - `tally://ai/plans/pending` — pending AI-generated replenishment plans
