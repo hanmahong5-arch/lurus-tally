@@ -1,7 +1,12 @@
 # Binaries
 tally-backend
 tally-backend.exe
-bin/
+/bin/*
+!/bin/*.sh
+!/bin/*.md
+
+# Claude Code local working state (agents, worktrees, transcripts).
+.claude/
 
 # Go build artifacts
 *.out

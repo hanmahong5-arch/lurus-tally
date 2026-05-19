@@ -1,0 +1,52 @@
+# S0.C2 — GitHub Actions schedule: write a daily snapshot row into
+# assumptions.md by running bin/assumption-snapshot.sh, then commit the
+# diff. Owned by GitHub-hosted runner instead of an R6 cron so the
+# pipeline survives node reinstalls.
+#
+# Secrets required:
+#   PROM_URL                          — full base URL (with scheme/port)
+#   ASSUMPTION_SNAPSHOT_FAIL_FEISHU   — webhook for failure alerts
+name: assumption-snapshot
+
+on:
+  schedule:
+    # Daily 00:00 UTC = 08:00 Beijing. The script tolerates "n/a" data so
+    # running before any business activity is harmless.
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: assumption-snapshot
+  cancel-in-progress: false
+
+jobs:
+  snapshot:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y jq
+
+      - name: Run snapshot
+        env:
+          PROM_URL: ${{ secrets.PROM_URL }}
+          ASSUMPTION_SNAPSHOT_FAIL_FEISHU: ${{ secrets.ASSUMPTION_SNAPSHOT_FAIL_FEISHU }}
+        run: bash bin/assumption-snapshot.sh
+
+      - name: Commit changes (if any)
+        run: |
+          if git diff --quiet _bmad-output/planning-artifacts/assumptions.md; then
+            echo "no diff, nothing to commit"
+            exit 0
+          fi
+          git config user.name "lurus-bot"
+          git config user.email "bot@lurus.cn"
+          git add _bmad-output/planning-artifacts/assumptions.md
+          git commit -m "chore(assumptions): daily snapshot $(date -u +%Y-%m-%d)"
+          git push

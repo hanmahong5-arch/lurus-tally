@@ -1,0 +1,38 @@
+# S0.C3 — Monday 09:00 Beijing weekly Feishu health post via
+# bin/health-report.sh. Hosted runner for the same reason as
+# assumption-snapshot: stable schedule with no node dependency.
+#
+# Secrets required:
+#   HEALTH_REPORT_FEISHU_URL  — primary Feishu webhook
+#   OPS_ALERT_FEISHU          — fallback on failure
+#   PROM_URL                  — Prometheus base URL (optional; n/a if missing)
+name: health-report
+
+on:
+  schedule:
+    # Monday 01:00 UTC = 09:00 Beijing.
+    - cron: "0 1 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y jq
+
+      - name: Run health report
+        env:
+          HEALTH_REPORT_FEISHU_URL: ${{ secrets.HEALTH_REPORT_FEISHU_URL }}
+          OPS_ALERT_FEISHU: ${{ secrets.OPS_ALERT_FEISHU }}
+          PROM_URL: ${{ secrets.PROM_URL }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_OWNER: ${{ github.repository_owner }}
+          GH_REPO: ${{ github.event.repository.name }}
+        run: bash bin/health-report.sh
