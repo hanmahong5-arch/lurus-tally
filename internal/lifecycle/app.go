@@ -27,6 +27,7 @@ import (
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
+	handlertelemetry "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/telemetry"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
@@ -405,6 +406,11 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
 		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler)
+
+	// POST /internal/v1/telemetry/web — browser-side product telemetry → NATS
+	// PSI_TELEMETRY.web.* (S0.Q3). Bearer-gated via the same key as metrics.
+	telemetryHandler := handlertelemetry.New(natsPub, cfg.PlatformInternalKey, "anonymous")
+	telemetryHandler.Register(r)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

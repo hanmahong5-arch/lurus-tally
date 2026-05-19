@@ -16,39 +16,92 @@ async function callRoute(body: unknown): Promise<Response> {
 
 describe("POST /api/otel-events", () => {
   beforeEach(() => {
-    // Ensure OTEL_COLLECTOR_URL is not set so the route acts as no-op.
     delete process.env.OTEL_COLLECTOR_URL
+    delete process.env.TALLY_BACKEND_TELEMETRY_URL
+    delete process.env.PLATFORM_INTERNAL_KEY
     vi.resetModules()
   })
 
   afterEach(() => {
     delete process.env.OTEL_COLLECTOR_URL
+    delete process.env.TALLY_BACKEND_TELEMETRY_URL
+    delete process.env.PLATFORM_INTERNAL_KEY
     vi.resetModules()
+    vi.restoreAllMocks()
   })
 
-  it("TestOtelEventsRoute_ValidPayload_Returns200", async () => {
+  it("legacy: accepts draft_restore", async () => {
     const res = await callRoute({ event: "draft_restore" })
     expect(res.status).toBe(200)
-    const json = await res.json()
-    expect(json.ok).toBe(true)
+    expect((await res.json()).ok).toBe(true)
   })
 
-  it("TestOtelEventsRoute_InvalidPayload_Returns400", async () => {
+  it("legacy: accepts undo_used with metadata", async () => {
+    const res = await callRoute({ event: "undo_used", metadata: { entity_type: "bill" } })
+    expect(res.status).toBe(200)
+  })
+
+  it("rejects missing event", async () => {
     const res = await callRoute({})
     expect(res.status).toBe(400)
-    const json = await res.json()
-    expect(json.ok).toBe(false)
+    expect((await res.json()).ok).toBe(false)
   })
 
-  it("TestOtelEventsRoute_UnknownEvent_Returns400", async () => {
-    const res = await callRoute({ event: "unknown_event" })
+  it("rejects unknown event", async () => {
+    const res = await callRoute({ event: "totally_made_up" })
     expect(res.status).toBe(400)
   })
 
-  it("TestOtelEventsRoute_ValidUndoUsedEvent_Returns200", async () => {
-    const res = await callRoute({ event: "undo_used", metadata: { page: "products" } })
+  // S0.Q3: each new event is in the allow-list.
+  for (const event of [
+    "palette_invocation",
+    "ai_drawer_open",
+    "plan_accept_rate",
+    "onboarding_first_po_exported",
+    "cmd_z_used",
+  ]) {
+    it(`S0.Q3: accepts ${event}`, async () => {
+      const res = await callRoute({ event, metadata: { sample: "value" } })
+      expect(res.status).toBe(200)
+    })
+  }
+
+  it("S0.Q3: forwards to backend telemetry URL when set", async () => {
+    process.env.TALLY_BACKEND_TELEMETRY_URL = "http://backend.test/internal/v1/telemetry/web"
+    const fetchMock = vi.fn(() => Promise.resolve(new Response("ok", { status: 200 })))
+    vi.stubGlobal("fetch", fetchMock)
+
+    const res = await callRoute({
+      event: "palette_invocation",
+      metadata: { latency_ms: 123, query_chars: 4, action_picked: "navigate" },
+    })
+
     expect(res.status).toBe(200)
-    const json = await res.json()
-    expect(json.ok).toBe(true)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const callArg = fetchMock.mock.calls[0][0]
+    expect(callArg).toBe("http://backend.test/internal/v1/telemetry/web")
+  })
+
+  it("S0.Q3: adds Authorization header when PLATFORM_INTERNAL_KEY set", async () => {
+    process.env.TALLY_BACKEND_TELEMETRY_URL = "http://backend.test/internal/v1/telemetry/web"
+    process.env.PLATFORM_INTERNAL_KEY = "test-secret"
+    const fetchMock = vi.fn(() => Promise.resolve(new Response("ok", { status: 200 })))
+    vi.stubGlobal("fetch", fetchMock)
+
+    await callRoute({
+      event: "ai_drawer_open",
+      metadata: { page_context: "/products", trigger: "shortcut" },
+    })
+
+    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>
+    expect(headers.Authorization).toBe("Bearer test-secret")
+  })
+
+  it("S0.Q3: swallows backend forward failure (UI must not break)", async () => {
+    process.env.TALLY_BACKEND_TELEMETRY_URL = "http://backend.test/internal/v1/telemetry/web"
+    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("net down"))))
+
+    const res = await callRoute({ event: "cmd_z_used", metadata: { entity_type: "bill", undo_latency_ms: 18 } })
+    expect(res.status).toBe(200)
   })
 })

@@ -66,6 +66,13 @@ type Publisher interface {
 	// PublishLowStockAlert emits PSI_EVENTS.alert.low_stock.
 	PublishLowStockAlert(ctx context.Context, tenantID string, payload LowStockAlertPayload) error
 
+	// PublishWebTelemetry emits a browser-side product event to
+	// PSI_TELEMETRY.web.<eventName>. eventName MUST be present in
+	// AllowedWebTelemetryEvents (see events.go); the caller validates.
+	// payload is forwarded verbatim — no schema enforcement at this
+	// layer, since the typed contract lives in web/lib/telemetry.ts.
+	PublishWebTelemetry(ctx context.Context, tenantID, eventName string, payload any) error
+
 	// Close drains and closes the underlying NATS connection.
 	Close() error
 }

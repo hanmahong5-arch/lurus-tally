@@ -105,7 +105,39 @@ func (p *jsPublisher) PublishLowStockAlert(ctx context.Context, tenantID string,
 	return p.publishEnvelope(ctx, EventTypeAlertLowStock, tenantID, payload)
 }
 
+// PublishWebTelemetry — see SubjectWebTelemetry. Goes to PSI_TELEMETRY.web.*
+// rather than PSI_EVENTS.*, so it bypasses publishEnvelope's subject helper.
+func (p *jsPublisher) PublishWebTelemetry(ctx context.Context, tenantID, eventName string, payload any) error {
+	if _, ok := AllowedWebTelemetryEvents[eventName]; !ok {
+		return fmt.Errorf("nats publisher: web telemetry event %q not in allow-list", eventName)
+	}
+	data, _, err := buildEvent("web."+eventName, tenantID, payload)
+	if err != nil {
+		p.errCount.Add(1)
+		return err
+	}
+	subject := SubjectWebTelemetry(eventName)
+	pubCtx, cancel := context.WithTimeout(ctx, p.timeout)
+	defer cancel()
+	if _, err := p.js.Publish(pubCtx, subject, data); err != nil {
+		p.errCount.Add(1)
+		p.log.Error("nats publish failed (telemetry)",
+			"subject", subject,
+			"event_name", eventName,
+			"tenant_id", tenantID,
+			"error", err.Error(),
+			"total_errors", p.errCount.Load(),
+		)
+		return fmt.Errorf("nats publisher: publish telemetry %q to %s: %w", eventName, subject, err)
+	}
+	return nil
+}
+
 // --- noopPublisher implementations (NoOpFallback path) ---
+
+func (n *noopPublisher) PublishWebTelemetry(_ context.Context, _ string, _ string, _ any) error {
+	return nil
+}
 
 func (n *noopPublisher) PublishStockMovementRecorded(_ context.Context, _ string, _ StockMovementRecordedPayload) error {
 	return nil
