@@ -10,3 +10,4 @@ resources:
   - service.yaml
   - service-web.yaml
   - ingressroute.yaml
+  - cronjob-pgbackup.yaml

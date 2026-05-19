@@ -68,7 +68,9 @@ describe("POST /api/otel-events", () => {
 
   it("S0.Q3: forwards to backend telemetry URL when set", async () => {
     process.env.TALLY_BACKEND_TELEMETRY_URL = "http://backend.test/internal/v1/telemetry/web"
-    const fetchMock = vi.fn(() => Promise.resolve(new Response("ok", { status: 200 })))
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      () => Promise.resolve(new Response("ok", { status: 200 }))
+    )
     vi.stubGlobal("fetch", fetchMock)
 
     const res = await callRoute({
@@ -78,14 +80,16 @@ describe("POST /api/otel-events", () => {
 
     expect(res.status).toBe(200)
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    const callArg = fetchMock.mock.calls[0][0]
+    const callArg = fetchMock.mock.calls[0]?.[0]
     expect(callArg).toBe("http://backend.test/internal/v1/telemetry/web")
   })
 
   it("S0.Q3: adds Authorization header when PLATFORM_INTERNAL_KEY set", async () => {
     process.env.TALLY_BACKEND_TELEMETRY_URL = "http://backend.test/internal/v1/telemetry/web"
     process.env.PLATFORM_INTERNAL_KEY = "test-secret"
-    const fetchMock = vi.fn(() => Promise.resolve(new Response("ok", { status: 200 })))
+    const fetchMock = vi.fn<(input: RequestInfo | URL, init?: RequestInit) => Promise<Response>>(
+      () => Promise.resolve(new Response("ok", { status: 200 }))
+    )
     vi.stubGlobal("fetch", fetchMock)
 
     await callRoute({
@@ -93,7 +97,8 @@ describe("POST /api/otel-events", () => {
       metadata: { page_context: "/products", trigger: "shortcut" },
     })
 
-    const headers = (fetchMock.mock.calls[0][1] as RequestInit).headers as Record<string, string>
+    const init = fetchMock.mock.calls[0]?.[1]
+    const headers = (init?.headers ?? {}) as Record<string, string>
     expect(headers.Authorization).toBe("Bearer test-secret")
   })
 

@@ -1,0 +1,128 @@
+# S0.Q4 — Daily pg_dump of the `tally` schema to MinIO. 14d retention.
+#
+# Why not WAL archiving: incremental backup is overkill for current data
+# volume; daily full dump + 14d window covers the first 10 customers and
+# keeps restore time bounded. Re-evaluate when tenants > 100.
+#
+# Restore drill (run once after first successful job to verify):
+#   kubectl -n lurus-tally create job --from=cronjob/tally-pgbackup drill-1
+#   mc cp lurus-stage-minio/tally-backup/<today>.dump /tmp/
+#   psql "$PG_URL" -c "CREATE SCHEMA tally_restore_test;"
+#   pg_restore --no-owner -d "$PG_URL" --schema=tally \
+#     --schema-rename=tally:tally_restore_test /tmp/<today>.dump
+#   psql "$PG_URL" -c "SELECT count(*) FROM tally_restore_test.product;"
+#   psql "$PG_URL" -c "DROP SCHEMA tally_restore_test CASCADE;"
+#
+# Hard rule (lurus/CLAUDE.md R6 磁盘): dumps land on MinIO; emptyDir caps
+# at 1Gi so a runaway dump cannot fill the node root.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: tally-pgbackup
+  labels:
+    app.kubernetes.io/name: tally-pgbackup
+    app.kubernetes.io/part-of: tally
+spec:
+  # Daily at 02:00 UTC = 10:00 Beijing — off-peak for the tally tenants.
+  schedule: "0 2 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  startingDeadlineSeconds: 1800
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      ttlSecondsAfterFinished: 259200 # 3d — keep recent run logs for ops review
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: pgbackup
+              image: postgres:16-alpine
+              imagePullPolicy: IfNotPresent
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  TS=$(date -u +%Y-%m-%d)
+                  DUMP=/work/${TS}.dump
+                  echo ">> dumping schema=tally to $DUMP"
+                  PGPASSWORD="$PG_PASSWORD" pg_dump \
+                    --host="$PG_HOST" --port="$PG_PORT" \
+                    --username="$PG_USER" --dbname="$PG_DB" \
+                    --schema=tally --format=custom --no-owner \
+                    --file="$DUMP"
+                  SIZE=$(stat -c %s "$DUMP")
+                  echo ">> dump size: $SIZE bytes"
+                  if [ "$SIZE" -lt 1048576 ]; then
+                    echo "!! dump under 1MB — tally schema empty? aborting upload" >&2
+                    exit 1
+                  fi
+                  echo ">> installing mc"
+                  apk add --no-cache curl
+                  curl -sSL https://dl.min.io/client/mc/release/linux-amd64/mc -o /usr/local/bin/mc
+                  chmod +x /usr/local/bin/mc
+                  mc alias set s3 "$MINIO_ENDPOINT" "$MINIO_ACCESS_KEY" "$MINIO_SECRET_KEY"
+                  echo ">> upload to s3/$MINIO_BUCKET/$TS.dump"
+                  mc cp "$DUMP" "s3/$MINIO_BUCKET/${TS}.dump"
+                  echo ">> trim older than 14d"
+                  mc rm --recursive --force --older-than 14d "s3/$MINIO_BUCKET/" || true
+                  echo ">> ok"
+              env:
+                - name: PG_HOST
+                  valueFrom:
+                    secretKeyRef:
+                      name: tally-secrets
+                      key: PG_HOST
+                - name: PG_PORT
+                  valueFrom:
+                    secretKeyRef:
+                      name: tally-secrets
+                      key: PG_PORT
+                - name: PG_USER
+                  valueFrom:
+                    secretKeyRef:
+                      name: tally-secrets
+                      key: PG_USER
+                - name: PG_PASSWORD
+                  valueFrom:
+                    secretKeyRef:
+                      name: tally-secrets
+                      key: PG_PASSWORD
+                - name: PG_DB
+                  valueFrom:
+                    secretKeyRef:
+                      name: tally-secrets
+                      key: PG_DB
+                - name: MINIO_ENDPOINT
+                  valueFrom:
+                    secretKeyRef:
+                      name: tally-secrets
+                      key: MINIO_ENDPOINT
+                - name: MINIO_ACCESS_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: tally-secrets
+                      key: MINIO_ACCESS_KEY
+                - name: MINIO_SECRET_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: tally-secrets
+                      key: MINIO_SECRET_KEY
+                - name: MINIO_BUCKET
+                  value: tally-backup
+              volumeMounts:
+                - name: work
+                  mountPath: /work
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 128Mi
+                limits:
+                  cpu: 500m
+                  memory: 512Mi
+          volumes:
+            - name: work
+              emptyDir:
+                sizeLimit: 1Gi

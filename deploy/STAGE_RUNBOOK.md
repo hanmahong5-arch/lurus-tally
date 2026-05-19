@@ -124,3 +124,45 @@ ssh root@100.122.83.20 "kubectl -n lurus-tally get pods -o wide"
 ssh root@100.122.83.20 "kubectl -n lurus-tally top pods 2>/dev/null"
 ssh root@100.122.83.20 "kubectl -n lurus-tally exec deploy/tally-backend -- env | grep -E '^(DATABASE|REDIS|NATS|PLATFORM|NEWAPI|ZITADEL)_' | sed 's/=.*/=***/'"
 ```
+
+## 8. PG backup CronJob (S0.Q4)
+
+每日 02:00 UTC（北京 10:00）`pg_dump --schema=tally --format=custom` → MinIO `s3://tally-backup/<YYYY-MM-DD>.dump`。14 天保留。Manifest: `deploy/k8s/base/cronjob-pgbackup.yaml`。
+
+### 验证 CronJob 正常调度
+```bash
+ssh root@100.122.83.20 "kubectl -n lurus-tally get cronjob tally-pgbackup"
+ssh root@100.122.83.20 "kubectl -n lurus-tally get jobs -l app.kubernetes.io/name=tally-pgbackup --sort-by=.metadata.creationTimestamp"
+ssh root@100.122.83.20 "kubectl -n lurus-tally logs jobs/<latest-job-name>"
+```
+
+### 手动触发一次
+```bash
+ssh root@100.122.83.20 "kubectl -n lurus-tally create job --from=cronjob/tally-pgbackup drill-$(date +%s)"
+ssh root@100.122.83.20 "kubectl -n lurus-tally logs -f jobs/drill-XXX"
+```
+
+成功标志：log 末尾 `>> ok`，MinIO bucket 见 `<date>.dump` 文件 > 1MB。
+
+### Restore drill（S0 sprint exit 硬要求，至少跑一次）
+脚本 `bin/pg-restore-drill.sh`（如存在）或手动：
+```bash
+# 1. 从 MinIO 拉最新 dump 到一个临时位置
+ssh root@100.122.83.20 "kubectl -n lurus-tally exec deploy/tally-backend -- mc cp s3/tally-backup/$(date -u +%Y-%m-%d).dump /tmp/drill.dump"
+
+# 2. 创建临时 schema 并 restore
+ssh root@100.122.83.20 'kubectl -n lurus-tally exec deploy/tally-backend -- psql "$DATABASE_DSN" -c "CREATE SCHEMA tally_restore_test;"'
+ssh root@100.122.83.20 'kubectl -n lurus-tally exec deploy/tally-backend -- pg_restore --no-owner -d "$DATABASE_DSN" --schema=tally --schema-rename=tally:tally_restore_test /tmp/drill.dump'
+
+# 3. 对比行数（核心表）
+ssh root@100.122.83.20 'kubectl -n lurus-tally exec deploy/tally-backend -- psql "$DATABASE_DSN" -c "SELECT '\''restore'\'' AS src, count(*) FROM tally_restore_test.product UNION ALL SELECT '\''live'\'', count(*) FROM tally.product;"'
+
+# 4. 清理临时 schema
+ssh root@100.122.83.20 'kubectl -n lurus-tally exec deploy/tally-backend -- psql "$DATABASE_DSN" -c "DROP SCHEMA tally_restore_test CASCADE;"'
+```
+
+**Exit 标准**：restore.product 行数与 live.product 误差 ≤ 5%（同步窗口期内的写入会有少许差）。drill log 贴 `_bmad-output/planning-artifacts/stories/S0.Q4-pg-backup-cronjob.md` Dev Agent Record。
+
+### 已知 prereq
+- K8s Secret `tally-secrets` 需包含 8 个新 key: `PG_HOST` / `PG_PORT` / `PG_USER` / `PG_PASSWORD` / `PG_DB` / `MINIO_ENDPOINT` / `MINIO_ACCESS_KEY` / `MINIO_SECRET_KEY`。如未注入，CronJob 会 `CreateContainerConfigError`。
+- MinIO bucket `tally-backup` 需提前在 R6 minio CLI/UI 创建，cron 不会自建。
