@@ -64,6 +64,12 @@ func (uc *ApproveSaleUseCase) Execute(ctx context.Context, req ApproveSaleReques
 		return fmt.Errorf("approve sale: bill_id is required")
 	}
 
+	// Pre-lock idempotency check: if already approved, return nil immediately.
+	// The lock-and-recheck inside executeInTx still guards concurrent races.
+	if preFetch, err := uc.repo.GetBill(ctx, req.TenantID, req.BillID); err == nil && preFetch.Status == domain.StatusApproved {
+		return nil
+	}
+
 	return uc.repo.WithTx(ctx, func(tx *sql.Tx) error {
 		return uc.executeInTx(ctx, tx, req)
 	})
@@ -85,6 +91,11 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 	head, err := uc.repo.GetBillForUpdate(ctx, tx, req.TenantID, req.BillID)
 	if err != nil {
 		return fmt.Errorf("approve sale: load bill: %w", err)
+	}
+
+	// Idempotent: if concurrently approved between pre-lock check and lock acquisition, return nil.
+	if head.Status == domain.StatusApproved {
+		return nil
 	}
 
 	if !head.Status.CanTransitionTo(domain.StatusApproved) {

@@ -38,6 +38,12 @@ const (
 // ErrInvalidTransition is returned when the requested status transition is not allowed.
 var ErrInvalidTransition = errors.New("bill: invalid status transition")
 
+// ErrIllegalTransition is the typed sentinel returned by BillHead.CanTransitionTo.
+var ErrIllegalTransition = errors.New("bill: illegal state transition")
+
+// ErrCannotCancelPaidBill is returned when cancelling a bill that already has payments.
+var ErrCannotCancelPaidBill = errors.New("bill: cannot cancel a bill with non-zero paid_amount")
+
 // ReceivableAmount returns TotalAmount - PaidAmount, clamped to zero.
 // It is a derived value; never stored directly.
 func (h *BillHead) ReceivableAmount() decimal.Decimal {
@@ -61,6 +67,32 @@ func (s BillStatus) CanTransitionTo(next BillStatus) bool {
 	default:
 		return false
 	}
+}
+
+// CanTransitionTo returns nil if the state machine allows moving from the bill's current
+// status to next, otherwise returns ErrIllegalTransition.
+//
+// Legal transitions (including restore cap):
+//   - Draft     → Approved  (idempotent — callers short-circuit when already Approved)
+//   - Draft     → Cancelled
+//   - Approved  → Cancelled (only if paid_amount == 0; caller enforces ErrCannotCancelPaidBill)
+//   - Cancelled → Draft     (restore) — only when Revision == 0 (first-time restore)
+func (b *BillHead) CanTransitionTo(next BillStatus) error {
+	switch b.Status {
+	case StatusDraft:
+		if next == StatusApproved || next == StatusCancelled {
+			return nil
+		}
+	case StatusApproved:
+		if next == StatusCancelled {
+			return nil
+		}
+	case StatusCancelled:
+		if next == StatusDraft && b.Revision == 0 {
+			return nil
+		}
+	}
+	return ErrIllegalTransition
 }
 
 // BillHead maps to the tally.bill_head table.
@@ -96,6 +128,10 @@ type BillHead struct {
 	// Approval metadata
 	ApprovedAt *time.Time `json:"approved_at,omitempty"`
 	ApprovedBy *uuid.UUID `json:"approved_by,omitempty"`
+
+	// Revision is incremented each time the bill transitions to a new status and is persisted.
+	// It is used to cap cancel→restore cycles: only Revision == 0 allows a restore.
+	Revision int `json:"revision"`
 
 	Remark    string    `json:"remark,omitempty"`
 	CreatedAt time.Time `json:"created_at"`

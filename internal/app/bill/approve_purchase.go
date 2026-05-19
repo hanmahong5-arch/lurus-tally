@@ -56,6 +56,14 @@ func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID,
 		return fmt.Errorf("approve purchase: bill_id is required")
 	}
 
+	// Pre-lock idempotency check: if the bill is already approved, return nil immediately.
+	// This avoids taking the advisory lock on every duplicate-click retry, which is the
+	// common case. The lock-and-recheck inside still guards the concurrent race.
+	preFetch, err := uc.repo.GetBill(ctx, tenantID, billID)
+	if err == nil && preFetch.Status == domain.StatusApproved {
+		return nil
+	}
+
 	return uc.repo.WithTx(ctx, func(tx *sql.Tx) error {
 		// Acquire advisory lock to prevent concurrent double-approval of the same bill.
 		if err := uc.repo.AcquireBillAdvisoryLock(ctx, tx, tenantID, billID); err != nil {
@@ -66,6 +74,11 @@ func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID,
 		head, err := uc.repo.GetBillForUpdate(ctx, tx, tenantID, billID)
 		if err != nil {
 			return fmt.Errorf("approve purchase: load bill: %w", err)
+		}
+
+		// Idempotent: if concurrently approved between pre-lock check and lock acquisition, return nil.
+		if head.Status == domain.StatusApproved {
+			return nil
 		}
 
 		// Validate state machine transition.

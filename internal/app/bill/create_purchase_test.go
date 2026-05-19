@@ -297,13 +297,18 @@ func (m *mockBillRepo) UpdateBillStatus(_ context.Context, _ *sql.Tx, _, billID 
 		return appbill.ErrBillNotFound
 	}
 	h.Status = status
-	if at, ok := meta["approved_at"]; ok {
-		t := at.(time.Time)
-		h.ApprovedAt = &t
-	}
-	if by, ok := meta["approved_by"]; ok {
-		id := by.(uuid.UUID)
-		h.ApprovedBy = &id
+	if meta != nil {
+		if at, ok := meta["approved_at"]; ok {
+			t := at.(time.Time)
+			h.ApprovedAt = &t
+		}
+		if by, ok := meta["approved_by"]; ok {
+			id := by.(uuid.UUID)
+			h.ApprovedBy = &id
+		}
+		if rev, ok := meta["revision"]; ok {
+			h.Revision = rev.(int)
+		}
 	}
 	return nil
 }

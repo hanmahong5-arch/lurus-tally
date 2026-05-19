@@ -167,7 +167,7 @@ func (r *Repo) GetBillForUpdate(ctx context.Context, tx *sql.Tx, tenantID, billI
 	const q = `
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       paid_amount, approved_at, approved_by, remark, created_at, updated_at
+		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at
 		FROM tally.bill_head
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
 		FOR UPDATE`
@@ -179,7 +179,7 @@ func (r *Repo) GetBill(ctx context.Context, tenantID, billID uuid.UUID) (*domain
 	const q = `
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       paid_amount, approved_at, approved_by, remark, created_at, updated_at
+		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at
 		FROM tally.bill_head
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
 
@@ -198,6 +198,7 @@ func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
 		&subtotal, &shippingFee, &taxAmount, &totalAmount,
 		&paidAmount,
 		&h.ApprovedAt, &h.ApprovedBy,
+		&h.Revision,
 		&h.Remark, &h.CreatedAt, &h.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -263,6 +264,10 @@ func (r *Repo) UpdateBillStatus(ctx context.Context, tx *sql.Tx, tenantID, billI
 		if by, ok := meta["approved_by"]; ok {
 			q += fmt.Sprintf(", approved_by = $%d", len(args)+1)
 			args = append(args, by.(uuid.UUID))
+		}
+		if rev, ok := meta["revision"]; ok {
+			q += fmt.Sprintf(", revision = $%d", len(args)+1)
+			args = append(args, rev.(int))
 		}
 	}
 
@@ -368,7 +373,7 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 	q := `
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       paid_amount, approved_at, approved_by, remark, created_at, updated_at
+		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at
 		FROM tally.bill_head
 		WHERE ` + whereClause + `
 		ORDER BY created_at DESC
@@ -393,6 +398,7 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 			&subtotal, &shippingFee, &taxAmount, &totalAmount,
 			&paidAmount,
 			&h.ApprovedAt, &h.ApprovedBy,
+			&h.Revision,
 			&h.Remark, &h.CreatedAt, &h.UpdatedAt,
 		); err != nil {
 			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)

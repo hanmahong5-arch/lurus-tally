@@ -74,3 +74,84 @@ func TestBillStatus_Transitions_Illegal(t *testing.T) {
 		}
 	}
 }
+
+// TestBillHead_CanTransitionTo_LegalPairs verifies all legal BillHead.CanTransitionTo pairs.
+func TestBillHead_CanTransitionTo_LegalPairs(t *testing.T) {
+	cases := []struct {
+		name     string
+		head     domain.BillHead
+		next     domain.BillStatus
+		wantNil  bool
+	}{
+		{
+			name:    "draft→approved",
+			head:    domain.BillHead{Status: domain.StatusDraft},
+			next:    domain.StatusApproved,
+			wantNil: true,
+		},
+		{
+			name:    "draft→cancelled",
+			head:    domain.BillHead{Status: domain.StatusDraft},
+			next:    domain.StatusCancelled,
+			wantNil: true,
+		},
+		{
+			name:    "approved→cancelled",
+			head:    domain.BillHead{Status: domain.StatusApproved},
+			next:    domain.StatusCancelled,
+			wantNil: true,
+		},
+		{
+			name:    "cancelled→draft (revision=0, first restore)",
+			head:    domain.BillHead{Status: domain.StatusCancelled, Revision: 0},
+			next:    domain.StatusDraft,
+			wantNil: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.head.CanTransitionTo(tc.next)
+			if tc.wantNil && err != nil {
+				t.Errorf("expected nil, got %v", err)
+			}
+		})
+	}
+}
+
+// TestBillHead_CanTransitionTo_IllegalPairs verifies key illegal transitions.
+func TestBillHead_CanTransitionTo_IllegalPairs(t *testing.T) {
+	cases := []struct {
+		name string
+		head domain.BillHead
+		next domain.BillStatus
+	}{
+		{
+			name: "cancelled→draft (revision=1, cap reached)",
+			head: domain.BillHead{Status: domain.StatusCancelled, Revision: 1},
+			next: domain.StatusDraft,
+		},
+		{
+			name: "cancelled→draft (revision=2, already restored twice)",
+			head: domain.BillHead{Status: domain.StatusCancelled, Revision: 2},
+			next: domain.StatusDraft,
+		},
+		{
+			name: "approved→draft (not allowed)",
+			head: domain.BillHead{Status: domain.StatusApproved},
+			next: domain.StatusDraft,
+		},
+		{
+			name: "cancelled→approved (not allowed)",
+			head: domain.BillHead{Status: domain.StatusCancelled},
+			next: domain.StatusApproved,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.head.CanTransitionTo(tc.next)
+			if err == nil {
+				t.Errorf("expected ErrIllegalTransition, got nil")
+			}
+		})
+	}
+}

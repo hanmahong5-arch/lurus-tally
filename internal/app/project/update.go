@@ -49,7 +49,10 @@ func (uc *UpdateUseCase) Execute(ctx context.Context, tenantID, id uuid.UUID, in
 	if in.EndDate != nil {
 		p.EndDate = in.EndDate
 	}
-	if in.Status != nil {
+	if in.Status != nil && *in.Status != p.Status {
+		if err := p.Status.CanTransitionTo(*in.Status); err != nil {
+			return nil, fmt.Errorf("project update: %w", err)
+		}
 		p.Status = *in.Status
 	}
 	if in.Address != nil {
