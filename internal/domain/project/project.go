@@ -16,10 +16,41 @@ const (
 	StatusPaused    ProjectStatus = "paused"
 	StatusCompleted ProjectStatus = "completed"
 	StatusCancelled ProjectStatus = "cancelled"
+	StatusArchived  ProjectStatus = "archived"
 )
+
+// ErrIllegalProjectStatusTransition is returned by CanTransitionTo when the requested
+// status transition is not part of the defined state machine.
+var ErrIllegalProjectStatusTransition = errors.New("project: illegal status transition")
 
 // String returns the string value of the ProjectStatus.
 func (s ProjectStatus) String() string { return string(s) }
+
+// CanTransitionTo returns nil if the state machine allows moving from s to next.
+// Legal transitions:
+//   - active    → completed ✓
+//   - active    → archived  ✓
+//   - completed → archived  ✓
+//   - archived  → active    ✓ (un-archive)
+//
+// All other transitions — including completed → active — return ErrIllegalProjectStatusTransition.
+func (s ProjectStatus) CanTransitionTo(next ProjectStatus) error {
+	switch s {
+	case StatusActive:
+		if next == StatusCompleted || next == StatusArchived {
+			return nil
+		}
+	case StatusCompleted:
+		if next == StatusArchived {
+			return nil
+		}
+	case StatusArchived:
+		if next == StatusActive {
+			return nil
+		}
+	}
+	return ErrIllegalProjectStatusTransition
+}
 
 // Project is the domain entity for a landscaping/engineering project.
 type Project struct {

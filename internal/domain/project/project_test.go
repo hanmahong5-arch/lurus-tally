@@ -81,10 +81,54 @@ func TestProjectStatus_AllValues(t *testing.T) {
 		{project.StatusPaused, "paused"},
 		{project.StatusCompleted, "completed"},
 		{project.StatusCancelled, "cancelled"},
+		{project.StatusArchived, "archived"},
 	}
 	for _, tc := range cases {
 		if tc.status.String() != tc.want {
 			t.Errorf("status %q: got %q, want %q", tc.status, tc.status.String(), tc.want)
 		}
+	}
+}
+
+// TestProjectStatus_CanTransitionTo_Legal verifies all legal project status transitions.
+func TestProjectStatus_CanTransitionTo_Legal(t *testing.T) {
+	cases := []struct {
+		from project.ProjectStatus
+		to   project.ProjectStatus
+	}{
+		{project.StatusActive, project.StatusCompleted},
+		{project.StatusActive, project.StatusArchived},
+		{project.StatusCompleted, project.StatusArchived},
+		{project.StatusArchived, project.StatusActive},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.from)+"→"+string(tc.to), func(t *testing.T) {
+			if err := tc.from.CanTransitionTo(tc.to); err != nil {
+				t.Errorf("expected legal transition, got %v", err)
+			}
+		})
+	}
+}
+
+// TestProjectStatus_CanTransitionTo_Illegal verifies key illegal transitions including
+// the previously-allowed completed→active path.
+func TestProjectStatus_CanTransitionTo_Illegal(t *testing.T) {
+	cases := []struct {
+		from project.ProjectStatus
+		to   project.ProjectStatus
+	}{
+		{project.StatusCompleted, project.StatusActive}, // was silently allowed before W1
+		{project.StatusArchived, project.StatusCompleted},
+		{project.StatusArchived, project.StatusCancelled},
+		{project.StatusActive, project.StatusPaused},   // paused transitions not in state machine
+		{project.StatusCancelled, project.StatusActive},
+	}
+	for _, tc := range cases {
+		t.Run(string(tc.from)+"→"+string(tc.to), func(t *testing.T) {
+			err := tc.from.CanTransitionTo(tc.to)
+			if err == nil {
+				t.Errorf("expected ErrIllegalProjectStatusTransition, got nil")
+			}
+		})
 	}
 }

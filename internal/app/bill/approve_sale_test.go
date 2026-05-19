@@ -3,7 +3,6 @@ package bill_test
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"testing"
 	"time"
 
@@ -246,23 +245,26 @@ func TestApproveSale_ZeroPaidAmount_SkipsPayment(t *testing.T) {
 	}
 }
 
-// TestApproveSale_AlreadyApproved_ReturnsError verifies re-approval returns invalid status error.
-func TestApproveSale_AlreadyApproved_ReturnsError(t *testing.T) {
+// TestApproveSale_AlreadyApproved_ReturnsNilIdempotent verifies that re-approving an
+// already-Approved sale bill returns nil without emitting any stock movements (B3 idempotency).
+func TestApproveSale_AlreadyApproved_ReturnsNilIdempotent(t *testing.T) {
 	repo := newMockBillRepo()
 	warehouseID := uuid.New()
 	billID := seedSaleDraftBill(repo, 1, warehouseID)
 	repo.billsByID[billID].Status = domain.StatusApproved
 
-	uc := newApproveSaleUC(repo, newMockStockUC(), newMockProductUnitRepo(), newMockPaymentRepo())
+	stockUC := newMockStockUC()
+	uc := newApproveSaleUC(repo, stockUC, newMockProductUnitRepo(), newMockPaymentRepo())
 	err := uc.Execute(context.Background(), appbill.ApproveSaleRequest{
 		TenantID:  testTenantID,
 		BillID:    billID,
 		CreatorID: testCreatorID,
 	})
-	if err == nil {
-		t.Fatal("expected error for already-approved bill, got nil")
+	if err != nil {
+		t.Fatalf("expected nil for already-approved bill (idempotent), got %v", err)
 	}
-	if !errors.Is(err, appbill.ErrInvalidBillStatus) {
-		t.Errorf("expected ErrInvalidBillStatus, got %v", err)
+	// No stock movements must have been recorded.
+	if len(stockUC.calls) != 0 {
+		t.Errorf("expected 0 stock movements on idempotent approve, got %d", len(stockUC.calls))
 	}
 }

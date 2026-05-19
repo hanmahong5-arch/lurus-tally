@@ -3,7 +3,6 @@ package bill_test
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"testing"
 	"time"
 
@@ -161,22 +160,26 @@ func TestApprovePurchase_HappyPath_StockMovementsCreated(t *testing.T) {
 	}
 }
 
-// TestApprovePurchase_AlreadyApproved_Returns409 verifies that re-approving returns conflict.
-func TestApprovePurchase_AlreadyApproved_Returns409(t *testing.T) {
+// TestApprovePurchase_AlreadyApproved_ReturnsNilIdempotent verifies that re-approving an
+// already-Approved bill returns nil without emitting any stock movements.
+// This is the B3 idempotent short-circuit: duplicate-click / retry scenarios must be no-ops.
+func TestApprovePurchase_AlreadyApproved_ReturnsNilIdempotent(t *testing.T) {
 	repo := newMockBillRepo()
 	warehouseID := uuid.New()
 	billID := seedDraftBill(repo, 1, warehouseID)
 	// Force to approved state.
 	repo.billsByID[billID].Status = domain.StatusApproved
 
+	stockUC := newMockStockUC()
 	unitRepo := newMockProductUnitRepo()
-	uc := newApproveUC(repo, newMockStockUC(), unitRepo)
+	uc := newApproveUC(repo, stockUC, unitRepo)
 	err := uc.Execute(context.Background(), testTenantID, billID, uuid.New())
-	if err == nil {
-		t.Fatal("expected error for already-approved bill, got nil")
+	if err != nil {
+		t.Fatalf("expected nil for already-approved bill (idempotent), got %v", err)
 	}
-	if !errors.Is(err, appbill.ErrInvalidBillStatus) {
-		t.Errorf("expected ErrInvalidBillStatus, got %v", err)
+	// No stock movements must have been recorded.
+	if len(stockUC.calls) != 0 {
+		t.Errorf("expected 0 stock movements on idempotent approve, got %d", len(stockUC.calls))
 	}
 }
 

@@ -66,3 +66,52 @@ func TestRestorePurchaseUseCase_Execute_IdempotentOnDraft(t *testing.T) {
 		t.Errorf("status = %d, want %d (Draft)", repo.billsByID[billID].Status, domain.StatusDraft)
 	}
 }
+
+// TestRestorePurchaseUseCase_Execute_SecondRestoreRejected verifies that a bill which has
+// already been restored once (Revision >= 1) cannot be restored again.
+// This caps the cancel→restore→cancel loop to 1 cycle per bill lifetime.
+func TestRestorePurchaseUseCase_Execute_SecondRestoreRejected(t *testing.T) {
+	repo := newMockBillRepo()
+	uc := appbill.NewRestorePurchaseUseCase(repo)
+
+	warehouseID := uuid.New()
+	billID := seedDraftBill(repo, 1, warehouseID)
+
+	// Simulate a bill that has been through one cancel→restore cycle already (Revision = 1).
+	repo.billsByID[billID].Status = domain.StatusCancelled
+	repo.billsByID[billID].Revision = 1
+
+	err := uc.Execute(context.Background(), testTenantID, billID)
+	if err == nil {
+		t.Fatal("expected ErrBillAlreadyRestoredOnce, got nil")
+	}
+	if !errors.Is(err, appbill.ErrBillAlreadyRestoredOnce) {
+		t.Errorf("expected ErrBillAlreadyRestoredOnce, got %v", err)
+	}
+	// Status must remain Cancelled.
+	if repo.billsByID[billID].Status != domain.StatusCancelled {
+		t.Errorf("status changed after rejection: got %d, want Cancelled", repo.billsByID[billID].Status)
+	}
+}
+
+// TestRestorePurchaseUseCase_Execute_FirstRestoreIncrementsRevision verifies that a successful
+// restore increments Revision from 0 to 1.
+func TestRestorePurchaseUseCase_Execute_FirstRestoreIncrementsRevision(t *testing.T) {
+	repo := newMockBillRepo()
+	uc := appbill.NewRestorePurchaseUseCase(repo)
+
+	warehouseID := uuid.New()
+	billID := seedDraftBill(repo, 1, warehouseID)
+	repo.billsByID[billID].Status = domain.StatusCancelled
+	repo.billsByID[billID].Revision = 0
+
+	if err := uc.Execute(context.Background(), testTenantID, billID); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if repo.billsByID[billID].Status != domain.StatusDraft {
+		t.Errorf("status = %d, want Draft", repo.billsByID[billID].Status)
+	}
+	if repo.billsByID[billID].Revision != 1 {
+		t.Errorf("revision = %d, want 1", repo.billsByID[billID].Revision)
+	}
+}

@@ -174,5 +174,71 @@ func TestProjectListUseCase_Execute_DefaultsLimit(t *testing.T) {
 	}
 }
 
+// statusFakeRepo extends fakeRepo to return a project with a configurable current status.
+type statusFakeRepo struct {
+	fakeRepo
+	currentStatus domain.ProjectStatus
+}
+
+func (s *statusFakeRepo) GetByID(_ context.Context, _, _ uuid.UUID) (*domain.Project, error) {
+	if s.getErr != nil {
+		return nil, s.getErr
+	}
+	return &domain.Project{
+		ID:        uuid.New(),
+		Name:      "河道绿化",
+		Code:      "P001",
+		Status:    s.currentStatus,
+		DeletedAt: nil,
+	}, nil
+}
+
+// TestProjectUpdateUseCase_LegalStatusTransition verifies active→completed is allowed.
+func TestProjectUpdateUseCase_LegalStatusTransition(t *testing.T) {
+	repo := &statusFakeRepo{currentStatus: domain.StatusActive}
+	uc := appproject.NewUpdateUseCase(repo)
+
+	next := domain.StatusCompleted
+	p, err := uc.Execute(context.Background(), uuid.New(), uuid.New(), domain.UpdateInput{
+		Status: &next,
+	})
+	if err != nil {
+		t.Fatalf("expected nil for active→completed, got %v", err)
+	}
+	if p.Status != domain.StatusCompleted {
+		t.Errorf("status = %q, want completed", p.Status)
+	}
+}
+
+// TestProjectUpdateUseCase_IllegalStatusTransition verifies completed→active is rejected.
+// Before W1 this transition was silently allowed by the update use case.
+func TestProjectUpdateUseCase_IllegalStatusTransition(t *testing.T) {
+	repo := &statusFakeRepo{currentStatus: domain.StatusCompleted}
+	uc := appproject.NewUpdateUseCase(repo)
+
+	next := domain.StatusActive
+	_, err := uc.Execute(context.Background(), uuid.New(), uuid.New(), domain.UpdateInput{
+		Status: &next,
+	})
+	if err == nil {
+		t.Fatal("expected error for completed→active (illegal), got nil")
+	}
+}
+
+// TestProjectUpdateUseCase_SameStatusIsNoOp verifies that setting status to the current value
+// does not trigger a state-machine check (no-op update path).
+func TestProjectUpdateUseCase_SameStatusIsNoOp(t *testing.T) {
+	repo := &statusFakeRepo{currentStatus: domain.StatusActive}
+	uc := appproject.NewUpdateUseCase(repo)
+
+	same := domain.StatusActive
+	_, err := uc.Execute(context.Background(), uuid.New(), uuid.New(), domain.UpdateInput{
+		Status: &same,
+	})
+	if err != nil {
+		t.Fatalf("expected nil for same-status update, got %v", err)
+	}
+}
+
 // Compile-time check.
 var _ appproject.Repository = (*fakeRepo)(nil)
