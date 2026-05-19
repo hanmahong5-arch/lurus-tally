@@ -301,6 +301,85 @@ func TestIdempotency_4xxIsCached(t *testing.T) {
 	}
 }
 
+// TestIdempotency_422IsCached verifies that a 422 (validation error) response is cached
+// — replaying the same bad payload should return the same error without re-running.
+func TestIdempotency_422IsCached(t *testing.T) {
+	store := newMemStore()
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(middleware.CtxKeyTenantID, "tenant-a")
+		c.Next()
+	})
+	r.Use(middleware.Idempotency(store))
+	var calls int32
+	r.POST("/validate", func(c *gin.Context) {
+		atomic.AddInt32(&calls, 1)
+		c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "validation_error", "message": "qty must be > 0"})
+	})
+
+	for i := 0; i < 3; i++ {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/validate", nil)
+		req.Header.Set(middleware.HeaderIdempotencyKey, "k-422")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("call %d: expected 422, got %d", i, w.Code)
+		}
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("422 should be cached after first call; handler ran %d times (want 1)", got)
+	}
+}
+
+// TestIdempotency_429NotCached verifies that 429 (rate limited) is NOT cached.
+// The client must be able to retry after the rate-limit budget resets and succeed.
+func TestIdempotency_429NotCached(t *testing.T) {
+	store := newMemStore()
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(middleware.CtxKeyTenantID, "tenant-a")
+		c.Next()
+	})
+	r.Use(middleware.Idempotency(store))
+
+	var calls int32
+	// Handler returns 429 for the first call, then 200 for subsequent calls —
+	// this simulates a rate-limit budget resetting between retries.
+	r.POST("/limited", func(c *gin.Context) {
+		n := atomic.AddInt32(&calls, 1)
+		if n == 1 {
+			c.JSON(http.StatusTooManyRequests, gin.H{"error": "rate_limited"})
+			return
+		}
+		c.JSON(http.StatusCreated, gin.H{"ok": true})
+	})
+
+	// First call: should hit the handler and get 429.
+	w1 := httptest.NewRecorder()
+	req1, _ := http.NewRequest(http.MethodPost, "/limited", nil)
+	req1.Header.Set(middleware.HeaderIdempotencyKey, "k-rate")
+	r.ServeHTTP(w1, req1)
+	if w1.Code != http.StatusTooManyRequests {
+		t.Fatalf("first call: expected 429, got %d", w1.Code)
+	}
+
+	// Second call with same key: must NOT replay the 429 from cache — handler must run again.
+	w2 := httptest.NewRecorder()
+	req2, _ := http.NewRequest(http.MethodPost, "/limited", nil)
+	req2.Header.Set(middleware.HeaderIdempotencyKey, "k-rate")
+	r.ServeHTTP(w2, req2)
+	if w2.Code == http.StatusTooManyRequests && w2.Header().Get(middleware.HeaderIdempotencyReplay) == "true" {
+		t.Fatal("429 must not be served from idempotency cache — transient errors must not be replayed")
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("handler should have run twice (429 not cached); ran %d times", got)
+	}
+	// The second call should have reached the handler and received 201.
+	if w2.Code != http.StatusCreated {
+		t.Errorf("second call expected 201 after 429 was not cached, got %d", w2.Code)
+	}
+}
+
 func TestIdempotency_StoreFault_DegradesOpen(t *testing.T) {
 	store := newMemStore()
 	store.getErr = errSentinel

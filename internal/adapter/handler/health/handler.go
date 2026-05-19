@@ -4,6 +4,7 @@ package health
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -26,11 +27,10 @@ type Pinger interface {
 
 // Dep describes a single readiness dependency.
 //
-// Required=true means a Ping failure flips the response to 503; the pod will
-// be removed from k8s service endpoints until the probe recovers. Required=false
-// means the dep is reported in the response body but does not gate readiness —
-// use this for deps with a no-op fallback (e.g. NATS) or deps that the service
-// can boot without (e.g. Redis when AI is disabled).
+// Required=true means a Ping failure returns 503 and removes the pod from k8s
+// service endpoints until the probe recovers.
+// Required=false means the dep is reported in the degraded list but does not
+// gate readiness — 200 is returned with status="degraded".
 type Dep struct {
 	Name     string
 	Pinger   Pinger
@@ -64,52 +64,76 @@ func (h *Handler) Healthz(c *gin.Context) {
 }
 
 // Readyz handles GET /internal/v1/tally/ready (Kubernetes readiness probe).
-// Returns 200 only when every required dep responds to Ping within probeTimeout;
-// otherwise 503. Optional deps surface their status in the response body but
-// don't gate readiness. Pings run in parallel so total probe time ≈ slowest dep.
+//
+// Response contract:
+//   - All required deps healthy  → 200 {"status":"ok"}
+//   - All required deps healthy + ≥1 optional dep down
+//     → 200 {"status":"degraded","degraded":["cache",...]}  + slog.Warn
+//   - Any required dep down      → 503 {"status":"unhealthy","failures":["db",...]}
+//
+// Pings run in parallel so total probe time ≈ slowest dep.
+// NATS being optional (Required=false) means an outbox-backed service treats NATS
+// down as degraded rather than unhealthy — events are queued in the DB until NATS
+// recovers.
 func (h *Handler) Readyz(c *gin.Context) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), probeTimeout)
 	defer cancel()
 
-	results := make([]map[string]any, len(h.deps))
+	type result struct {
+		name     string
+		required bool
+		down     bool
+		errMsg   string
+	}
+	results := make([]result, len(h.deps))
+
 	var wg sync.WaitGroup
 	for i := range h.deps {
 		wg.Add(1)
 		go func(idx int) {
 			defer wg.Done()
 			d := h.deps[idx]
-			entry := map[string]any{
-				"name":     d.Name,
-				"required": d.Required,
-			}
+			r := result{name: d.Name, required: d.Required}
 			if err := d.Pinger.Ping(ctx); err != nil {
-				entry["status"] = "down"
-				entry["error"] = err.Error()
-			} else {
-				entry["status"] = "ok"
+				r.down = true
+				r.errMsg = err.Error()
 			}
-			results[idx] = entry
+			results[idx] = r
 		}(i)
 	}
 	wg.Wait()
 
-	overallReady := true
+	var failures []string
+	var degraded []string
 	for _, r := range results {
-		if r["status"] == "down" && r["required"].(bool) {
-			overallReady = false
-			break
+		if !r.down {
+			continue
+		}
+		if r.required {
+			failures = append(failures, r.name)
+		} else {
+			degraded = append(degraded, r.name)
 		}
 	}
 
-	status := "ready"
-	httpCode := http.StatusOK
-	if !overallReady {
-		status = "not_ready"
-		httpCode = http.StatusServiceUnavailable
+	if len(failures) > 0 {
+		c.JSON(http.StatusServiceUnavailable, gin.H{
+			"status":   "unhealthy",
+			"failures": failures,
+		})
+		return
 	}
 
-	c.JSON(httpCode, gin.H{
-		"status": status,
-		"deps":   results,
-	})
+	if len(degraded) > 0 {
+		slog.Warn("readiness probe: optional deps down",
+			slog.Any("degraded", degraded),
+		)
+		c.JSON(http.StatusOK, gin.H{
+			"status":  "degraded",
+			"degraded": degraded,
+		})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "ok"})
 }

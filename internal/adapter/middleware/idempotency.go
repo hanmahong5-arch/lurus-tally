@@ -41,8 +41,16 @@ type IdempotencyStore interface {
 var ErrIdemNotFound = errors.New("idempotency: key not found")
 
 // idempotencyEntry is the JSON envelope persisted in the store.
+//
+// Kind classifies the response for cache retention:
+//   - "ok"           — 2xx; always cached.
+//   - "client_error" — deterministic 4xx (validation, conflict, etc.); cached so
+//                      replays return the same error without re-running the handler.
+//   - "transient"    — 429 (rate limited); NOT cached so a retry can succeed after
+//                      the rate-limit budget resets.
 type idempotencyEntry struct {
 	Status      int    `json:"status"`
+	Kind        string `json:"kind"` // "ok" | "client_error" | "transient"
 	ContentType string `json:"ct,omitempty"`
 	Body        []byte `json:"body,omitempty"`
 }
@@ -162,9 +170,16 @@ func Idempotency(store IdempotencyStore) gin.HandlerFunc {
 		_ = store.Del(ctx, lockKey)
 
 		status := rec.Status()
-		if status >= http.StatusOK && status < http.StatusInternalServerError {
+		kind := classifyStatus(status)
+		if kind == idempotencyKindTransient {
+			// Do not cache transient errors (e.g. 429) so retries can succeed
+			// after the rate-limit budget resets.
+			return
+		}
+		if kind != "" {
 			payload, mErr := json.Marshal(idempotencyEntry{
 				Status:      status,
+				Kind:        kind,
 				ContentType: rec.Header().Get("Content-Type"),
 				Body:        rec.body.Bytes(),
 			})
@@ -172,6 +187,33 @@ func Idempotency(store IdempotencyStore) gin.HandlerFunc {
 				_ = store.Set(ctx, storeKey, payload, idempotencyCacheTTL)
 			}
 		}
+	}
+}
+
+const (
+	idempotencyKindOK          = "ok"
+	idempotencyKindClientError = "client_error"
+	idempotencyKindTransient   = "transient"
+)
+
+// classifyStatus returns the idempotency cache kind for a given HTTP status code.
+// Returns "" for status codes that must not be cached (5xx, or unrecognised ranges).
+//
+// Conservative policy:
+//   - 2xx → "ok", always cache.
+//   - 429 → "transient", never cache (retry after budget reset must reach the handler).
+//   - Other 4xx → "client_error", cache (deterministic: same input → same error).
+//   - 5xx → "" (not cached; existing behaviour preserved).
+func classifyStatus(status int) string {
+	switch {
+	case status >= http.StatusOK && status < http.StatusMultipleChoices:
+		return idempotencyKindOK
+	case status == http.StatusTooManyRequests:
+		return idempotencyKindTransient
+	case status >= http.StatusBadRequest && status < http.StatusInternalServerError:
+		return idempotencyKindClientError
+	default:
+		return ""
 	}
 }
 

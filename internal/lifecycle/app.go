@@ -36,6 +36,7 @@ import (
 	repoauth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/auth"
 	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
+	repooutbox "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/event_outbox"
 	repohorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/horticulture"
 	repopayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/payment"
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
@@ -68,11 +69,12 @@ import (
 // App is the application root. It holds all wired dependencies and manages
 // the HTTP server lifecycle. No global variables; all state lives here.
 type App struct {
-	cfg    *config.Config
-	log    *slog.Logger
-	engine *gin.Engine
-	srv    *http.Server
-	db     *sql.DB
+	cfg          *config.Config
+	log          *slog.Logger
+	engine       *gin.Engine
+	srv          *http.Server
+	db           *sql.DB
+	stopOutbox   context.CancelFunc // cancels the outbox worker goroutine on Stop
 }
 
 // NewApp wires all dependencies together and returns a ready-to-start App.
@@ -168,12 +170,17 @@ func NewApp(cfg *config.Config) (*App, error) {
 		apptenant.NewGetMeUseCase(tenantStore),
 	)
 
+	// Wire transactional outbox store. Shared between the use case (Enqueue) and
+	// the background drain worker. Using the same *sql.DB pool is safe — Enqueue
+	// participates in the caller's tx, while Drain opens its own tx per poll.
+	outboxStore := repooutbox.New(db)
+
 	// Wire stock use cases. MVP: single WAC calculator (FIFO routing per-tenant
 	// is deferred to V1.5 — a calculator factory keyed on profile.InventoryMethod()
 	// will be invoked inside the use case).
 	stockRepo := repostock.New(db)
 	stockCalculator := appstock.NewCalculator(nil, stockRepo) // nil profile → WAC default
-	recordMovementUC := appstock.NewRecordMovementUseCase(stockRepo, stockCalculator, nil, l)
+	recordMovementUC := appstock.NewRecordMovementUseCase(stockRepo, stockCalculator, outboxStore, l)
 	stockHandler := handlerstock.New(
 		recordMovementUC,
 		appstock.NewGetSnapshotUseCase(stockRepo),
@@ -432,12 +439,21 @@ func NewApp(cfg *config.Config) (*App, error) {
 		Handler: r,
 	}
 
+	// Start the outbox drain worker in a background goroutine.
+	// It polls every 30s, publishing any pending event_outbox rows to NATS.
+	// Graceful shutdown is handled by Stop() cancelling outboxCtx.
+	outboxCtx, outboxCancel := context.WithCancel(context.Background())
+	outboxWorker := adapternats.NewOutboxWorker(outboxStore, natsPub, l)
+	go outboxWorker.Run(outboxCtx)
+	l.Info("outbox worker started", slog.String("poll_interval", "30s"))
+
 	return &App{
-		cfg:    cfg,
-		log:    l,
-		engine: r,
-		srv:    srv,
-		db:     db,
+		cfg:        cfg,
+		log:        l,
+		engine:     r,
+		srv:        srv,
+		db:         db,
+		stopOutbox: outboxCancel,
 	}, nil
 }
 
