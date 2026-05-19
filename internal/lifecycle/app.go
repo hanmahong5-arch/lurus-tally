@@ -19,6 +19,7 @@ import (
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
+	handlerexport "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/export"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
@@ -53,6 +54,7 @@ import (
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
+	appexport "github.com/hanmahong5-arch/lurus-tally/internal/app/export"
 	apphorticulture "github.com/hanmahong5-arch/lurus-tally/internal/app/horticulture"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
@@ -427,6 +429,16 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appwarehouse.NewRestoreUseCase(whRepo),
 	)
 
+	// Wire CSV export (W5.F3). All three use cases read directly from the
+	// shared DB pool; the handler streams CSV through io.Pipe so memory is
+	// bounded regardless of tenant size.
+	exportHandler := handlerexport.New(
+		appexport.NewBillsExportUseCase(db, l),
+		appexport.NewStockExportUseCase(db, l),
+		appexport.NewPaymentsExportUseCase(db, l),
+		l,
+	)
+
 	// Build readiness probe deps. DB is required (service can't function without it);
 	// Redis is optional — only present when AI is enabled, and even then a Redis
 	// outage should not pull the pod from k8s endpoints because non-AI endpoints
@@ -455,7 +467,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	metricsHandler := handlermetrics.NewMetricsHandler(cfg.PlatformInternalKey)
 
 	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
-		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler)
+		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler, exportHandler)
 
 	// POST /internal/v1/telemetry/web — browser-side product telemetry → NATS
 	// PSI_TELEMETRY.web.* (S0.Q3). Bearer-gated via the same key as metrics.

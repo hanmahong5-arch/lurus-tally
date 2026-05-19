@@ -114,12 +114,21 @@ export default function PurchasesPage() {
           <h1 className="text-xl font-semibold">采购单管理</h1>
           <p className="text-sm text-muted-foreground mt-0.5">共 {total} 条采购单</p>
         </div>
-        <Link
-          href="/purchases/new"
-          className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          + 新建采购单
-        </Link>
+        <div className="flex items-center gap-2">
+          <a
+            href="/api/v1/exports/bills.csv"
+            download
+            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
+          >
+            导出 CSV
+          </a>
+          <Link
+            href="/purchases/new"
+            className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
+          >
+            + 新建采购单
+          </Link>
+        </div>
       </div>
 
       {/* Status tabs */}

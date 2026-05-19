@@ -102,12 +102,21 @@ export default function StockPage() {
             共 {filtered.length} 条 {filtered.length !== snapshots.length && `（已筛选自 ${snapshots.length}）`}
           </p>
         </div>
-        <button
-          onClick={() => load()}
-          className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
-        >
-          刷新
-        </button>
+        <div className="flex items-center gap-2">
+          <a
+            href="/api/v1/exports/stock.csv"
+            download
+            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
+          >
+            导出 CSV
+          </a>
+          <button
+            onClick={() => load()}
+            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
+          >
+            刷新
+          </button>
+        </div>
       </div>
 
       {/* Toolbar */}
@@ -142,6 +151,14 @@ export default function StockPage() {
         <EmptyState
           title="暂无库存记录"
           description="完成一笔采购入库后这里会出现快照"
+          action={
+            <Link
+              href="/purchases/new"
+              className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+            >
+              录入采购单
+            </Link>
+          }
         />
       )}
       {!loading && !error && snapshots.length > 0 && filtered.length === 0 && (

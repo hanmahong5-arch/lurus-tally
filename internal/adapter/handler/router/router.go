@@ -10,6 +10,7 @@ import (
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
+	handlerexport "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/export"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
@@ -39,7 +40,7 @@ func notImplemented(c *gin.Context) {
 // The engine mode (release/debug) is controlled by GIN_MODE or gin.SetMode.
 //
 //nolint:cyclop // router wiring is intentionally long
-func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler, suph *handlersupp.Handler, wh *handlerwarehouse.Handler) *gin.Engine {
+func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler, suph *handlersupp.Handler, wh *handlerwarehouse.Handler, exh *handlerexport.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
@@ -221,6 +222,16 @@ func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFun
 			api.PUT("/warehouses/:id", notImplemented)
 			api.DELETE("/warehouses/:id", notImplemented)
 			api.POST("/warehouses/:id/restore", notImplemented)
+		}
+
+		// CSV export (W5.F3). When exh is nil the routes return 501 so the
+		// FE download button degrades gracefully in dev / smoke environments.
+		if exh != nil {
+			exh.RegisterRoutes(api)
+		} else {
+			api.GET("/exports/bills.csv", notImplemented)
+			api.GET("/exports/stock.csv", notImplemented)
+			api.GET("/exports/payments.csv", notImplemented)
 		}
 	}
 
