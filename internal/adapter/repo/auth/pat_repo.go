@@ -72,7 +72,7 @@ func (r *Repo) ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]*domain.
 	if err != nil {
 		return nil, fmt.Errorf("auth repo: list pats: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []*domain.PAT
 	for rows.Next() {

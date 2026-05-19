@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	maxPATNameLen = 64
+	maxPATNameLen    = 64
 	maxPATsPerTenant = 20
 )
 
@@ -44,9 +44,9 @@ type createPATRequest struct {
 }
 
 type createPATResponse struct {
-	ID        uuid.UUID  `json:"id"`
-	Name      string     `json:"name"`
-	Prefix    string     `json:"prefix"`
+	ID     uuid.UUID `json:"id"`
+	Name   string    `json:"name"`
+	Prefix string    `json:"prefix"`
 	// Token is the plaintext value. Returned EXACTLY ONCE at creation time;
 	// the server keeps only sha256(prefix||secret). The UI must surface a
 	// "copy and store this securely — it won't be shown again" affordance.

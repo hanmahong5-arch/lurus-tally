@@ -21,13 +21,13 @@ import (
 // --- stub Repository --------------------------------------------------------
 
 type stubRepo struct {
-	createErr   error
-	created     *domainauth.PAT
-	listResult  []*domainauth.PAT
-	listErr     error
-	revokeErr   error
-	revokedID   uuid.UUID
-	revokedTen  uuid.UUID
+	createErr  error
+	created    *domainauth.PAT
+	listResult []*domainauth.PAT
+	listErr    error
+	revokeErr  error
+	revokedID  uuid.UUID
+	revokedTen uuid.UUID
 }
 
 func (s *stubRepo) Create(_ context.Context, p *domainauth.PAT) error {

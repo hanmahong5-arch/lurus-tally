@@ -47,7 +47,7 @@ func fetchOne(t *testing.T, url, streamName, subject string) (adapternats.Event,
 		t.Fatalf("fetch: %v", err)
 	}
 
-	for msg := range msgs.Messages() {
+	if msg, ok := <-msgs.Messages(); ok {
 		_ = msg.Ack()
 		var env adapternats.Event
 		if err := json.Unmarshal(msg.Data(), &env); err != nil {

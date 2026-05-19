@@ -125,7 +125,7 @@ func (c *tallyClient) ListStockSnapshots(ctx context.Context, limit int) ([]Stoc
 	if err != nil {
 		return nil, fmt.Errorf("tally-mcp: GET %s: %w", endpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
@@ -172,7 +172,7 @@ func (c *tallyClient) listBills(ctx context.Context, path string, page, size int
 	if err != nil {
 		return nil, 0, fmt.Errorf("tally-mcp: GET %s: %w", endpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
@@ -200,7 +200,7 @@ func (c *tallyClient) ListPendingPlans(ctx context.Context) ([]AIPlan, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tally-mcp: GET %s: %w", endpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
@@ -234,7 +234,7 @@ func (c *tallyClient) ListLowStock(ctx context.Context, limit int) ([]LowStockRo
 	if err != nil {
 		return nil, fmt.Errorf("tally-mcp: GET %s: %w", endpoint, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
