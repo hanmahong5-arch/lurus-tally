@@ -20,6 +20,8 @@ const BASE_NAV_ITEMS: NavItem[] = [
   { href: "/sales", label: "销售管理", icon: "📊" },
   { href: "/finance/exchange-rates", label: "财务管理", icon: "💰" },
   { href: "/subscription", label: "订阅与计费", icon: "💳" },
+  { href: "/suppliers", label: "供应商", icon: "🏭" },
+  { href: "/warehouses", label: "仓库", icon: "🏪" },
   { href: "/dictionary", label: "苗木字典", icon: "🌿", industry: ["horticulture"] },
   { href: "/projects", label: "项目", icon: "🏗️" },
   { href: "/settings/api-keys", label: "API 密钥", icon: "🔑" },

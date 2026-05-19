@@ -26,6 +26,8 @@ import (
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
+	handlersupp "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/supplier"
+	handlerwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/warehouse"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlertelemetry "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/telemetry"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
@@ -41,6 +43,8 @@ import (
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
 	repoprojectrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/project"
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
+	reposupplier "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/supplier"
+	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
@@ -53,6 +57,8 @@ import (
 	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
 	appprojectuc "github.com/hanmahong5-arch/lurus-tally/internal/app/project"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
+	appsupp "github.com/hanmahong5-arch/lurus-tally/internal/app/supplier"
+	appwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/app/warehouse"
 	apptenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
 	appunit "github.com/hanmahong5-arch/lurus-tally/internal/app/unit"
 	domainauth "github.com/hanmahong5-arch/lurus-tally/internal/domain/auth"
@@ -392,6 +398,28 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appprojectuc.NewRestoreUseCase(projectRepo),
 	)
 
+	// Wire supplier CRUD (W3.D1).
+	suppRepo := reposupplier.New(db)
+	supplierHandler := handlersupp.New(
+		appsupp.NewCreateUseCase(suppRepo),
+		appsupp.NewGetByIDUseCase(suppRepo),
+		appsupp.NewListUseCase(suppRepo),
+		appsupp.NewUpdateUseCase(suppRepo),
+		appsupp.NewDeleteUseCase(suppRepo),
+		appsupp.NewRestoreUseCase(suppRepo),
+	)
+
+	// Wire warehouse CRUD (W3.D1).
+	whRepo := repowarehouse.New(db)
+	warehouseHandler := handlerwarehouse.New(
+		appwarehouse.NewCreateUseCase(whRepo),
+		appwarehouse.NewGetByIDUseCase(whRepo),
+		appwarehouse.NewListUseCase(whRepo),
+		appwarehouse.NewUpdateUseCase(whRepo),
+		appwarehouse.NewDeleteUseCase(whRepo),
+		appwarehouse.NewRestoreUseCase(whRepo),
+	)
+
 	// Build readiness probe deps. DB is required (service can't function without it);
 	// Redis is optional — only present when AI is enabled, and even then a Redis
 	// outage should not pull the pod from k8s endpoints because non-AI endpoints
@@ -420,7 +448,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	metricsHandler := handlermetrics.NewMetricsHandler(cfg.PlatformInternalKey)
 
 	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
-		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler)
+		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler)
 
 	// POST /internal/v1/telemetry/web — browser-side product telemetry → NATS
 	// PSI_TELEMETRY.web.* (S0.Q3). Bearer-gated via the same key as metrics.

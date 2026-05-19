@@ -17,7 +17,9 @@ import (
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
+	handlersupp "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/supplier"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
+	handlerwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/warehouse"
 )
 
 // notImplemented is a placeholder handler returned when a handler struct is nil.
@@ -37,7 +39,7 @@ func notImplemented(c *gin.Context) {
 // The engine mode (release/debug) is controlled by GIN_MODE or gin.SetMode.
 //
 //nolint:cyclop // router wiring is intentionally long
-func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler) *gin.Engine {
+func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler, suph *handlersupp.Handler, wh *handlerwarehouse.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 
@@ -195,6 +197,30 @@ func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFun
 			api.PUT("/projects/:id", notImplemented)
 			api.DELETE("/projects/:id", notImplemented)
 			api.POST("/projects/:id/restore", notImplemented)
+		}
+
+		// Supplier CRUD (W3.D1).
+		if suph != nil {
+			suph.RegisterRoutes(api)
+		} else {
+			api.GET("/suppliers", notImplemented)
+			api.POST("/suppliers", notImplemented)
+			api.GET("/suppliers/:id", notImplemented)
+			api.PUT("/suppliers/:id", notImplemented)
+			api.DELETE("/suppliers/:id", notImplemented)
+			api.POST("/suppliers/:id/restore", notImplemented)
+		}
+
+		// Warehouse CRUD (W3.D1).
+		if wh != nil {
+			wh.RegisterRoutes(api)
+		} else {
+			api.GET("/warehouses", notImplemented)
+			api.POST("/warehouses", notImplemented)
+			api.GET("/warehouses/:id", notImplemented)
+			api.PUT("/warehouses/:id", notImplemented)
+			api.DELETE("/warehouses/:id", notImplemented)
+			api.POST("/warehouses/:id/restore", notImplemented)
 		}
 	}
 
