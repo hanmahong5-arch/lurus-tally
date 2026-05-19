@@ -26,6 +26,8 @@ ArgoCD ApplicationSet 不接管 Tally STAGE，部署走人工 `ssh + kubectl app
 
 ## 2. Secret 注入（一次或凭证轮换时）
 
+> **2026-05-18 漂移 note**: 实际运行中的 `tally-secrets` 与本节模板有差异。当前 9 keys: `AUTH_SECRET` (= NextAuth v5 重命名的 `NEXTAUTH_SECRET`) / `DATABASE_DSN` / `HUB_TOKEN` (deprecated placeholder) / `INTERNAL_API_KEY` (deprecated placeholder) / `NATS_URL` / `NEWAPI_API_KEY` / `PLATFORM_INTERNAL_KEY` / `REDIS_URL` / `ZITADEL_CLIENT_ID`。缺 `MEMORUS_API_KEY` (会降级 disabled) / `NEXTAUTH_URL` / `ZITADEL_ISSUER` / `ZITADEL_CLIENT_SECRET` — pod ready 在跑, 但端到端登录链路是否通畅未实测。下节模板保留作初始注入参考, 实际轮换前请先 `kubectl get secret tally-secrets -o jsonpath='{.data}' | jq 'keys'` 比对。
+
 替换尖括号内的实际值后整段执行：
 
 ```bash
