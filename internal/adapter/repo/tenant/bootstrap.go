@@ -142,16 +142,18 @@ func (s *SQLBootstrapStore) Bootstrap(ctx context.Context, in BootstrapInput) er
 func seedDemoEntities(ctx context.Context, tx *sql.Tx, tenantID uuid.UUID, pt domain.ProfileType, now time.Time) error {
 	warehouseName, supplierName := demoEntityNames(pt)
 
+	// is_sample=true so the dashboard can later offer a "clear sample data"
+	// button without scanning name patterns. See migration 000032 for the column.
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO tally.warehouse (id, tenant_id, name, is_default, enabled, created_at)
-		VALUES ($1, $2, $3, true, true, $4)
+		INSERT INTO tally.warehouse (id, tenant_id, name, is_default, enabled, is_sample, created_at)
+		VALUES ($1, $2, $3, true, true, true, $4)
 	`, uuid.New(), tenantID, warehouseName, now); err != nil {
 		return fmt.Errorf("insert warehouse: %w", err)
 	}
 
 	if _, err := tx.ExecContext(ctx, `
-		INSERT INTO tally.partner (id, tenant_id, partner_type, name, enabled, created_at, updated_at)
-		VALUES ($1, $2, 'supplier', $3, true, $4, $4)
+		INSERT INTO tally.partner (id, tenant_id, partner_type, name, enabled, is_sample, created_at, updated_at)
+		VALUES ($1, $2, 'supplier', $3, true, true, $4, $4)
 	`, uuid.New(), tenantID, supplierName, now); err != nil {
 		return fmt.Errorf("insert supplier: %w", err)
 	}
