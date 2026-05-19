@@ -133,6 +133,7 @@ export default function PurchaseDetailPage() {
   }))
 
   const isDraft = head.status === 0
+  const isApproved = head.status === 2
 
   return (
     <div className="p-6 max-w-5xl mx-auto space-y-6">
@@ -146,6 +147,11 @@ export default function PurchaseDetailPage() {
             >
               {BILL_STATUS_LABEL[head.status]}
             </span>
+            {isApproved && (
+              <span className="inline-flex items-center rounded border border-green-600/30 bg-green-500/10 px-2 py-0.5 text-xs font-medium text-green-700">
+                已批准，无法编辑
+              </span>
+            )}
           </div>
           <p className="text-sm text-muted-foreground mt-0.5">
             单据日期：{new Date(head.bill_date).toLocaleDateString("zh-CN")}

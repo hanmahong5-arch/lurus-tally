@@ -145,3 +145,7 @@ export async function quickCheckout(
     tenantId,
   })
 }
+
+export async function restoreSaleBill(id: string, tenantId?: string): Promise<void> {
+  await apiFetch<void>(`/sale-bills/${id}/restore`, { method: "POST", tenantId })
+}

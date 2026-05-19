@@ -98,7 +98,7 @@ func seedSaleDraftBill(repo *mockBillRepo, n int, warehouseID uuid.UUID) uuid.UU
 	return billID
 }
 
-func newApproveSaleUC(repo *mockBillRepo, stockUC *mockStockUC, unitRepo *mockProductUnitRepo, payRepo *mockPaymentRepo) *appbill.ApproveSaleUseCase {
+func newApproveSaleUC(repo *mockBillRepo, stockUC appbill.StockMovementExecutor, unitRepo *mockProductUnitRepo, payRepo *mockPaymentRepo) *appbill.ApproveSaleUseCase {
 	return appbill.NewApproveSaleUseCase(repo, stockUC, unitRepo, payRepo)
 }
 
@@ -242,6 +242,78 @@ func TestApproveSale_ZeroPaidAmount_SkipsPayment(t *testing.T) {
 	}
 	if len(payRepo.recorded) != 0 {
 		t.Errorf("payment records = %d, want 0 (no payment on zero paid_amount)", len(payRepo.recorded))
+	}
+}
+
+// alwaysFailStockUC implements StockMovementExecutor and returns an InsufficientStockError
+// for every call, using the request's ProductID so the error maps to the actual product.
+type alwaysFailStockUC struct {
+	available decimal.Decimal
+	requested decimal.Decimal
+}
+
+func (m *alwaysFailStockUC) ExecuteInTx(_ context.Context, _ *sql.Tx, req appstock.RecordMovementRequest) (*domainstock.Snapshot, error) {
+	return nil, &appstock.InsufficientStockError{
+		ProductID: req.ProductID,
+		Available: m.available,
+		Requested: m.requested,
+	}
+}
+
+// TestApproveSale_TwoShortSKUs_ReturnsBatchError verifies that when 2 line items both lack
+// stock, Execute returns a *BatchInsufficientStockError with exactly 2 entries.
+// This is the D2 multi-line batch shortage path.
+func TestApproveSale_TwoShortSKUs_ReturnsBatchError(t *testing.T) {
+	repo := newMockBillRepo()
+	unitRepo := newMockProductUnitRepo()
+	payRepo := newMockPaymentRepo()
+
+	warehouseID := uuid.New()
+	billID := seedSaleDraftBill(repo, 2, warehouseID)
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	productA := repo.itemsByBillID[billID][0].ProductID
+	productB := repo.itemsByBillID[billID][1].ProductID
+
+	// stockUC always returns InsufficientStockError (with per-request ProductID) so both lines are collected.
+	stockUC := &alwaysFailStockUC{
+		available: decimal.Zero,
+		requested: decimal.NewFromFloat(10),
+	}
+
+	uc := newApproveSaleUC(repo, stockUC, unitRepo, payRepo)
+	err := uc.Execute(context.Background(), appbill.ApproveSaleRequest{
+		TenantID:  testTenantID,
+		BillID:    billID,
+		CreatorID: testCreatorID,
+	})
+	if err == nil {
+		t.Fatal("expected BatchInsufficientStockError, got nil")
+	}
+
+	bise, ok := err.(*appstock.BatchInsufficientStockError)
+	if !ok {
+		t.Fatalf("expected *BatchInsufficientStockError, got %T: %v", err, err)
+	}
+	if len(bise.Shortages) != 2 {
+		t.Errorf("shortage entries = %d, want 2", len(bise.Shortages))
+	}
+
+	// Verify both product IDs are present (order follows line items).
+	gotProducts := map[string]bool{
+		bise.Shortages[0].ProductID.String(): true,
+		bise.Shortages[1].ProductID.String(): true,
+	}
+	if !gotProducts[productA.String()] {
+		t.Errorf("productA %s not found in shortage entries", productA)
+	}
+	if !gotProducts[productB.String()] {
+		t.Errorf("productB %s not found in shortage entries", productB)
+	}
+
+	// Bill must remain draft.
+	if repo.billsByID[billID].Status != domain.StatusDraft {
+		t.Errorf("status = %d, want draft after batch shortage", repo.billsByID[billID].Status)
 	}
 }
 

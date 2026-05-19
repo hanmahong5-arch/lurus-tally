@@ -2,8 +2,12 @@
 
 import { useCallback, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 import {
   listSaleBills,
+  cancelSaleBill,
+  restoreSaleBill,
   type SaleBillHead,
   type BillStatus,
 } from "@/lib/api/sale"
@@ -34,6 +38,7 @@ const STATUS_BADGE: Record<BillStatus, string> = {
 }
 
 export default function SalesPage() {
+  const router = useRouter()
   const [bills, setBills] = useState<SaleBillHead[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -73,6 +78,33 @@ export default function SalesPage() {
     setStatus(s)
     setPage(1)
     load(1, s)
+  }
+
+  async function handleCancel(bill: SaleBillHead) {
+    try {
+      await cancelSaleBill(bill.id, devTenantId)
+      load(page, status)
+
+      toast(`已取消销售单 ${bill.bill_no}`, {
+        duration: 30_000,
+        action: {
+          label: "撤销",
+          onClick: () => handleRestore(bill),
+        },
+      })
+    } catch (e) {
+      toast.error("取消失败：" + String(e))
+    }
+  }
+
+  async function handleRestore(bill: SaleBillHead) {
+    try {
+      await restoreSaleBill(bill.id, devTenantId)
+      load(page, status)
+      router.refresh()
+    } catch (e) {
+      toast.error("撤销失败：" + String(e))
+    }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / 20))
@@ -176,12 +208,22 @@ export default function SalesPage() {
                       </span>
                     </td>
                     <td className="px-4 py-2.5 text-right">
-                      <Link
-                        href={`/sales/${b.id}`}
-                        className="text-xs text-primary hover:underline"
-                      >
-                        查看
-                      </Link>
+                      <div className="flex items-center justify-end gap-2">
+                        {b.status === 0 && (
+                          <button
+                            onClick={() => handleCancel(b)}
+                            className="text-xs text-red-500 hover:underline"
+                          >
+                            取消
+                          </button>
+                        )}
+                        <Link
+                          href={`/sales/${b.id}`}
+                          className="text-xs text-primary hover:underline"
+                        >
+                          查看
+                        </Link>
+                      </div>
                     </td>
                   </tr>
                 ))}

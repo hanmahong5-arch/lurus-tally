@@ -171,6 +171,11 @@ export default function SaleDetailPage() {
             >
               {BILL_STATUS_LABEL[head.status]}
             </span>
+            {isApproved && (
+              <span className="inline-flex items-center rounded border border-blue-600/30 bg-blue-500/10 px-2 py-0.5 text-xs font-medium text-blue-700">
+                已批准，无法编辑
+              </span>
+            )}
           </div>
           <p className="text-sm text-muted-foreground mt-0.5">
             单据日期：{new Date(head.bill_date).toLocaleDateString("zh-CN")}

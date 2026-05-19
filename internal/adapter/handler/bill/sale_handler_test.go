@@ -306,6 +306,74 @@ func TestSaleHandler_Approve_InsufficientStock_Returns422(t *testing.T) {
 	}
 }
 
+// TestSaleHandler_Approve_InsufficientStock_ResponseHasDetailsArray verifies that the 422 body
+// contains a "details" array (not legacy scalar fields) so the FE can highlight all short SKUs.
+func TestSaleHandler_Approve_InsufficientStock_ResponseHasDetailsArray(t *testing.T) {
+	repo := newSHMockBillRepo()
+	now := time.Now()
+	billID := uuid.New()
+	repo.heads[billID] = &domain.BillHead{
+		ID:          billID,
+		TenantID:    shTenantID,
+		Status:      domain.StatusDraft,
+		BillType:    domain.BillTypeSale,
+		TotalAmount: decimal.NewFromFloat(100),
+		CreatedAt:   now,
+	}
+	repo.items[billID] = []*domain.BillItem{
+		{ID: uuid.New(), TenantID: shTenantID, HeadID: billID, ProductID: shProductID, Qty: decimal.NewFromFloat(5)},
+	}
+
+	stockUC := &shMockStockUC{
+		failErr: &appstock.InsufficientStockError{
+			ProductID: shProductID,
+			Available: decimal.Zero,
+			Requested: decimal.NewFromFloat(5),
+		},
+	}
+	h := buildSaleHandlerForTest(repo, stockUC, &shMockPaymentRecorder{}, &shMockPaymentRepo{})
+	r := newSaleRouter(h)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/sale-bills/"+billID.String()+"/approve", nil)
+	req.Header.Set("X-Tenant-ID", tenantHeader(shTenantID))
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("status = %d, want 422; body: %s", w.Code, w.Body.String())
+	}
+
+	var body map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&body); err != nil {
+		t.Fatalf("decode body: %v", err)
+	}
+	if body["error"] != "insufficient_stock" {
+		t.Errorf("error field = %v, want insufficient_stock", body["error"])
+	}
+	details, ok := body["details"].([]any)
+	if !ok {
+		t.Fatalf("details field missing or not array; body = %v", body)
+	}
+	if len(details) != 1 {
+		t.Errorf("details length = %d, want 1", len(details))
+	}
+	if len(details) > 0 {
+		entry, ok := details[0].(map[string]any)
+		if !ok {
+			t.Fatalf("details[0] is not object: %T", details[0])
+		}
+		if entry["product_id"] != shProductID.String() {
+			t.Errorf("details[0].product_id = %v, want %s", entry["product_id"], shProductID)
+		}
+		if _, ok := entry["available_qty"]; !ok {
+			t.Error("details[0].available_qty missing")
+		}
+		if _, ok := entry["requested_qty"]; !ok {
+			t.Error("details[0].requested_qty missing")
+		}
+	}
+}
+
 // TestSaleHandler_QuickCheckout_Returns201 verifies the POS quick checkout endpoint.
 func TestSaleHandler_QuickCheckout_Returns201(t *testing.T) {
 	repo := newSHMockBillRepo()

@@ -3,6 +3,7 @@ package bill
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -114,6 +115,14 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 
 	// Record one stock-out movement per line item.
 	// Unit cost for outbound = zero; WAC calculator reads current snapshot.unit_cost.
+	//
+	// D2: collect all insufficient-stock errors across every line before failing.
+	// When ExecuteInTx returns *appstock.InsufficientStockError, the movement was
+	// NOT applied (ValidateMovement bailed before ApplyMovement), so the snapshot
+	// on subsequent items is still accurate. Non-stock errors short-circuit
+	// immediately because they indicate a programming or infra failure.
+	var stockShortages []appstock.InsufficientStockError
+
 	for _, item := range items {
 		convFactor := "1"
 		if item.UnitID != nil {
@@ -145,9 +154,20 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 			ReferenceID:   &req.BillID,
 		})
 		if err != nil {
-			// *stock.InsufficientStockError bubbles up for HTTP 422.
+			var ise *appstock.InsufficientStockError
+			if errors.As(err, &ise) {
+				// Accumulate and continue to the next line so the caller gets
+				// the full set of short SKUs in one response.
+				stockShortages = append(stockShortages, *ise)
+				continue
+			}
+			// Non-stock error (infra/programming fault) — short-circuit.
 			return fmt.Errorf("approve sale: record movement for item line_no=%d: %w", item.LineNo, err)
 		}
+	}
+
+	if len(stockShortages) > 0 {
+		return &appstock.BatchInsufficientStockError{Shortages: stockShortages}
 	}
 
 	// Update bill status to approved.

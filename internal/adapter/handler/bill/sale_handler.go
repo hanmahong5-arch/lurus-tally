@@ -191,14 +191,42 @@ func (h *SaleHandler) Approve(c *gin.Context) {
 			c.JSON(http.StatusConflict, errResp("bill_approval_conflict", "concurrent approval in progress", "retry later"))
 			return
 		}
+		var bise *appstock.BatchInsufficientStockError
+		if errors.As(err, &bise) {
+			type detail struct {
+				ProductID    string `json:"product_id"`
+				AvailableQty string `json:"available_qty"`
+				RequestedQty string `json:"requested_qty"`
+			}
+			d := make([]detail, len(bise.Shortages))
+			for i, s := range bise.Shortages {
+				d[i] = detail{
+					ProductID:    s.ProductID.String(),
+					AvailableQty: s.Available.String(),
+					RequestedQty: s.Requested.String(),
+				}
+			}
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":   "insufficient_stock",
+				"details": d,
+			})
+			return
+		}
+		// Legacy single-shortage path (stock handler or other callers).
 		var ise *appstock.InsufficientStockError
 		if errors.As(err, &ise) {
+			type detail struct {
+				ProductID    string `json:"product_id"`
+				AvailableQty string `json:"available_qty"`
+				RequestedQty string `json:"requested_qty"`
+			}
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error":      "insufficient_stock",
-				"message":    err.Error(),
-				"product_id": ise.ProductID.String(),
-				"available":  ise.Available.String(),
-				"requested":  ise.Requested.String(),
+				"error": "insufficient_stock",
+				"details": []detail{{
+					ProductID:    ise.ProductID.String(),
+					AvailableQty: ise.Available.String(),
+					RequestedQty: ise.Requested.String(),
+				}},
 			})
 			return
 		}
@@ -371,14 +399,41 @@ func (h *SaleHandler) QuickCheckout(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, errResp("validation_error", err.Error(), ""))
 			return
 		}
+		var bise *appstock.BatchInsufficientStockError
+		if errors.As(err, &bise) {
+			type detail struct {
+				ProductID    string `json:"product_id"`
+				AvailableQty string `json:"available_qty"`
+				RequestedQty string `json:"requested_qty"`
+			}
+			d := make([]detail, len(bise.Shortages))
+			for i, s := range bise.Shortages {
+				d[i] = detail{
+					ProductID:    s.ProductID.String(),
+					AvailableQty: s.Available.String(),
+					RequestedQty: s.Requested.String(),
+				}
+			}
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":   "insufficient_stock",
+				"details": d,
+			})
+			return
+		}
 		var ise *appstock.InsufficientStockError
 		if errors.As(err, &ise) {
+			type detail struct {
+				ProductID    string `json:"product_id"`
+				AvailableQty string `json:"available_qty"`
+				RequestedQty string `json:"requested_qty"`
+			}
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
-				"error":      "insufficient_stock",
-				"message":    err.Error(),
-				"product_id": ise.ProductID.String(),
-				"available":  ise.Available.String(),
-				"requested":  ise.Requested.String(),
+				"error": "insufficient_stock",
+				"details": []detail{{
+					ProductID:    ise.ProductID.String(),
+					AvailableQty: ise.Available.String(),
+					RequestedQty: ise.Requested.String(),
+				}},
 			})
 			return
 		}

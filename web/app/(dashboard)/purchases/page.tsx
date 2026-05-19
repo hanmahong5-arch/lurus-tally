@@ -2,8 +2,12 @@
 
 import { useCallback, useState } from "react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
+import { toast } from "sonner"
 import {
   listPurchaseBills,
+  cancelPurchaseBill,
+  restorePurchaseBill,
   type BillHead,
   type BillStatus,
   BILL_STATUS_LABEL,
@@ -29,6 +33,7 @@ const STATUS_BADGE: Record<BillStatus, string> = {
 }
 
 export default function PurchasesPage() {
+  const router = useRouter()
   const [bills, setBills] = useState<BillHead[]>([])
   const [total, setTotal] = useState(0)
   const [page, setPage] = useState(1)
@@ -71,6 +76,33 @@ export default function PurchasesPage() {
     setStatus(s)
     setPage(1)
     load(1, s)
+  }
+
+  async function handleCancel(bill: BillHead) {
+    try {
+      await cancelPurchaseBill(bill.id, devTenantId)
+      load(page, status)
+
+      toast(`已取消采购单 ${bill.bill_no}`, {
+        duration: 30_000,
+        action: {
+          label: "撤销",
+          onClick: () => handleRestore(bill),
+        },
+      })
+    } catch (e) {
+      toast.error("取消失败：" + String(e))
+    }
+  }
+
+  async function handleRestore(bill: BillHead) {
+    try {
+      await restorePurchaseBill(bill.id, devTenantId)
+      load(page, status)
+      router.refresh()
+    } catch (e) {
+      toast.error("撤销失败：" + String(e))
+    }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / 20))
@@ -151,7 +183,15 @@ export default function PurchasesPage() {
                     <td className="px-4 py-2.5 text-muted-foreground">
                       {new Date(b.bill_date).toLocaleDateString("zh-CN")}
                     </td>
-                    <td className="px-4 py-2.5 text-right">
+                    <td className="px-4 py-2.5 text-right flex items-center justify-end gap-2">
+                      {b.status === 0 && (
+                        <button
+                          onClick={() => handleCancel(b)}
+                          className="text-xs text-red-500 hover:underline"
+                        >
+                          取消
+                        </button>
+                      )}
                       <Link
                         href={`/purchases/${b.id}`}
                         className="text-xs text-primary hover:underline"
