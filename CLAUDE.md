@@ -83,7 +83,10 @@ cd web && bun run build && bun run lint
 
 ## V1.5 Roadmap (2026-05-18, R1 = 2026 H2)
 
-详细路线图 → `./_bmad-output/planning-artifacts/roadmap-v1.5.md`（12 sprint × 2 周, 1050h, 4 阶段 16 feature）。
+详细路线图 → `./_bmad-output/planning-artifacts/roadmap-v1.5.md`（**Sprint 0 + 12 sprint × 2 周, 3-track 并行: P 1014h + Q 180h + C 150h = 1344h** + Sprint 0 52h pre-budget）。2026-05-18 重写：旧 4-stage flat 已归档 `./_bmad-output/planning-artifacts/_archive/roadmap-v1.5-flat-stages-2026-05-18.md`。重写动因：8 维度自评 CI/CD 5.0 + 客户/市场验证 3.5 是底分 — 把 Q（CI/telemetry/backup/security）+ C（客户 + onboarding + 假设）从 Track P 脚注提升到并行轨。
+
+**Sprint 0 (52h, pre-budget)**: release.yaml gate / LLM Prom metric / 5 新 telemetry event / PG backup CronJob / `assumptions.md` schema + 日 snapshot + 周报。S0 4 件 Q + 3 件 C 全过才开 S1。
+**假设台账**: `./_bmad-output/planning-artifacts/assumptions.md` — H1/H2/H3 owner=founder, deadline=2026-W36; `bin/assumption-snapshot.sh` 日跑。
 
 ### ICP (第一个客户画像)
 **跨境电商 3-8 人精品工作室**(深圳/广州/义乌/杭州)。年营收 ¥300-1500 万, 80-400 活跃 SKU(精品非铺货), Amazon US/EU + Shopify 主战场。当前用 Excel + 钉飞表格 + Amazon 后台手工拉报表; 试过店小秘/马帮"太重", 金蝶精斗云对不上账。**不要的**: 5000+ SKU 铺货大卖 / 纯 1688 内贸 / 年营收 5000 万+。
@@ -114,7 +117,8 @@ cd web && bun run build && bun run lint
 | PRD | `./_bmad-output/planning-artifacts/prd.md` (~10k 字) |
 | Architecture | `./_bmad-output/planning-artifacts/architecture.md` (~14k 字, 27 张表 DDL) |
 | Epics | `./_bmad-output/planning-artifacts/epics.md` (20 epics / 100+ stories + V2.5 横向带 E21-E27) |
-| V1.5 Roadmap | `./_bmad-output/planning-artifacts/roadmap-v1.5.md` (12 sprint / 16 feature / ICP+GTM+假设) |
+| V1.5 Roadmap | `./_bmad-output/planning-artifacts/roadmap-v1.5.md` (Sprint 0 + 12 sprint × 3-track P/Q/C, ICP+GTM+假设) |
+| Assumptions | `./_bmad-output/planning-artifacts/assumptions.md` (H1/H2/H3 falsifiable 台账) |
 | V2.5 UX Supplement | `./_bmad-output/planning-artifacts/roadmap-ux-supplement.md` |
 | Stories (done) | `./_bmad-output/planning-artifacts/stories/{1.1-1.7,28.1-28.2}*.md` |
 | 选型调研 | `./_research/` (4 份) |

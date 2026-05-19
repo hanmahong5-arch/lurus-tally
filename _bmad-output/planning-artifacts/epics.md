@@ -927,40 +927,49 @@ E10 + E11 → E17/E18/E19/E20 (AI 需要完整数据)
 
 ---
 
-## V1.5 Sprint Mapping (R1 = 2026 H2, 12 sprint × 2 周)
+## V1.5 Sprint Mapping (R1 = 2026 H2, Sprint 0 + 12 sprint × 2 周)
 
-> 详见 `./roadmap-v1.5.md`。把 V2.5/V3 中**对 ICP（跨境电商 3-8 人精品工作室）刚需**的 epic 提前到 V1.5, 按 4 阶段 16 feature 落地, 总计 1014h（F1.1 从 40h 缩到 4h, 因 STAGE 24d 前已部署, 见 ADR-0006 + 2026-05-18 实测）。
+> 详见 `./roadmap-v1.5.md`（2026-05-18 重写为 3-track 并行）。Track P 16 feature = 1014h；Track Q（CI/telemetry/backup/security）= 180h；Track C（客户 + onboarding + 假设）= 150h；总 1344h（容量上限）+ Sprint 0 pre-budget 52h = 1396h。
 
-| 阶段 | Sprint | Feature | 工时 | 关联 Epic |
-|------|--------|---------|------|-----------|
-| 一 止血立桩 | S1-S3 (184h) | F1.1 STAGE 端到端验证 + 漂移补齐 | 4h | Ops |
-| | | F1.2 ⌘K v3 Palette | 50h | E18 |
-| | | F1.3 暗黑模式库存色板 | 50h | E11 |
-| | | F1.4 AI Drawer v0.5 | 80h | E17 前置 |
-| 二 AI 主动开口 | S4-S6 (330h) | F2.1 Kova 补货 Agent v1 | 80h | E17 |
-| | | F2.2 库存变动时间线 + AI 溯源 | 80h | E26 + E17 |
-| | | F2.3 Preview Before Execute 护栏 | 50h | E21 + E17 横向 |
-| | | F2.4 多平台订单聚合 v0 | 120h | E27.4 提前 |
-| 三 可恢复+角色化 | S7-S9 (300h) | F3.1 Time Machine | 60h | E21 完整 |
-| | | F3.2 30 秒 Aha Role Atrium | 70h | E11.* |
-| | | F3.3 Hub NLQ MVP | 120h | E19 提前 |
-| | | F3.4 微信/钉钉机器人推送 | 50h | E25.3 提前 |
-| 四 信任打钉+跑量 | S10-S12 (200h) | F4.1 Trust Center 审计页 | 50h | E26.1 |
-| | | F4.2 OCR 票据录入 | 70h | E23.5 提前 |
-| | | F4.3 性能基线 + 虚拟滚动 | 40h | E22 提前 |
-| | | F4.4 Billing × Usage Meter | 40h | E10 扩展 |
+### Sprint 0 — Foundation Week (52h, pre-budget)
+| ID | 任务 | 工时 |
+|----|------|------|
+| S0-Q1 | release.yaml image-* `needs:` gate | 6h |
+| S0-Q2 | llmgateway/metrics.go + `/internal/v1/metrics` | 12h |
+| S0-Q3 | telemetry.ts 扩 5 event + 写 NATS PSI_TELEMETRY | 10h |
+| S0-Q4 | PG backup CronJob + restore drill | 8h |
+| S0-C1 | assumptions.md schema + founder 签字 H1/H2/H3 owner | 4h |
+| S0-C2 | bin/assumption-snapshot.sh 日跑 | 8h |
+| S0-C3 | bin/health-report.sh 周一飞书报 | 4h |
 
-### 阶段 Gate
-- **S3 末**: STAGE 5 内部账号可下单看库存, ⌘K demo 通过 10 分钟客户演示
-- **S6 末**: 3 家 lighthouse 客户在 STAGE 跑实单, WAD ≥ 10/周
-- **S9 末**: 10 家试用, 前 14 天活跃留存 ≥ 60%, Cmd+Z 月调用 ≥ 5 次/活跃
-- **S12 末 (R1)**: 至少 3 家付费 (¥299/月 或 ¥3588/年), 北极星 WAD ≥ 80 累计, 3 个假设至少 1 个验真
+### Sprint 1-12 — 3-track parallel
+| Sprint | Track P (feature) | Track Q | Track C | Exit Gate |
+|---|---|---|---|---|
+| S1 | F1.1 STAGE 验证 4h + F1.2 Palette 起 30h | lint baseline + 治 top3 errcheck 10h | supplier/warehouse CRUD + RLS test 12h | Palette <200ms, 新 CRUD OK |
+| S2 | F1.2 收 20h + F1.3 暗黑 50h | migration 000032 audit_log 扩列 12h | CSV import + 3 fixture 14h | onboarding <15 min |
+| S3 | F1.4 AI Drawer v0.5 80h | staticcheck 清零 + Grafana LLM 12h | Driver.js tour + cross_border_seed 20h | **STAGE-1**: 5 账号 tour 30 min P95, Drawer 相关性 ≥4/5 |
+| S4 | F2.1 Kova 补货 v1 80h | llmgateway/ratelimit.go 12h | **首 3 lighthouse 客户落地** 16h | 3 客户 ≥50 SKU import + ≥1 first PO export |
+| S5 | F2.2 时间线 80h + F2.3 Preview 40h | audit retention CronJob + gauge 10h | Crisp widget + 客户 1v1 12h | 100% AI 写经 plans/:id/confirm + audit row |
+| S6 | F2.4 多平台聚合 120h + F2.3 收尾 10h | sync_lag + oversell histogram 10h | 客户 #4-5 + H3 日算 12h | **STAGE-2**: 5 客户, WAD ≥10/周, oversell 14d=0 |
+| S7 | F3.1 Time Machine 60h + F3.2 Atrium 前 40% 30h | cmd_z payload + Q-dashboard 8h | **客户 #6-10 onboarding** + seed 扩展 20h | 10 客户, d14 留存 ≥60%, Cmd+Z ≥5/月 |
+| S8 | F3.3 Hub NLQ MVP 120h + F3.2 收尾 40h（**借 S10 48h**）| sqlguard.go + nlq_blocked metric 12h | H1/H2/H3 evidence freeze 4h | NLQ 准确率 ≥80%, 注入假阳 0 |
+| S9 | F3.4 微信/钉钉 push 50h | OTel SDK + Tempo trace 16h | 10 客户 retention 访谈 16h | **STAGE-3**: WAD ≥40/周, push 转 ≥30%, 留存 ≥60% |
+| S10 | F4.1 Trust Center 50h + F4.2 OCR 起 40h（剩 ~54h）| **prometheus-rules.yaml: 3 KS alert 上线 + 飞书** 8h | 启动付费转化访谈 4h | 3 KS alert synthetic 验通过 |
+| S11 | F4.2 OCR 收 30h + F4.3 perf 40h | Lighthouse CI step 接 ci.yaml 8h | 第 2 波付费 + cs-runbook 12h | Lighthouse main 绿, 10k SKU 60fps, ≥3/10 口头付费 |
+| S12 | F4.4 Billing × Usage Meter 40h | coverage 审计 ≥60% 8h | 90d cohort 评分 + R2 kickoff 12h | **R1 收口**: WAD ≥80, ≥3 付费, H1/H2/H3 标 truthy/falsified/inconclusive |
+
+### Q-before-P 依赖矩阵（关键依赖）
+- F1.2 Palette ← S0-Q3 `palette_invocation` event（没埋点测不了 DAU）
+- F1.4 AI Drawer ← S0-Q2 LLM cost metric（首个持续 LLM 消费者）
+- F2.1 Kova 补货 ← S0-Q2 + S4-Q rate limiter（批量 LLM 无限流被 newapi 反限）
+- F2.3 Preview ← S2-Q audit_log 扩列（plan-id → audit row）
+- F3.1 Time Machine ← S0-Q3 `cmd_z_used` event + S7-Q payload
 
 ### V1.5 不做 (V2+ 再评估)
 多账簿多准则跨国会计 / MRP-BOM-委外加工 / 完整 Omnichannel POS / 复杂审批链 DSL / 跨设备草稿同步 + 多人实时协同。
 
 ### 容量
-2 人 × 12 sprint × 56h/sprint/人 = 1344h, 计划 1014h, 缓冲 25% 应对假设证伪转向（F1.1 释放 36h）。
+2 人 × 12 sprint × 56h × 70% = **1344h**；P 1014 + Q 180 + C 150 = 1344；Sprint 8 借 S10 48h（NLQ 大）；Sprint 0 = 52h pre-budget。归档：`./_archive/roadmap-v1.5-flat-stages-2026-05-18.md`（4-stage flat 旧版）。
 
 ---
 
