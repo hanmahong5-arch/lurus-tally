@@ -120,4 +120,4 @@ cd web && bun run build && bun run lint
 | 选型调研 | `./_research/` (4 份) |
 
 ---
-_BMAD artifacts last review: 2026-05-18 — see [`doc/audit/2026-05-18-bmad-output-stale.md`](../doc/audit/2026-05-18-bmad-output-stale.md)._
+_BMAD artifacts last review: 2026-05-18 — governance: `lurus/doc/audit/2026-05-18-bmad-output-stale.md`._
