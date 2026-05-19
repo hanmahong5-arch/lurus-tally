@@ -2,6 +2,9 @@ import Link from "next/link"
 import { auth } from "@/auth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { fetchLowStockAlerts, fetchDraftPurchaseBillCount } from "@/lib/api/stock"
+
+export const revalidate = 60
 
 export default async function DashboardPage({
   searchParams,
@@ -11,6 +14,13 @@ export default async function DashboardPage({
   const session = await auth()
   const profileType = session?.user?.profileType
   const error = searchParams?.error
+
+  // Fetch dashboard widget data server-side; degrade gracefully on failure.
+  const accessToken = session?.accessToken ?? ""
+  const [lowStock, draftPurchaseCount] = await Promise.all([
+    accessToken ? fetchLowStockAlerts(accessToken, 5) : Promise.resolve({ items: [], count: 0 }),
+    accessToken ? fetchDraftPurchaseBillCount(accessToken) : Promise.resolve(0),
+  ])
 
   const cards: { href: string; title: string; description: string; emoji: string }[] = [
     { href: "/products", title: "商品管理", description: "SKU、单位、分类、价格", emoji: "📦" },
@@ -63,6 +73,85 @@ export default async function DashboardPage({
               </Card>
             </Link>
           ))}
+        </section>
+
+        {/* Intelligence widgets */}
+        <section className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {/* Low-stock TOP 5 */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">低库存预警 TOP 5</CardTitle>
+              <CardDescription>可用量低于安全库存的商品</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {lowStock.items.length === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">
+                  暂无低库存商品
+                </p>
+              ) : (
+                <ul className="divide-y divide-border">
+                  {lowStock.items.map((item) => (
+                    <li
+                      key={`${item.product_id}-${item.warehouse_id}`}
+                      className="flex items-center justify-between py-2.5 gap-3"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate">{item.product_name}</p>
+                        <p className="text-xs text-muted-foreground truncate">
+                          {item.warehouse_name}
+                        </p>
+                      </div>
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-sm font-mono text-red-600">
+                          {Number(item.available_qty).toFixed(0)}
+                          <span className="text-muted-foreground text-xs"> / {Number(item.low_safe_qty).toFixed(0)}</span>
+                        </p>
+                        <Link
+                          href={`/purchases/new?prefill_product_id=${item.product_id}`}
+                          className="text-xs text-primary hover:underline"
+                        >
+                          下采购单
+                        </Link>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              {lowStock.count > 5 && (
+                <p className="mt-2 text-xs text-muted-foreground text-center">
+                  还有 {lowStock.count - 5} 个商品低于安全库存
+                </p>
+              )}
+            </CardContent>
+          </Card>
+
+          {/* Draft purchase bills count */}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-base">待审单据</CardTitle>
+              <CardDescription>需要审核的草稿采购单</CardDescription>
+            </CardHeader>
+            <CardContent>
+              {draftPurchaseCount === 0 ? (
+                <p className="text-sm text-muted-foreground py-4 text-center">
+                  暂无待审采购单
+                </p>
+              ) : (
+                <div className="flex items-center justify-between py-2">
+                  <div>
+                    <p className="text-3xl font-bold tabular-nums">{draftPurchaseCount}</p>
+                    <p className="text-sm text-muted-foreground mt-0.5">张待审采购单</p>
+                  </div>
+                  <Link
+                    href="/purchases?status=draft"
+                    className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
+                  >
+                    去审核
+                  </Link>
+                </div>
+              )}
+            </CardContent>
+          </Card>
         </section>
       </div>
     </main>

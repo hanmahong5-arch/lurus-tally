@@ -199,9 +199,17 @@ export default function StockDetailPage() {
 
       {/* Movement timeline */}
       <section>
-        <h2 className="text-sm font-medium text-muted-foreground mb-2">
-          最近变动 <span className="text-xs">（最多 50 条）</span>
-        </h2>
+        <div className="flex items-center justify-between mb-2">
+          <h2 className="text-sm font-medium text-muted-foreground">
+            最近变动 <span className="text-xs">（最多 50 条）</span>
+          </h2>
+          <Link
+            href={`/stock/${productId}/timeline`}
+            className="text-xs text-primary hover:underline"
+          >
+            查看变动历史 →
+          </Link>
+        </div>
         {movements.length === 0 ? (
           <EmptyState title="暂无变动记录" description="采购或销售产生入出库后将在此显示" />
         ) : (

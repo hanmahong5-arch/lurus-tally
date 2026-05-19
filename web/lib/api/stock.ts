@@ -112,3 +112,64 @@ export async function getProductStock(
 ): Promise<StockSnapshot[]> {
   return listStockSnapshots({ product_id: productId, tenantId, limit: 100, signal })
 }
+
+// ---------------------------------------------------------------------------
+// Server-side helpers (RSC / Server Actions)
+// Call the backend in-cluster directly with an access token.  Never import
+// these from client components — they rely on server-only env vars.
+// ---------------------------------------------------------------------------
+
+const SERVER_BACKEND_URL =
+  typeof window === "undefined"
+    ? (process.env.BACKEND_URL ?? "http://tally-backend:18200")
+    : ""
+
+export interface LowStockItem {
+  product_id: string
+  product_name: string
+  warehouse_id: string
+  warehouse_name: string
+  available_qty: string
+  low_safe_qty: string
+}
+
+export interface LowStockResponse {
+  items: LowStockItem[]
+  count: number
+}
+
+/**
+ * Server-side: GET /api/v1/stock/alerts/low-stock
+ * Requires the user's access_token from auth().
+ */
+export async function fetchLowStockAlerts(
+  accessToken: string,
+  limit = 5,
+): Promise<LowStockResponse> {
+  const res = await fetch(
+    `${SERVER_BACKEND_URL}/api/v1/stock/alerts/low-stock?limit=${limit}`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      next: { revalidate: 60 },
+    },
+  )
+  if (!res.ok) return { items: [], count: 0 }
+  return (await res.json()) as LowStockResponse
+}
+
+/**
+ * Server-side: GET /api/v1/purchase-bills?status=0&size=1
+ * Returns the `total` count of draft purchase bills.
+ */
+export async function fetchDraftPurchaseBillCount(accessToken: string): Promise<number> {
+  const res = await fetch(
+    `${SERVER_BACKEND_URL}/api/v1/purchase-bills?status=0&size=1`,
+    {
+      headers: { Authorization: `Bearer ${accessToken}` },
+      next: { revalidate: 60 },
+    },
+  )
+  if (!res.ok) return 0
+  const body = (await res.json()) as { total?: number }
+  return body.total ?? 0
+}
