@@ -67,7 +67,7 @@ func TestHealthHandler_Healthz_Returns200WithOKStatus(t *testing.T) {
 	}
 }
 
-func TestHealthHandler_Readyz_NoDeps_Returns200(t *testing.T) {
+func TestHealthHandler_Readyz_NoDeps_Returns200WithOK(t *testing.T) {
 	h := health.New("dev")
 	r := newRouter(h)
 
@@ -82,12 +82,12 @@ func TestHealthHandler_Readyz_NoDeps_Returns200(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
 		t.Fatalf("response body is not valid JSON: %v", err)
 	}
-	if body["status"] != "ready" {
-		t.Errorf("expected status=ready, got %v", body["status"])
+	if body["status"] != "ok" {
+		t.Errorf("expected status=ok, got %v", body["status"])
 	}
 }
 
-func TestHealthHandler_Readyz_AllDepsHealthy_Returns200(t *testing.T) {
+func TestHealthHandler_Readyz_AllDepsHealthy_Returns200WithOK(t *testing.T) {
 	h := health.New("dev",
 		health.Dep{Name: "db", Pinger: &stubPinger{}, Required: true},
 		health.Dep{Name: "redis", Pinger: &stubPinger{}, Required: false},
@@ -101,9 +101,16 @@ func TestHealthHandler_Readyz_AllDepsHealthy_Returns200(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d (body=%s)", w.Code, w.Body.String())
 	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response body is not valid JSON: %v", err)
+	}
+	if body["status"] != "ok" {
+		t.Errorf("expected status=ok when all deps healthy, got %v", body["status"])
+	}
 }
 
-func TestHealthHandler_Readyz_RequiredDepDown_Returns503(t *testing.T) {
+func TestHealthHandler_Readyz_RequiredDepDown_Returns503Unhealthy(t *testing.T) {
 	h := health.New("dev",
 		health.Dep{Name: "db", Pinger: &stubPinger{err: errors.New("connection refused")}, Required: true},
 	)
@@ -118,12 +125,20 @@ func TestHealthHandler_Readyz_RequiredDepDown_Returns503(t *testing.T) {
 	}
 	var body map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &body)
-	if body["status"] != "not_ready" {
-		t.Errorf("expected status=not_ready, got %v", body["status"])
+	if body["status"] != "unhealthy" {
+		t.Errorf("expected status=unhealthy, got %v", body["status"])
+	}
+	failures, ok := body["failures"].([]any)
+	if !ok || len(failures) == 0 {
+		t.Errorf("expected failures list in body, got %v", body)
 	}
 }
 
-func TestHealthHandler_Readyz_OptionalDepDown_Still200(t *testing.T) {
+// TestHealthHandler_Readyz_OptionalDepDown_Returns200Degraded is the key E2 contract:
+// PG healthy + Redis down → 200 with status="degraded" and degraded=["redis"].
+// This keeps the pod in k8s endpoints (non-AI requests still work) while surfacing
+// the degraded state for alerting.
+func TestHealthHandler_Readyz_OptionalDepDown_Returns200Degraded(t *testing.T) {
 	h := health.New("dev",
 		health.Dep{Name: "db", Pinger: &stubPinger{}, Required: true},
 		health.Dep{Name: "redis", Pinger: &stubPinger{err: errors.New("redis down")}, Required: false},
@@ -136,6 +151,43 @@ func TestHealthHandler_Readyz_OptionalDepDown_Still200(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("expected 200 when only optional dep is down, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+		t.Fatalf("response body is not valid JSON: %v", err)
+	}
+	if body["status"] != "degraded" {
+		t.Errorf("expected status=degraded, got %v", body["status"])
+	}
+	deg, ok := body["degraded"].([]any)
+	if !ok || len(deg) == 0 {
+		t.Errorf("expected degraded list in body, got %v", body)
+	}
+	if deg[0] != "redis" {
+		t.Errorf("expected degraded[0]=redis, got %v", deg[0])
+	}
+}
+
+// TestHealthHandler_Readyz_NATSDown_Degraded confirms NATS outage (optional dep)
+// returns 200 degraded — the outbox pattern means NATS down does not lose writes.
+func TestHealthHandler_Readyz_NATSDown_Degraded(t *testing.T) {
+	h := health.New("dev",
+		health.Dep{Name: "db", Pinger: &stubPinger{}, Required: true},
+		health.Dep{Name: "nats", Pinger: &stubPinger{err: errors.New("nats unavailable")}, Required: false},
+	)
+	r := newRouter(h)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/internal/v1/tally/ready", nil)
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200 when NATS (optional) is down, got %d (body=%s)", w.Code, w.Body.String())
+	}
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	if body["status"] != "degraded" {
+		t.Errorf("expected status=degraded for NATS down, got %v", body["status"])
 	}
 }
 

@@ -3,6 +3,7 @@ package stock
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"time"
@@ -63,10 +64,11 @@ type RecordMovementRequest struct {
 	Note string
 }
 
-// NATSPublisher publishes stock-changed events asynchronously.
-// A nil implementation is accepted (NATS not yet configured in MVP lifecycle).
-type NATSPublisher interface {
-	Publish(ctx context.Context, subject string, payload []byte) error
+// OutboxEnqueuer is the write-side contract for enqueuing an event inside an existing
+// DB transaction. Implemented by internal/adapter/repo/event_outbox.Store.
+// A nil implementation is accepted — outbox is skipped but the movement still commits.
+type OutboxEnqueuer interface {
+	Enqueue(ctx context.Context, tx *sql.Tx, tenantID uuid.UUID, subject string, payload json.RawMessage) error
 }
 
 // RecordMovementUseCase orchestrates a single stock movement transaction.
@@ -74,16 +76,16 @@ type NATSPublisher interface {
 type RecordMovementUseCase struct {
 	repo       StockRepo
 	calculator InventoryCalculator
-	nats       NATSPublisher // may be nil
+	outbox     OutboxEnqueuer // may be nil (dev / test)
 	log        *slog.Logger
 }
 
 // NewRecordMovementUseCase constructs the use case.
-// nats may be nil; missing NATS connection is logged but does not fail movements.
+// outbox may be nil; when nil, events are not queued (acceptable in dev/test).
 func NewRecordMovementUseCase(
 	repo StockRepo,
 	calculator InventoryCalculator,
-	nats NATSPublisher,
+	outbox OutboxEnqueuer,
 	log *slog.Logger,
 ) *RecordMovementUseCase {
 	if log == nil {
@@ -92,7 +94,7 @@ func NewRecordMovementUseCase(
 	return &RecordMovementUseCase{
 		repo:       repo,
 		calculator: calculator,
-		nats:       nats,
+		outbox:     outbox,
 		log:        log,
 	}
 }
@@ -104,8 +106,9 @@ func NewRecordMovementUseCase(
 //  3. Acquire advisory lock for (tenantID, productID, warehouseID).
 //  4. ValidateMovement — returns *InsufficientStockError on oversell.
 //  5. ApplyMovement — persists movement + snapshot + lots.
-//  6. Commit.
-//  7. Publish psi.stock.changed to NATS (best-effort, non-blocking).
+//  6. Enqueue outbox row in the same transaction (atomic with the movement write).
+//  7. Commit — outbox row and movement are committed together.
+//  8. Background worker drains outbox → NATS; NATS outage cannot lose events.
 func (uc *RecordMovementUseCase) Execute(ctx context.Context, req RecordMovementRequest) (*domain.Snapshot, error) {
 	if req.TenantID == uuid.Nil {
 		return nil, fmt.Errorf("record movement: tenant_id is required")
@@ -163,14 +166,19 @@ func (uc *RecordMovementUseCase) Execute(ctx context.Context, req RecordMovement
 			return fmt.Errorf("apply movement: %w", err)
 		}
 		snap = s
+
+		// Enqueue outbox row atomically with the movement write.
+		// If outbox is not configured (dev/test), skip silently.
+		if uc.outbox != nil {
+			if err := uc.enqueueOutbox(ctx, tx, req, m, snap); err != nil {
+				return fmt.Errorf("enqueue outbox: %w", err)
+			}
+		}
 		return nil
 	})
 	if txErr != nil {
 		return nil, txErr
 	}
-
-	// Publish psi.stock.changed — best effort; failure is logged, not returned.
-	uc.publishEvent(ctx, req, m, snap)
 
 	return snap, nil
 }
@@ -234,6 +242,14 @@ func (uc *RecordMovementUseCase) ExecuteInTx(ctx context.Context, tx *sql.Tx, re
 		return nil, fmt.Errorf("record movement (tx): apply movement: %w", err)
 	}
 
+	// Enqueue outbox row in the caller's transaction so it commits atomically
+	// with the movement write and any other mutations in the same bill approval tx.
+	if uc.outbox != nil {
+		if err := uc.enqueueOutbox(ctx, tx, req, m, snap); err != nil {
+			return nil, fmt.Errorf("record movement (tx): enqueue outbox: %w", err)
+		}
+	}
+
 	return snap, nil
 }
 
@@ -253,30 +269,56 @@ func convertToBase(qty decimal.Decimal, factor string) (decimal.Decimal, error) 
 	return qty.Mul(f), nil
 }
 
-// publishEvent sends psi.stock.changed to NATS after a successful commit.
-// Non-fatal: failure only emits a warning log.
-func (uc *RecordMovementUseCase) publishEvent(ctx context.Context, req RecordMovementRequest, m *domain.Movement, snap *domain.Snapshot) {
-	if uc.nats == nil {
-		uc.log.Warn("NATS not configured, skipping psi.stock.changed event",
-			slog.String("product_id", req.ProductID.String()),
-			slog.String("direction", string(req.Direction)),
-		)
-		return
+// enqueueOutbox serialises a psi.stock.movement_recorded event envelope and
+// inserts it into event_outbox within the provided transaction. The background
+// worker drains the outbox into NATS, so NATS unavailability no longer loses events.
+func (uc *RecordMovementUseCase) enqueueOutbox(ctx context.Context, tx *sql.Tx, req RecordMovementRequest, m *domain.Movement, snap *domain.Snapshot) error {
+	// Build the typed event body. Using a local struct here keeps the nats
+	// package import out of the stock use case; the worker re-publishes the
+	// raw JSON bytes verbatim so no schema translation is needed.
+	type stockMovementPayload struct {
+		ProductID     string `json:"product_id"`
+		WarehouseID   string `json:"warehouse_id"`
+		Direction     string `json:"direction"`
+		QtyDelta      string `json:"qty_delta"`
+		OnHandAfter   string `json:"on_hand_after"`
+		UnitCost      string `json:"unit_cost"`
+		ReferenceType string `json:"reference_type"`
+	}
+	inner, err := json.Marshal(stockMovementPayload{
+		ProductID:     m.ProductID.String(),
+		WarehouseID:   m.WarehouseID.String(),
+		Direction:     string(m.Direction),
+		QtyDelta:      m.QtyBase.String(),
+		OnHandAfter:   snap.OnHandQty.String(),
+		UnitCost:      m.UnitCost.String(),
+		ReferenceType: string(m.ReferenceType),
+	})
+	if err != nil {
+		return fmt.Errorf("marshal movement payload: %w", err)
 	}
 
-	payload := fmt.Sprintf(
-		`{"tenant_id":%q,"product_id":%q,"warehouse_id":%q,"direction":%q,"qty_base_delta":%s,"new_on_hand_qty":%s,"occurred_at":%q}`,
-		req.TenantID, req.ProductID, req.WarehouseID,
-		req.Direction,
-		m.QtyBase.String(),
-		snap.OnHandQty.String(),
-		m.OccurredAt.Format(time.RFC3339),
-	)
-
-	if err := uc.nats.Publish(ctx, "psi.stock.changed", []byte(payload)); err != nil {
-		uc.log.Warn("failed to publish psi.stock.changed",
-			slog.String("product_id", req.ProductID.String()),
-			slog.Any("error", err),
-		)
+	// Wrap in canonical Event envelope (mirrors nats.buildEvent layout).
+	type eventEnvelope struct {
+		EventID    string          `json:"event_id"`
+		EventType  string          `json:"event_type"`
+		TenantID   string          `json:"tenant_id"`
+		OccurredAt string          `json:"occurred_at"`
+		Source     string          `json:"source"`
+		Payload    json.RawMessage `json:"payload"`
 	}
+	envelope, err := json.Marshal(eventEnvelope{
+		EventID:    uuid.New().String(),
+		EventType:  "stock.movement_recorded",
+		TenantID:   req.TenantID.String(),
+		OccurredAt: m.OccurredAt.Format(time.RFC3339),
+		Source:     "tally",
+		Payload:    inner,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal event envelope: %w", err)
+	}
+
+	const subject = "PSI_EVENTS.stock.movement_recorded"
+	return uc.outbox.Enqueue(ctx, tx, req.TenantID, subject, json.RawMessage(envelope))
 }
