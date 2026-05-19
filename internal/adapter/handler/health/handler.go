@@ -129,7 +129,7 @@ func (h *Handler) Readyz(c *gin.Context) {
 			slog.Any("degraded", degraded),
 		)
 		c.JSON(http.StatusOK, gin.H{
-			"status":  "degraded",
+			"status":   "degraded",
 			"degraded": degraded,
 		})
 		return

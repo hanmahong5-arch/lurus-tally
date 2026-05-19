@@ -45,9 +45,9 @@ var ErrIdemNotFound = errors.New("idempotency: key not found")
 // Kind classifies the response for cache retention:
 //   - "ok"           — 2xx; always cached.
 //   - "client_error" — deterministic 4xx (validation, conflict, etc.); cached so
-//                      replays return the same error without re-running the handler.
+//     replays return the same error without re-running the handler.
 //   - "transient"    — 429 (rate limited); NOT cached so a retry can succeed after
-//                      the rate-limit budget resets.
+//     the rate-limit budget resets.
 type idempotencyEntry struct {
 	Status      int    `json:"status"`
 	Kind        string `json:"kind"` // "ok" | "client_error" | "transient"

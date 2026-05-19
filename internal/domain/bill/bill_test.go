@@ -78,10 +78,10 @@ func TestBillStatus_Transitions_Illegal(t *testing.T) {
 // TestBillHead_CanTransitionTo_LegalPairs verifies all legal BillHead.CanTransitionTo pairs.
 func TestBillHead_CanTransitionTo_LegalPairs(t *testing.T) {
 	cases := []struct {
-		name     string
-		head     domain.BillHead
-		next     domain.BillStatus
-		wantNil  bool
+		name    string
+		head    domain.BillHead
+		next    domain.BillStatus
+		wantNil bool
 	}{
 		{
 			name:    "draft→approved",

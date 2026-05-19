@@ -120,7 +120,7 @@ func TestProjectStatus_CanTransitionTo_Illegal(t *testing.T) {
 		{project.StatusCompleted, project.StatusActive}, // was silently allowed before W1
 		{project.StatusArchived, project.StatusCompleted},
 		{project.StatusArchived, project.StatusCancelled},
-		{project.StatusActive, project.StatusPaused},   // paused transitions not in state machine
+		{project.StatusActive, project.StatusPaused}, // paused transitions not in state machine
 		{project.StatusCancelled, project.StatusActive},
 	}
 	for _, tc := range cases {

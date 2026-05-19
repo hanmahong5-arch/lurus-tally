@@ -26,11 +26,11 @@ import (
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
-	handlersupp "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/supplier"
-	handlerwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/warehouse"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
+	handlersupp "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/supplier"
 	handlertelemetry "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/telemetry"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
+	handlerwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/warehouse"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/platform"
@@ -45,9 +45,9 @@ import (
 	repoprojectrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/project"
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
 	reposupplier "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/supplier"
-	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
+	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
 	appauth "github.com/hanmahong5-arch/lurus-tally/internal/app/auth"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
@@ -59,9 +59,9 @@ import (
 	appprojectuc "github.com/hanmahong5-arch/lurus-tally/internal/app/project"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	appsupp "github.com/hanmahong5-arch/lurus-tally/internal/app/supplier"
-	appwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/app/warehouse"
 	apptenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
 	appunit "github.com/hanmahong5-arch/lurus-tally/internal/app/unit"
+	appwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/app/warehouse"
 	domainauth "github.com/hanmahong5-arch/lurus-tally/internal/domain/auth"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
@@ -75,12 +75,12 @@ import (
 // App is the application root. It holds all wired dependencies and manages
 // the HTTP server lifecycle. No global variables; all state lives here.
 type App struct {
-	cfg          *config.Config
-	log          *slog.Logger
-	engine       *gin.Engine
-	srv          *http.Server
-	db           *sql.DB
-	stopOutbox   context.CancelFunc // cancels the outbox worker goroutine on Stop
+	cfg        *config.Config
+	log        *slog.Logger
+	engine     *gin.Engine
+	srv        *http.Server
+	db         *sql.DB
+	stopOutbox context.CancelFunc // cancels the outbox worker goroutine on Stop
 }
 
 // NewApp wires all dependencies together and returns a ready-to-start App.

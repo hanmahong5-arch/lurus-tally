@@ -15,12 +15,12 @@ import (
 
 // fakeOutboxStore is an in-memory OutboxStore for worker tests.
 type fakeOutboxStore struct {
-	mu          sync.Mutex
-	rows        []adapternats.OutboxRow
-	published   map[uuid.UUID]bool
-	attempts    map[uuid.UUID]int
-	lastErrors  map[uuid.UUID]string
-	drainErr    error
+	mu         sync.Mutex
+	rows       []adapternats.OutboxRow
+	published  map[uuid.UUID]bool
+	attempts   map[uuid.UUID]int
+	lastErrors map[uuid.UUID]string
+	drainErr   error
 }
 
 func newFakeOutboxStore(rows []adapternats.OutboxRow) *fakeOutboxStore {
@@ -68,9 +68,9 @@ func (s *fakeOutboxStore) RecordAttemptError(_ context.Context, id uuid.UUID, la
 
 // fakePublisher is a controllable Publisher stub.
 type fakePublisher struct {
-	mu        sync.Mutex
-	published []string // subject of each successful publish
-	publishErr error   // when set, every Publish call returns this error
+	mu         sync.Mutex
+	published  []string // subject of each successful publish
+	publishErr error    // when set, every Publish call returns this error
 }
 
 func (f *fakePublisher) Publish(_ context.Context, subject string, _ any) error {

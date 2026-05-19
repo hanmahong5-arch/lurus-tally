@@ -13,9 +13,12 @@ import (
 const (
 	outboxPollInterval = 30 * time.Second
 	outboxDrainLimit   = 100
-	// maxAttempts is the inclusive ceiling before a row is skipped on subsequent polls.
-	// The row remains in the table for manual inspection and ops recovery.
-	maxAttempts = 10
+	// MaxOutboxAttempts is the inclusive ceiling before a row is skipped on
+	// subsequent polls. The row remains in the table for manual inspection.
+	// Exported because the SQL repo references it in the Drain WHERE clause —
+	// the gate must be enforced server-side so a runaway row cannot saturate
+	// the worker each tick.
+	MaxOutboxAttempts = 10
 )
 
 // OutboxStore is the minimal contract the worker needs from the outbox persistence layer.
@@ -100,7 +103,7 @@ func (w *OutboxWorker) processRow(ctx context.Context, row OutboxRow) {
 	// Publish the raw JSON payload verbatim to the stored NATS subject.
 	// The payload was produced by buildEvent inside the tx, so it is already
 	// a fully-formed Event envelope.
-	if err := w.pub.Publish(ctx, row.Subject, json.RawMessage(row.Payload)); err != nil {
+	if err := w.pub.Publish(ctx, row.Subject, row.Payload); err != nil {
 		errMsg := err.Error()
 		w.log.Warn("outbox: publish failed, will retry",
 			slog.String("id", row.ID.String()),

@@ -61,13 +61,15 @@ func (s *Store) Drain(ctx context.Context, limit int) ([]adapternats.OutboxRow, 
 		return nil, fmt.Errorf("event_outbox: drain set tenant: %w", err)
 	}
 
+	// MaxAttempts gates a poison row from being retried forever; the row stays
+	// in the table so an operator can inspect last_error and decide manually.
 	const q = `
 		SELECT id, subject, payload
 		FROM tally.event_outbox
-		WHERE published_at IS NULL
+		WHERE published_at IS NULL AND attempts < $2
 		ORDER BY created_at
 		LIMIT $1`
-	rows, err := tx.QueryContext(ctx, q, limit)
+	rows, err := tx.QueryContext(ctx, q, limit, adapternats.MaxOutboxAttempts)
 	if err != nil {
 		return nil, fmt.Errorf("event_outbox: drain query: %w", err)
 	}
