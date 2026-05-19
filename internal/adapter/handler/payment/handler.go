@@ -122,17 +122,10 @@ func errResp(code, message, action string) gin.H {
 	return h
 }
 
+// resolveTenantID returns the tenant UUID injected by AuthMiddleware.
+// uuid.Nil → caller MUST return 401. No header fallback (see bill/handler.go).
 func resolveTenantID(c *gin.Context) uuid.UUID {
-	id := middleware.GetTenantID(c)
-	if id != uuid.Nil {
-		return id
-	}
-	if raw := c.GetHeader("X-Tenant-ID"); raw != "" {
-		if parsed, err := uuid.Parse(raw); err == nil {
-			return parsed
-		}
-	}
-	return uuid.Nil
+	return middleware.GetTenantID(c)
 }
 
 func resolveCreatorID(c *gin.Context) uuid.UUID {

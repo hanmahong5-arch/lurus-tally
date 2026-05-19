@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
+
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 )
 
@@ -323,3 +325,68 @@ var errSentinel = &storeErr{}
 type storeErr struct{}
 
 func (e *storeErr) Error() string { return "store fault" }
+
+// TestIdempotency_UUIDTenant_DedupesLikeStringTenant confirms the production
+// code path: AuthMiddleware injects a uuid.UUID (not a string) into the Gin
+// context. Pre-fix, the middleware silently no-op'd on every uuid tenant
+// because tenant.(string) failed, so dedup never engaged in prod. This test
+// must run handler exactly once for two identical requests.
+func TestIdempotency_UUIDTenant_DedupesLikeStringTenant(t *testing.T) {
+	store := newMemStore()
+	var calls int32
+
+	tenant, _ := uuid.Parse("11111111-1111-1111-1111-111111111111")
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(middleware.CtxKeyTenantID, tenant) // prod injects uuid.UUID
+		c.Next()
+	})
+	r.Use(middleware.Idempotency(store))
+	r.POST("/things", func(c *gin.Context) {
+		atomic.AddInt32(&calls, 1)
+		c.JSON(http.StatusCreated, gin.H{"ok": true})
+	})
+
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/things", nil)
+		req.Header.Set(middleware.HeaderIdempotencyKey, "uuid-key")
+		r.ServeHTTP(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("call %d: expected 201, got %d", i, w.Code)
+		}
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("uuid.UUID tenant should dedupe; expected 1 call, got %d", got)
+	}
+}
+
+// TestIdempotency_NilUUIDTenant_PassesThrough confirms that a uuid.Nil tenant
+// is treated as "no tenant" — would happen if AuthMiddleware ran but did not
+// resolve a tenant. The handler must still execute (downstream returns 401)
+// and must not be deduped (the cache would conflate every unauthenticated
+// request).
+func TestIdempotency_NilUUIDTenant_PassesThrough(t *testing.T) {
+	store := newMemStore()
+	var calls int32
+	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Set(middleware.CtxKeyTenantID, uuid.Nil)
+		c.Next()
+	})
+	r.Use(middleware.Idempotency(store))
+	r.POST("/things", func(c *gin.Context) {
+		atomic.AddInt32(&calls, 1)
+		c.JSON(http.StatusCreated, gin.H{"ok": true})
+	})
+
+	for i := 0; i < 2; i++ {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/things", nil)
+		req.Header.Set(middleware.HeaderIdempotencyKey, "k-nil")
+		r.ServeHTTP(w, req)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("uuid.Nil tenant should not dedupe; got %d calls", got)
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appauth "github.com/hanmahong5-arch/lurus-tally/internal/app/auth"
 	domainauth "github.com/hanmahong5-arch/lurus-tally/internal/domain/auth"
 )
@@ -58,6 +59,14 @@ func (s *stubRepo) TouchLastUsed(_ context.Context, _ uuid.UUID) error { return 
 func newPATEngine(repo appauth.Repository) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	e := gin.New()
+	e.Use(func(c *gin.Context) {
+		if raw := c.GetHeader("X-Tenant-ID"); raw != "" {
+			if id, err := uuid.Parse(raw); err == nil {
+				c.Set(middleware.CtxKeyTenantID, id)
+			}
+		}
+		c.Next()
+	})
 	api := e.Group("/api/v1")
 	handlerAuth.NewPATHandler(repo).RegisterRoutes(api)
 	return e

@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
@@ -244,7 +245,7 @@ func (h *SaleHandler) List(c *gin.Context) {
 	}
 
 	page := parseIntQuery(c, "page", 1)
-	size := parseIntQuery(c, "size", 20)
+	size := middleware.ParseLimitQuery(c, "size", 20, middleware.DefaultMaxPageLimit)
 
 	f := appbill.BillListFilter{
 		TenantID: tenantID,

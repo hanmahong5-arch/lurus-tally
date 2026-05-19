@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 )
 
 const (
@@ -82,8 +83,31 @@ func Idempotency(store IdempotencyStore) gin.HandlerFunc {
 			return
 		}
 		tenant, ok := c.Get(CtxKeyTenantID)
-		tid, _ := tenant.(string)
-		if !ok || tid == "" {
+		if !ok {
+			idempotencySkipped.WithLabelValues("no_tenant").Inc()
+			c.Next()
+			return
+		}
+		// AuthMiddleware injects uuid.UUID; tests historically used string.
+		// Both shapes are accepted so tests don't have to know the prod type.
+		var tid string
+		switch t := tenant.(type) {
+		case uuid.UUID:
+			if t == uuid.Nil {
+				idempotencySkipped.WithLabelValues("no_tenant").Inc()
+				c.Next()
+				return
+			}
+			tid = t.String()
+		case string:
+			if t == "" {
+				idempotencySkipped.WithLabelValues("no_tenant").Inc()
+				c.Next()
+				return
+			}
+			tid = t
+		default:
+			idempotencySkipped.WithLabelValues("wrong_type").Inc()
 			c.Next()
 			return
 		}

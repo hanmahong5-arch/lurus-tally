@@ -16,6 +16,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
@@ -100,6 +101,14 @@ func buildPaymentHandler(billReader *phMockBillReader, payRepo *phMockPaymentRep
 
 func newPaymentRouter(h *handlerpayment.Handler) *gin.Engine {
 	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		if raw := c.GetHeader("X-Tenant-ID"); raw != "" {
+			if id, err := uuid.Parse(raw); err == nil {
+				c.Set(middleware.CtxKeyTenantID, id)
+			}
+		}
+		c.Next()
+	})
 	api := r.Group("/api/v1")
 	h.RegisterRoutes(api)
 	return r

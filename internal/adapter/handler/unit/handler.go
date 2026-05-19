@@ -138,17 +138,8 @@ func indexString(s, substr string) int {
 	return -1
 }
 
-// resolveTenantID reads tenant UUID from the Gin context or X-Tenant-ID header.
+// resolveTenantID returns the tenant UUID injected by AuthMiddleware.
+// uuid.Nil → caller MUST return 401. No header fallback (see bill/handler.go).
 func resolveTenantID(c *gin.Context) uuid.UUID {
-	id := middleware.GetTenantID(c)
-	if id != uuid.Nil {
-		return id
-	}
-	if raw := c.GetHeader("X-Tenant-ID"); raw != "" {
-		parsed, err := uuid.Parse(raw)
-		if err == nil {
-			return parsed
-		}
-	}
-	return uuid.Nil
+	return middleware.GetTenantID(c)
 }

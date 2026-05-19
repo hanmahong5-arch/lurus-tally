@@ -16,9 +16,23 @@ import (
 	"github.com/shopspring/decimal"
 
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
 )
+
+// injectTenantFromHeader is a test-only middleware that lets request fixtures
+// keep using `req.Header.Set("X-Tenant-ID", …)` even though production handlers
+// no longer trust that header. It mimics what AuthMiddleware does in prod:
+// parse the value and place a uuid.UUID into the Gin context.
+func injectTenantFromHeader(c *gin.Context) {
+	if raw := c.GetHeader("X-Tenant-ID"); raw != "" {
+		if id, err := uuid.Parse(raw); err == nil {
+			c.Set(middleware.CtxKeyTenantID, id)
+		}
+	}
+	c.Next()
+}
 
 func init() {
 	gin.SetMode(gin.TestMode)
@@ -134,6 +148,7 @@ func newTestHandler(repo *mockBillRepo) *handlerbill.Handler {
 func newRouter(h *handlerbill.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(injectTenantFromHeader)
 	api := r.Group("/api/v1")
 	h.RegisterRoutes(api)
 	return r

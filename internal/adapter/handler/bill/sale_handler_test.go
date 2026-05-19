@@ -209,6 +209,7 @@ func buildSaleHandlerForTest(repo *shMockBillRepo, stockUC *shMockStockUC, payRe
 
 func newSaleRouter(h *handlerbill.SaleHandler) *gin.Engine {
 	r := gin.New()
+	r.Use(injectTenantFromHeader)
 	api := r.Group("/api/v1")
 	h.RegisterRoutes(api)
 	return r

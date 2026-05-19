@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
 	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/product"
@@ -92,6 +93,14 @@ func newTestProductHandler(repo *mockProductRepo) *handlerproduct.Handler {
 func newProductRouter(h *handlerproduct.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
+	r.Use(func(c *gin.Context) {
+		if raw := c.GetHeader("X-Tenant-ID"); raw != "" {
+			if id, err := uuid.Parse(raw); err == nil {
+				c.Set(middleware.CtxKeyTenantID, id)
+			}
+		}
+		c.Next()
+	})
 	api := r.Group("/api/v1")
 	api.GET("/products", h.List)
 	api.POST("/products", h.Create)

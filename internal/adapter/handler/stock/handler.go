@@ -4,7 +4,6 @@ package stock
 import (
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -61,7 +60,7 @@ func (h *Handler) ListLowStock(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant_id required"})
 		return
 	}
-	limit := parseIntQuery(c, "limit", 200)
+	limit := middleware.ParseLimitQuery(c, "limit", 200, middleware.DefaultMaxPageLimit)
 	rows, err := h.listLowStock.Execute(c.Request.Context(), tenantID, limit)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -200,8 +199,8 @@ func (h *Handler) ListSnapshots(c *gin.Context) {
 
 	f := appstock.ListSnapshotsFilter{
 		TenantID: tenantID,
-		Limit:    parseIntQuery(c, "limit", 20),
-		Offset:   parseIntQuery(c, "offset", 0),
+		Limit:    middleware.ParseLimitQuery(c, "limit", 20, middleware.DefaultMaxPageLimit),
+		Offset:   middleware.ParseOffsetQuery(c, "offset"),
 	}
 	if v := c.Query("product_id"); v != "" {
 		if id, err := uuid.Parse(v); err == nil {
@@ -232,8 +231,8 @@ func (h *Handler) ListMovements(c *gin.Context) {
 
 	f := appstock.MovementFilter{
 		TenantID: tenantID,
-		Limit:    parseIntQuery(c, "limit", 50),
-		Offset:   parseIntQuery(c, "offset", 0),
+		Limit:    middleware.ParseLimitQuery(c, "limit", 50, middleware.DefaultMaxPageLimit),
+		Offset:   middleware.ParseOffsetQuery(c, "offset"),
 	}
 	if v := c.Query("product_id"); v != "" {
 		if id, err := uuid.Parse(v); err == nil {
@@ -254,26 +253,8 @@ func (h *Handler) ListMovements(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": mvs})
 }
 
-// resolveTenantID reads tenant UUID from the Gin context or X-Tenant-ID header.
+// resolveTenantID returns the tenant UUID injected by AuthMiddleware.
+// uuid.Nil → caller MUST return 401. No header fallback (see bill/handler.go).
 func resolveTenantID(c *gin.Context) uuid.UUID {
-	id := middleware.GetTenantID(c)
-	if id != uuid.Nil {
-		return id
-	}
-	if raw := c.GetHeader("X-Tenant-ID"); raw != "" {
-		parsed, err := uuid.Parse(raw)
-		if err == nil {
-			return parsed
-		}
-	}
-	return uuid.Nil
-}
-
-func parseIntQuery(c *gin.Context, key string, def int) int {
-	if s := c.Query(key); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			return n
-		}
-	}
-	return def
+	return middleware.GetTenantID(c)
 }

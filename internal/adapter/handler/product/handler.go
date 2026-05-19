@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -124,8 +123,8 @@ func (h *Handler) List(c *gin.Context) {
 		return
 	}
 
-	limit := parseIntQuery(c, "limit", 20)
-	offset := parseIntQuery(c, "offset", 0)
+	limit := middleware.ParseLimitQuery(c, "limit", 20, middleware.DefaultMaxPageLimit)
+	offset := middleware.ParseOffsetQuery(c, "offset")
 	q := c.Query("q")
 
 	var attrsFilter json.RawMessage
@@ -308,30 +307,9 @@ func (h *Handler) Restore(c *gin.Context) {
 	c.JSON(http.StatusOK, p)
 }
 
-// resolveTenantID reads tenant UUID from the Gin context (set by AuthMiddleware)
-// or falls back to the X-Tenant-ID header for development convenience.
-// Returns uuid.Nil when neither source provides a valid UUID.
+// resolveTenantID returns the tenant UUID injected by AuthMiddleware.
+// uuid.Nil → caller MUST return 401. No header fallback: any client could
+// otherwise spoof X-Tenant-ID against a misconfigured deploy.
 func resolveTenantID(c *gin.Context) uuid.UUID {
-	id := middleware.GetTenantID(c)
-	if id != uuid.Nil {
-		return id
-	}
-	// Dev fallback: X-Tenant-ID header.
-	if raw := c.GetHeader("X-Tenant-ID"); raw != "" {
-		parsed, err := uuid.Parse(raw)
-		if err == nil {
-			return parsed
-		}
-	}
-	return uuid.Nil
-}
-
-// parseIntQuery reads an integer query parameter or returns the default value.
-func parseIntQuery(c *gin.Context, key string, def int) int {
-	if s := c.Query(key); s != "" {
-		if n, err := strconv.Atoi(s); err == nil && n >= 0 {
-			return n
-		}
-	}
-	return def
+	return middleware.GetTenantID(c)
 }

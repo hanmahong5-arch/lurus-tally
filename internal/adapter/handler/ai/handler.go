@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
@@ -20,6 +21,7 @@ import (
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
 	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmgateway"
 )
 
 // ChatOrchestrator is the surface the handler uses from the AI orchestrator.
@@ -33,11 +35,19 @@ type ChatOrchestrator interface {
 // Handler groups the AI HTTP endpoints.
 type Handler struct {
 	orchestrator ChatOrchestrator
+	limiter      *llmgateway.RateLimiter // nil → no rate limiting (dev / tests)
 }
 
-// New constructs an AI Handler.
+// New constructs an AI Handler with no rate limiting. Production callers
+// should use NewWithLimiter to attach a per-tenant budget.
 func New(orchestrator ChatOrchestrator) *Handler {
 	return &Handler{orchestrator: orchestrator}
+}
+
+// NewWithLimiter constructs an AI Handler that enforces the given rate limiter
+// on POST /chat (the only LLM-spending endpoint). Pass nil to disable.
+func NewWithLimiter(orchestrator ChatOrchestrator, limiter *llmgateway.RateLimiter) *Handler {
+	return &Handler{orchestrator: orchestrator, limiter: limiter}
 }
 
 // RegisterRoutes mounts AI endpoints onto the given router group.
@@ -75,15 +85,17 @@ func (h *Handler) ListPlans(c *gin.Context) {
 // chatRequest is the body of POST /api/v1/ai/chat.
 type chatRequest struct {
 	// Message is the user's new message.
-	Message string `json:"message" binding:"required"`
+	Message string `json:"message" binding:"required,max=8000"`
 	// History is the previous conversation turns (optional; omit for first turn).
-	History []historyTurn `json:"history"`
+	// Hard-capped at 200 turns: longer histories blow prompt budget faster than
+	// they improve answer quality and are usually a runaway client bug.
+	History []historyTurn `json:"history" binding:"max=200,dive"`
 }
 
 // historyTurn is a single turn in the conversation history.
 type historyTurn struct {
-	Role    string `json:"role"`
-	Content string `json:"content"`
+	Role    string `json:"role"    binding:"required,oneof=user assistant tool system"`
+	Content string `json:"content" binding:"max=16000"`
 }
 
 // SSE event types.
@@ -106,6 +118,25 @@ func (h *Handler) Chat(c *gin.Context) {
 	if tenantID == uuid.Nil {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "tenant_id required"})
 		return
+	}
+
+	if h.limiter != nil {
+		allowed, retryAfter, lerr := h.limiter.Allow(c.Request.Context(), tenantID)
+		if lerr == nil && !allowed {
+			llmgateway.RecordDropped(tenantID)
+			seconds := int(retryAfter.Seconds())
+			if seconds < 1 {
+				seconds = 1
+			}
+			c.Header("Retry-After", strconv.Itoa(seconds))
+			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
+				"error":   "llm_rate_limited",
+				"detail":  "per-tenant LLM call budget exceeded; retry after window resets",
+				"retry_s": seconds,
+			})
+			return
+		}
+		// lerr != nil → degrade open (Redis hiccup must not break AI).
 	}
 
 	var req chatRequest
@@ -185,8 +216,12 @@ func (h *Handler) ConfirmPlan(c *gin.Context) {
 
 	plan, err := h.orchestrator.ConfirmPlan(c.Request.Context(), tenantID, planID)
 	if err != nil {
-		if err == appai.ErrPlanNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "plan not found or expired"})
+		switch err {
+		case appai.ErrPlanNotFound:
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "plan not found"})
+			return
+		case appai.ErrPlanExpired:
+			c.JSON(http.StatusConflict, gin.H{"error": "plan_expired", "detail": "plan TTL elapsed; ask AI again to generate a fresh plan"})
 			return
 		}
 		c.JSON(http.StatusConflict, gin.H{"error": "conflict", "detail": err.Error()})

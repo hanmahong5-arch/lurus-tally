@@ -14,6 +14,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/currency"
 )
@@ -77,6 +78,14 @@ func newHandler(repo *mockRepo) *handlercurrency.Handler {
 
 func newRouter(h *handlercurrency.Handler) *gin.Engine {
 	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		if raw := c.GetHeader("X-Tenant-ID"); raw != "" {
+			if id, err := uuid.Parse(raw); err == nil {
+				c.Set(middleware.CtxKeyTenantID, id)
+			}
+		}
+		c.Next()
+	})
 	api := r.Group("/api/v1")
 	h.RegisterRoutes(api)
 	return r

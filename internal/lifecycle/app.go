@@ -58,6 +58,7 @@ import (
 	domainauth "github.com/hanmahong5-arch/lurus-tally/internal/domain/auth"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmgateway"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/logger"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/memorusclient"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
@@ -284,10 +285,24 @@ func NewApp(cfg *config.Config) (*App, error) {
 			l.Info("memorus: disabled (MEMORUS_API_KEY not set)")
 		}
 
-		aiHandler = handlerai.New(orchestrator)
+		// Per-tenant LLM rate limiter (W0.A5). Backed by the AI Redis client we
+		// already opened; degrades open on Redis failure. Limit/window are
+		// hard-coded for now — operator override via cfg lands once a clear
+		// per-tier budget surface exists.
+		var limiterStore llmgateway.RedisIncrer
+		if rdb != nil {
+			limiterStore = newRedisLimiterAdapter(rdb)
+		}
+		limiter := llmgateway.NewRateLimiter(
+			limiterStore,
+			llmgateway.DefaultRateLimit,
+			llmgateway.DefaultRateWindow,
+		)
+		aiHandler = handlerai.NewWithLimiter(orchestrator, limiter)
 		l.Info("AI assistant enabled",
 			slog.String("model", cfg.DefaultAIModel),
-			slog.String("newapi_url", cfg.NewAPIBaseURL))
+			slog.String("newapi_url", cfg.NewAPIBaseURL),
+			slog.Int("llm_rate_limit_per_min", limiter.Limit()))
 	} else {
 		l.Warn("AI assistant disabled (NEWAPI_API_KEY not set)")
 	}
@@ -435,3 +450,29 @@ func (d dbPinger) Ping(ctx context.Context) error { return d.db.PingContext(ctx)
 type redisPinger struct{ c *redis.Client }
 
 func (p redisPinger) Ping(ctx context.Context) error { return p.c.Ping(ctx).Err() }
+
+// redisLimiterAdapter satisfies llmgateway.RedisIncrer using *redis.Client.
+// A nil underlying client yields a nil adapter so the limiter degrades to a
+// permissive (no-op) implementation in dev.
+type redisLimiterAdapter struct{ c *redis.Client }
+
+func newRedisLimiterAdapter(c *redis.Client) *redisLimiterAdapter {
+	if c == nil {
+		return nil
+	}
+	return &redisLimiterAdapter{c: c}
+}
+
+func (a *redisLimiterAdapter) Incr(ctx context.Context, key string) (int64, error) {
+	if a == nil || a.c == nil {
+		return 0, fmt.Errorf("redis client unavailable")
+	}
+	return a.c.Incr(ctx, key).Result()
+}
+
+func (a *redisLimiterAdapter) Expire(ctx context.Context, key string, ttl time.Duration) error {
+	if a == nil || a.c == nil {
+		return fmt.Errorf("redis client unavailable")
+	}
+	return a.c.Expire(ctx, key, ttl).Err()
+}

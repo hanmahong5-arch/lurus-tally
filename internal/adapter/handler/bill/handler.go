@@ -291,7 +291,7 @@ func (h *Handler) List(c *gin.Context) {
 	}
 
 	page := parseIntQuery(c, "page", 1)
-	size := parseIntQuery(c, "size", 20)
+	size := middleware.ParseLimitQuery(c, "size", 20, middleware.DefaultMaxPageLimit)
 
 	f := appbill.BillListFilter{
 		TenantID: tenantID,
@@ -353,17 +353,12 @@ func errResp(code, message, action string) gin.H {
 	return h
 }
 
+// resolveTenantID returns the tenant UUID injected by AuthMiddleware (Story 2.1).
+// Returns uuid.Nil when AuthMiddleware did not run or did not resolve a tenant —
+// callers MUST treat this as 401. No header fallback: a misconfigured deploy
+// without AuthMiddleware would otherwise let clients spoof any tenant_id.
 func resolveTenantID(c *gin.Context) uuid.UUID {
-	id := middleware.GetTenantID(c)
-	if id != uuid.Nil {
-		return id
-	}
-	if raw := c.GetHeader("X-Tenant-ID"); raw != "" {
-		if parsed, err := uuid.Parse(raw); err == nil {
-			return parsed
-		}
-	}
-	return uuid.Nil
+	return middleware.GetTenantID(c)
 }
 
 func resolveCreatorID(c *gin.Context) uuid.UUID {

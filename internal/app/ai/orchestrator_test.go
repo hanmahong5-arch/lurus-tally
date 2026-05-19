@@ -176,6 +176,66 @@ func TestOrchestrator_ConfirmPlan_NotFound_ReturnsError(t *testing.T) {
 	}
 }
 
+// TestOrchestrator_ConfirmPlan_Expired_ReturnsErrPlanExpired verifies that
+// ConfirmPlan rejects a plan whose ExpiresAt has passed and flips its status
+// to Expired in the store (so the UI sees a terminal state on next refresh).
+func TestOrchestrator_ConfirmPlan_Expired_ReturnsErrPlanExpired(t *testing.T) {
+	store := newMockPlanStore()
+	tenantID := uuid.New()
+	planID := uuid.New()
+
+	plan := &domainai.Plan{
+		ID:        planID,
+		TenantID:  tenantID,
+		Type:      domainai.PlanTypePriceChange,
+		Status:    domainai.PlanStatusPending,
+		CreatedAt: time.Now().Add(-2 * time.Hour),
+		ExpiresAt: time.Now().Add(-time.Minute),
+	}
+	_ = store.SavePlan(context.Background(), plan)
+
+	o := appai.NewOrchestrator(nil, nil, store, "")
+	got, err := o.ConfirmPlan(context.Background(), tenantID, planID)
+	if err != appai.ErrPlanExpired {
+		t.Fatalf("err=%v, want appai.ErrPlanExpired", err)
+	}
+	if got != nil {
+		t.Error("expired confirm must not return a plan body")
+	}
+	persisted, _ := store.GetPlan(context.Background(), tenantID, planID)
+	if persisted.Status != domainai.PlanStatusExpired {
+		t.Errorf("store status=%s after expired confirm, want %s",
+			persisted.Status, domainai.PlanStatusExpired)
+	}
+}
+
+// TestOrchestrator_ConfirmPlan_NotExpired_Confirms verifies the happy path
+// still works after the expiry check landed.
+func TestOrchestrator_ConfirmPlan_NotExpired_Confirms(t *testing.T) {
+	store := newMockPlanStore()
+	tenantID := uuid.New()
+	planID := uuid.New()
+
+	plan := &domainai.Plan{
+		ID:        planID,
+		TenantID:  tenantID,
+		Type:      domainai.PlanTypePriceChange,
+		Status:    domainai.PlanStatusPending,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+	_ = store.SavePlan(context.Background(), plan)
+
+	o := appai.NewOrchestrator(nil, nil, store, "")
+	confirmed, err := o.ConfirmPlan(context.Background(), tenantID, planID)
+	if err != nil {
+		t.Fatalf("ConfirmPlan: %v", err)
+	}
+	if confirmed.Status != domainai.PlanStatusConfirmed {
+		t.Errorf("returned status=%s, want Confirmed", confirmed.Status)
+	}
+}
+
 // TestPlanDomain_PlanPreview_SerializesCorrectly verifies the domain Plan JSON round-trip.
 func TestPlanDomain_PlanPreview_SerializesCorrectly(t *testing.T) {
 	plan := domainai.Plan{

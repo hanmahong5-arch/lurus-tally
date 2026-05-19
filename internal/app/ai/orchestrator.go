@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/google/uuid"
 	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
@@ -246,7 +247,8 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 // ConfirmPlan executes a confirmed plan. Currently a no-op stub:
 // actual execution (price writes, purchase creation, stock adjust) will be
 // wired in follow-up stories once the plan executor is implemented.
-// Returns error if plan not found, already executed, or expired.
+// Returns ErrPlanNotFound when the plan is missing, ErrPlanExpired when
+// ExpiresAt has passed, or a wrapped error for any other failure.
 func (o *Orchestrator) ConfirmPlan(ctx context.Context, tenantID, planID uuid.UUID) (*domainai.Plan, error) {
 	plan, err := o.planStore.GetPlan(ctx, tenantID, planID)
 	if err != nil {
@@ -254,6 +256,16 @@ func (o *Orchestrator) ConfirmPlan(ctx context.Context, tenantID, planID uuid.UU
 	}
 	if plan == nil {
 		return nil, ErrPlanNotFound
+	}
+	if !plan.ExpiresAt.IsZero() && time.Now().After(plan.ExpiresAt) {
+		// Mark expired in store so subsequent GETs see the terminal state.
+		// Best-effort: a transient store error here doesn't change the answer
+		// to the caller — the plan is still expired.
+		if plan.Status == domainai.PlanStatusPending {
+			plan.Status = domainai.PlanStatusExpired
+			_ = o.planStore.UpdatePlan(ctx, plan)
+		}
+		return nil, ErrPlanExpired
 	}
 	if plan.Status != domainai.PlanStatusPending {
 		return nil, fmt.Errorf("confirm plan: plan is %s, cannot confirm", plan.Status)
@@ -293,7 +305,12 @@ func (o *Orchestrator) ListPlans(ctx context.Context, tenantID uuid.UUID, status
 }
 
 // ErrPlanNotFound is returned when a plan cannot be found in the store.
-var ErrPlanNotFound = fmt.Errorf("plan not found or expired")
+var ErrPlanNotFound = fmt.Errorf("plan not found")
+
+// ErrPlanExpired is returned when ConfirmPlan sees a plan whose ExpiresAt has
+// passed. The handler maps this to 409 Conflict so the UI can prompt the user
+// to start a new turn rather than retrying blindly.
+var ErrPlanExpired = fmt.Errorf("plan expired")
 
 // buildMessages assembles the full message list for the LLM.
 func buildMessages(in ChatInput) []llmclient.Message {

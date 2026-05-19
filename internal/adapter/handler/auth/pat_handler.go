@@ -190,17 +190,8 @@ func (h *PATHandler) Revoke(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
-// patResolveTenantID matches the resolveTenantID helper used across other
-// handler packages — reads from the Gin context first (AuthMiddleware put it
-// there), falls back to the X-Tenant-ID header for dev mode.
+// patResolveTenantID returns the tenant UUID injected by AuthMiddleware.
+// uuid.Nil → caller MUST return 401. No header fallback (see bill/handler.go).
 func patResolveTenantID(c *gin.Context) uuid.UUID {
-	if id := middleware.GetTenantID(c); id != uuid.Nil {
-		return id
-	}
-	if raw := c.GetHeader("X-Tenant-ID"); raw != "" {
-		if parsed, err := uuid.Parse(raw); err == nil {
-			return parsed
-		}
-	}
-	return uuid.Nil
+	return middleware.GetTenantID(c)
 }
