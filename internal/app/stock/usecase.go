@@ -248,7 +248,7 @@ func convertToBase(qty decimal.Decimal, factor string) (decimal.Decimal, error) 
 		return decimal.Zero, fmt.Errorf("invalid conversion factor %q: %w", factor, err)
 	}
 	if f.IsZero() || f.IsNegative() {
-		return decimal.Zero, fmt.Errorf("conversion factor must be > 0, got %s", factor)
+		return decimal.Zero, fmt.Errorf("%w: got %s", ErrInvalidUnitFactor, factor)
 	}
 	return qty.Mul(f), nil
 }

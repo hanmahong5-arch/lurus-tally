@@ -2,6 +2,7 @@ package bill_test
 
 import (
 	"context"
+	"errors"
 	"regexp"
 	"testing"
 	"time"
@@ -72,6 +73,52 @@ func TestCreateSaleDraft_EmptyItems_ReturnsError(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected validation error for zero items, got nil")
+	}
+}
+
+// TestCreateSaleDraft_NegativeShippingFee_ReturnsErrNegativeFee verifies C1:
+// a negative shipping_fee is rejected with ErrNegativeFee instead of clamped to zero.
+func TestCreateSaleDraft_NegativeShippingFee_ReturnsErrNegativeFee(t *testing.T) {
+	repo := newMockBillRepo()
+	uc := appbill.NewCreateSaleUseCase(repo)
+
+	_, err := uc.Execute(context.Background(), appbill.CreateSaleRequest{
+		TenantID:    testTenantID,
+		CreatorID:   testCreatorID,
+		BillDate:    time.Now(),
+		ShippingFee: decimal.NewFromFloat(-5),
+		Items: []appbill.SaleItem{
+			{ProductID: uuid.New(), WarehouseID: uuid.New(), Qty: decimal.NewFromFloat(1), UnitPrice: decimal.NewFromFloat(10), LineNo: 1},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected ErrNegativeFee for negative shipping_fee, got nil")
+	}
+	if !errors.Is(err, appbill.ErrNegativeFee) {
+		t.Errorf("expected errors.Is(err, ErrNegativeFee), got %T: %v", err, err)
+	}
+}
+
+// TestCreateSaleDraft_NegativeTaxAmount_ReturnsErrNegativeFee verifies C1:
+// a negative tax_amount is rejected with ErrNegativeFee.
+func TestCreateSaleDraft_NegativeTaxAmount_ReturnsErrNegativeFee(t *testing.T) {
+	repo := newMockBillRepo()
+	uc := appbill.NewCreateSaleUseCase(repo)
+
+	_, err := uc.Execute(context.Background(), appbill.CreateSaleRequest{
+		TenantID:  testTenantID,
+		CreatorID: testCreatorID,
+		BillDate:  time.Now(),
+		TaxAmount: decimal.NewFromFloat(-1),
+		Items: []appbill.SaleItem{
+			{ProductID: uuid.New(), WarehouseID: uuid.New(), Qty: decimal.NewFromFloat(1), UnitPrice: decimal.NewFromFloat(10), LineNo: 1},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected ErrNegativeFee for negative tax_amount, got nil")
+	}
+	if !errors.Is(err, appbill.ErrNegativeFee) {
+		t.Errorf("expected errors.Is(err, ErrNegativeFee), got %T: %v", err, err)
 	}
 }
 

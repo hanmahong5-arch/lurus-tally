@@ -31,8 +31,8 @@ func New(
 
 // createRequest is the JSON body for POST /api/v1/units.
 type createRequest struct {
-	Code     string          `json:"code"`
-	Name     string          `json:"name"`
+	Code     string          `json:"code"      binding:"max=128"`
+	Name     string          `json:"name"      binding:"max=128"`
 	UnitType domain.UnitType `json:"unit_type"`
 }
 

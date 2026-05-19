@@ -87,8 +87,8 @@ func (h *Handler) GetRate(c *gin.Context) {
 
 // createRateRequest is the request body for POST /api/v1/exchange-rates.
 type createRateRequest struct {
-	FromCurrency string `json:"from_currency"`
-	ToCurrency   string `json:"to_currency"`
+	FromCurrency string `json:"from_currency" binding:"max=128"`
+	ToCurrency   string `json:"to_currency"   binding:"max=128"`
 	Rate         string `json:"rate"`
 	EffectiveAt  string `json:"effective_at"` // RFC3339
 }

@@ -43,16 +43,16 @@ type ProjectListResponse struct {
 
 // createRequest is the JSON body for POST /api/v1/projects.
 type createRequest struct {
-	Code           string  `json:"code"`
-	Name           string  `json:"name"`
+	Code           string  `json:"code"                      binding:"max=128"`
+	Name           string  `json:"name"                      binding:"max=128"`
 	CustomerID     *string `json:"customer_id,omitempty"`
 	ContractAmount *string `json:"contract_amount,omitempty"`
 	StartDate      *string `json:"start_date,omitempty"`
 	EndDate        *string `json:"end_date,omitempty"`
 	Status         string  `json:"status"`
-	Address        string  `json:"address"`
-	Manager        string  `json:"manager"`
-	Remark         string  `json:"remark"`
+	Address        string  `json:"address"                   binding:"max=2000"`
+	Manager        string  `json:"manager"                   binding:"max=128"`
+	Remark         string  `json:"remark"                    binding:"max=500"`
 }
 
 // updateRequest is the JSON body for PUT /api/v1/projects/:id.

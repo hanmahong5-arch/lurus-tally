@@ -44,18 +44,18 @@ type ListResponse struct {
 
 // createRequest is the JSON body for POST /api/v1/nursery-dict.
 type createRequest struct {
-	Name          string          `json:"name"`
-	LatinName     string          `json:"latin_name"`
-	Family        string          `json:"family"`
-	Genus         string          `json:"genus"`
-	Type          string          `json:"type"`
+	Name          string          `json:"name"                      binding:"max=128"`
+	LatinName     string          `json:"latin_name"                binding:"max=128"`
+	Family        string          `json:"family"                    binding:"max=128"`
+	Genus         string          `json:"genus"                     binding:"max=128"`
+	Type          string          `json:"type"                      binding:"max=128"`
 	IsEvergreen   bool            `json:"is_evergreen"`
 	ClimateZones  []string        `json:"climate_zones"`
 	BestSeason    [2]int          `json:"best_season"`
 	SpecTemplate  json.RawMessage `json:"spec_template"`
 	DefaultUnitID *string         `json:"default_unit_id,omitempty"`
-	PhotoURL      string          `json:"photo_url"`
-	Remark        string          `json:"remark"`
+	PhotoURL      string          `json:"photo_url"                 binding:"max=500"`
+	Remark        string          `json:"remark"                    binding:"max=500"`
 }
 
 // updateRequest is the JSON body for PUT /api/v1/nursery-dict/:id.

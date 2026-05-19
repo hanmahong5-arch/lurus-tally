@@ -67,8 +67,8 @@ func (h *SaleHandler) RegisterRoutes(rg *gin.RouterGroup) {
 type saleItemInput struct {
 	ProductID   string `json:"product_id"`
 	WarehouseID string `json:"warehouse_id,omitempty"`
-	UnitID      string `json:"unit_id,omitempty"`
-	UnitName    string `json:"unit_name,omitempty"`
+	UnitID      string `json:"unit_id,omitempty"    binding:"max=128"`
+	UnitName    string `json:"unit_name,omitempty"  binding:"max=128"`
 	LineNo      int    `json:"line_no"`
 	Qty         string `json:"qty"`
 	UnitPrice   string `json:"unit_price"`
@@ -80,20 +80,20 @@ type createSaleRequest struct {
 	BillDate    string          `json:"bill_date,omitempty"`
 	ShippingFee string          `json:"shipping_fee,omitempty"`
 	TaxAmount   string          `json:"tax_amount,omitempty"`
-	Remark      string          `json:"remark,omitempty"`
-	Items       []saleItemInput `json:"items"`
+	Remark      string          `json:"remark,omitempty"     binding:"max=500"`
+	Items       []saleItemInput `json:"items"                binding:"max=200,dive"`
 }
 
 type approveSaleRequest struct {
 	PaidAmount    string `json:"paid_amount,omitempty"`
-	PaymentMethod string `json:"payment_method,omitempty"`
+	PaymentMethod string `json:"payment_method,omitempty" binding:"max=128"`
 }
 
 type quickCheckoutRequest struct {
-	CustomerName  string          `json:"customer_name,omitempty"`
-	PaymentMethod string          `json:"payment_method"`
+	CustomerName  string          `json:"customer_name,omitempty" binding:"max=128"`
+	PaymentMethod string          `json:"payment_method"          binding:"max=128"`
 	PaidAmount    string          `json:"paid_amount"`
-	Items         []saleItemInput `json:"items"`
+	Items         []saleItemInput `json:"items"                   binding:"max=200,dive"`
 }
 
 // ----- handlers -----

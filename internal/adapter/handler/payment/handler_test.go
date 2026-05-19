@@ -152,6 +152,40 @@ func TestPaymentHandler_Record_Returns201(t *testing.T) {
 	}
 }
 
+// TestPaymentHandler_Record_AmountExceedsMax_Returns400 verifies C2:
+// an amount above maxPaymentAmount (1e10) is rejected with 400.
+func TestPaymentHandler_Record_AmountExceedsMax_Returns400(t *testing.T) {
+	billReader := newPHMockBillReader()
+	payRepo := &phMockPaymentRepo{}
+	billReader.bills[phBillID] = &domain.BillHead{
+		ID:          phBillID,
+		TenantID:    phTenantID,
+		Status:      domain.StatusApproved,
+		TotalAmount: decimal.NewFromFloat(9.99e10),
+		CreatedAt:   time.Now(),
+	}
+
+	h := buildPaymentHandler(billReader, payRepo)
+	r := newPaymentRouter(h)
+
+	body := map[string]any{
+		"bill_id":        phBillID.String(),
+		"amount":         "10000000001", // 1e10 + 1, over limit
+		"payment_method": "wire",
+	}
+	b, _ := json.Marshal(body)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/payments", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tenant-ID", phTenantID.String())
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for over-max amount; body: %s", w.Code, w.Body.String())
+	}
+}
+
 // TestPaymentHandler_List_Returns200 verifies the list endpoint returns 200.
 func TestPaymentHandler_List_Returns200(t *testing.T) {
 	billReader := newPHMockBillReader()

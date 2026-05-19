@@ -30,13 +30,18 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/payments", h.List)
 }
 
+// maxPaymentAmount is the upper bound for a single payment (10 billion).
+// Any amount above this is almost certainly a data-entry error or an integer
+// overflow upstream, and decimal precision degrades past ~1e15 in float64.
+const maxPaymentAmount = 1e10
+
 // ----- request types -----
 
 type recordRequest struct {
 	BillID        string `json:"bill_id"`
 	Amount        string `json:"amount"`
-	PaymentMethod string `json:"payment_method"`
-	Remark        string `json:"remark,omitempty"`
+	PaymentMethod string `json:"payment_method"  binding:"max=128"`
+	Remark        string `json:"remark,omitempty" binding:"max=500"`
 }
 
 // ----- handlers -----
@@ -68,6 +73,10 @@ func (h *Handler) Record(c *gin.Context) {
 	amount, err := decimal.NewFromString(req.Amount)
 	if err != nil || amount.IsZero() || amount.IsNegative() {
 		c.JSON(http.StatusBadRequest, errResp("validation_error", "amount must be a positive decimal", ""))
+		return
+	}
+	if amount.GreaterThan(decimal.NewFromFloat(maxPaymentAmount)) {
+		c.JSON(http.StatusBadRequest, errResp("validation_error", "amount exceeds maximum allowed value of 10000000000", ""))
 		return
 	}
 

@@ -3,6 +3,7 @@ package stock_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 
 	"github.com/google/uuid"
@@ -137,6 +138,52 @@ func TestRecordMovement_AdvisoryLock_AcquiredBeforeApply(t *testing.T) {
 
 	if lockCount != 1 {
 		t.Errorf("advisory lock acquired %d times, want 1", lockCount)
+	}
+}
+
+// TestRecordMovement_ZeroConvFactor_ReturnsErrInvalidUnitFactor verifies C3:
+// a zero conversion factor returns ErrInvalidUnitFactor.
+func TestRecordMovement_ZeroConvFactor_ReturnsErrInvalidUnitFactor(t *testing.T) {
+	uc, _ := newUseCase(nil, "wac")
+	req := appstock.RecordMovementRequest{
+		TenantID:      testTenantID,
+		ProductID:     testProductID,
+		WarehouseID:   testWarehouseID,
+		Direction:     domain.DirectionIn,
+		Qty:           d("10"),
+		ConvFactor:    "0", // invalid: zero factor
+		UnitCost:      d("5"),
+		ReferenceType: domain.RefPurchase,
+	}
+	_, err := uc.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected ErrInvalidUnitFactor for zero ConvFactor, got nil")
+	}
+	if !errors.Is(err, appstock.ErrInvalidUnitFactor) {
+		t.Errorf("expected errors.Is(err, ErrInvalidUnitFactor), got %T: %v", err, err)
+	}
+}
+
+// TestRecordMovement_NegativeConvFactor_ReturnsErrInvalidUnitFactor verifies C3:
+// a negative conversion factor returns ErrInvalidUnitFactor.
+func TestRecordMovement_NegativeConvFactor_ReturnsErrInvalidUnitFactor(t *testing.T) {
+	uc, _ := newUseCase(nil, "wac")
+	req := appstock.RecordMovementRequest{
+		TenantID:      testTenantID,
+		ProductID:     testProductID,
+		WarehouseID:   testWarehouseID,
+		Direction:     domain.DirectionIn,
+		Qty:           d("10"),
+		ConvFactor:    "-2", // invalid: negative factor
+		UnitCost:      d("5"),
+		ReferenceType: domain.RefPurchase,
+	}
+	_, err := uc.Execute(context.Background(), req)
+	if err == nil {
+		t.Fatal("expected ErrInvalidUnitFactor for negative ConvFactor, got nil")
+	}
+	if !errors.Is(err, appstock.ErrInvalidUnitFactor) {
+		t.Errorf("expected errors.Is(err, ErrInvalidUnitFactor), got %T: %v", err, err)
 	}
 }
 

@@ -261,6 +261,37 @@ func TestBillHandler_CancelApproved_Returns422(t *testing.T) {
 	}
 }
 
+// TestBillHandler_CreatePurchase_RemarkTooLong_Returns400 verifies C4:
+// a remark exceeding 500 characters is rejected with 400.
+func TestBillHandler_CreatePurchase_RemarkTooLong_Returns400(t *testing.T) {
+	repo := newMockBillRepo()
+	r := newRouter(newTestHandler(repo))
+
+	longRemark := make([]byte, 501)
+	for i := range longRemark {
+		longRemark[i] = 'x'
+	}
+
+	body := map[string]any{
+		"warehouse_id": uuid.New().String(),
+		"remark":       string(longRemark),
+		"items": []map[string]any{
+			{"product_id": uuid.New().String(), "qty": "1", "unit_price": "10", "line_no": 1},
+		},
+	}
+	b, _ := json.Marshal(body)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/purchase-bills", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Tenant-ID", devTenantID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want 400 for over-length remark; body: %s", w.Code, w.Body.String())
+	}
+}
+
 // TestBillHandler_GetPurchase_NotFound_Returns404 verifies 404 for unknown bill.
 func TestBillHandler_GetPurchase_NotFound_Returns404(t *testing.T) {
 	repo := newMockBillRepo()

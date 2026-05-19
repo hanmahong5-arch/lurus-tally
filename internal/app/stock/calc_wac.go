@@ -3,6 +3,7 @@ package stock
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -145,6 +146,11 @@ func buildSnapshot(
 		UpdatedAt:    time.Now().UTC(),
 	}
 }
+
+// ErrInvalidUnitFactor is returned when the unit conversion factor is zero or negative.
+// A zero/negative factor would silently produce wrong base-unit quantities; callers must
+// supply a strictly positive factor or omit it to indicate the quantity is already in base unit.
+var ErrInvalidUnitFactor = errors.New("stock: unit conversion factor must be positive")
 
 // InsufficientStockError is returned when an out/adjust movement would make on_hand_qty negative.
 // ProductID lets the HTTP layer return a structured 422 the UI can map back to a product name.

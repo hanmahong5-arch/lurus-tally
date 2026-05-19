@@ -63,8 +63,8 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 
 type itemInput struct {
 	ProductID string `json:"product_id"`
-	UnitID    string `json:"unit_id,omitempty"`
-	UnitName  string `json:"unit_name,omitempty"`
+	UnitID    string `json:"unit_id,omitempty"   binding:"max=128"`
+	UnitName  string `json:"unit_name,omitempty" binding:"max=128"`
 	LineNo    int    `json:"line_no"`
 	Qty       string `json:"qty"`
 	UnitPrice string `json:"unit_price"`
@@ -76,8 +76,8 @@ type createRequest struct {
 	BillDate    string      `json:"bill_date,omitempty"` // RFC3339
 	ShippingFee string      `json:"shipping_fee,omitempty"`
 	TaxAmount   string      `json:"tax_amount,omitempty"`
-	Remark      string      `json:"remark,omitempty"`
-	Items       []itemInput `json:"items"`
+	Remark      string      `json:"remark,omitempty"    binding:"max=500"`
+	Items       []itemInput `json:"items"               binding:"max=200,dive"`
 }
 
 // ----- Handlers -----

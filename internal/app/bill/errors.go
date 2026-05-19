@@ -18,4 +18,8 @@ var (
 
 	// ErrValidation is returned for input validation failures.
 	ErrValidation = errors.New("bill: validation error")
+
+	// ErrNegativeFee is returned when shipping_fee or tax_amount is negative.
+	// Callers must reject the request rather than silently clamping to zero.
+	ErrNegativeFee = errors.New("bill: fee must be non-negative")
 )

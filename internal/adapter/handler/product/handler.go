@@ -46,21 +46,21 @@ func New(
 // createRequest is the JSON body for POST /api/v1/products.
 type createRequest struct {
 	CategoryID          *uuid.UUID                 `json:"category_id"`
-	Code                string                     `json:"code"`
-	Name                string                     `json:"name"`
-	Manufacturer        string                     `json:"manufacturer"`
-	Model               string                     `json:"model"`
-	Spec                string                     `json:"spec"`
-	Brand               string                     `json:"brand"`
-	Mnemonic            string                     `json:"mnemonic"`
-	Color               string                     `json:"color"`
+	Code                string                     `json:"code"          binding:"max=128"`
+	Name                string                     `json:"name"          binding:"max=128"`
+	Manufacturer        string                     `json:"manufacturer"  binding:"max=128"`
+	Model               string                     `json:"model"         binding:"max=128"`
+	Spec                string                     `json:"spec"          binding:"max=128"`
+	Brand               string                     `json:"brand"         binding:"max=128"`
+	Mnemonic            string                     `json:"mnemonic"      binding:"max=128"`
+	Color               string                     `json:"color"         binding:"max=128"`
 	ExpiryDays          *int                       `json:"expiry_days"`
 	WeightKg            *string                    `json:"weight_kg"`
 	EnableSerialNo      bool                       `json:"enable_serial_no"`
 	EnableLotNo         bool                       `json:"enable_lot_no"`
-	ShelfPosition       string                     `json:"shelf_position"`
+	ShelfPosition       string                     `json:"shelf_position" binding:"max=128"`
 	ImgURLs             []string                   `json:"img_urls"`
-	Remark              string                     `json:"remark"`
+	Remark              string                     `json:"remark"         binding:"max=500"`
 	MeasurementStrategy domain.MeasurementStrategy `json:"measurement_strategy"`
 	DefaultUnitID       *uuid.UUID                 `json:"default_unit_id"`
 	Attributes          json.RawMessage            `json:"attributes"`
@@ -181,21 +181,21 @@ func (h *Handler) GetByID(c *gin.Context) {
 // updateRequest is the JSON body for PUT /api/v1/products/:id.
 type updateRequest struct {
 	CategoryID          *uuid.UUID                 `json:"category_id"`
-	Name                string                     `json:"name"`
-	Manufacturer        string                     `json:"manufacturer"`
-	Model               string                     `json:"model"`
-	Spec                string                     `json:"spec"`
-	Brand               string                     `json:"brand"`
-	Mnemonic            string                     `json:"mnemonic"`
-	Color               string                     `json:"color"`
+	Name                string                     `json:"name"          binding:"max=128"`
+	Manufacturer        string                     `json:"manufacturer"  binding:"max=128"`
+	Model               string                     `json:"model"         binding:"max=128"`
+	Spec                string                     `json:"spec"          binding:"max=128"`
+	Brand               string                     `json:"brand"         binding:"max=128"`
+	Mnemonic            string                     `json:"mnemonic"      binding:"max=128"`
+	Color               string                     `json:"color"         binding:"max=128"`
 	ExpiryDays          *int                       `json:"expiry_days"`
 	WeightKg            *string                    `json:"weight_kg"`
 	Enabled             *bool                      `json:"enabled"`
 	EnableSerialNo      *bool                      `json:"enable_serial_no"`
 	EnableLotNo         *bool                      `json:"enable_lot_no"`
-	ShelfPosition       string                     `json:"shelf_position"`
+	ShelfPosition       string                     `json:"shelf_position" binding:"max=128"`
 	ImgURLs             []string                   `json:"img_urls"`
-	Remark              string                     `json:"remark"`
+	Remark              string                     `json:"remark"         binding:"max=500"`
 	MeasurementStrategy domain.MeasurementStrategy `json:"measurement_strategy"`
 	DefaultUnitID       *uuid.UUID                 `json:"default_unit_id"`
 	Attributes          json.RawMessage            `json:"attributes"`

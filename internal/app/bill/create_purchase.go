@@ -103,14 +103,14 @@ func (uc *CreatePurchaseDraftUseCase) Execute(ctx context.Context, req CreatePur
 		items = append(items, bi)
 	}
 
+	if req.ShippingFee.IsNegative() {
+		return nil, fmt.Errorf("%w: shipping_fee is %s", ErrNegativeFee, req.ShippingFee)
+	}
+	if req.TaxAmount.IsNegative() {
+		return nil, fmt.Errorf("%w: tax_amount is %s", ErrNegativeFee, req.TaxAmount)
+	}
 	shippingFee := req.ShippingFee
 	taxAmount := req.TaxAmount
-	if shippingFee.IsNegative() {
-		shippingFee = decimal.Zero
-	}
-	if taxAmount.IsNegative() {
-		taxAmount = decimal.Zero
-	}
 	// totalInOrigCurrency is the sum in the original currency (before conversion).
 	totalInOrigCurrency := subtotal.Add(shippingFee).Add(taxAmount).Round(4)
 

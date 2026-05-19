@@ -97,14 +97,14 @@ func (uc *CreateSaleUseCase) Execute(ctx context.Context, req CreateSaleRequest)
 		items = append(items, bi)
 	}
 
+	if req.ShippingFee.IsNegative() {
+		return nil, fmt.Errorf("%w: shipping_fee is %s", ErrNegativeFee, req.ShippingFee)
+	}
+	if req.TaxAmount.IsNegative() {
+		return nil, fmt.Errorf("%w: tax_amount is %s", ErrNegativeFee, req.TaxAmount)
+	}
 	shippingFee := req.ShippingFee
 	taxAmount := req.TaxAmount
-	if shippingFee.IsNegative() {
-		shippingFee = decimal.Zero
-	}
-	if taxAmount.IsNegative() {
-		taxAmount = decimal.Zero
-	}
 	totalAmount := subtotal.Add(shippingFee).Add(taxAmount).Round(4)
 
 	billID := uuid.New()
