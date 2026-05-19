@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmgateway"
 )
 
 // PlanStore persists and retrieves Plans (Redis-backed, TTL 1800s).
@@ -89,6 +90,7 @@ const maxToolRounds = 6
 // Chat executes one user turn (non-streaming). Builds the full message sequence,
 // runs tool-call rounds, and returns the final text + any plans.
 func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, error) {
+	ctx = llmgateway.WithTenant(ctx, in.TenantID.String())
 	// Memory recall: augment user message with relevant past context.
 	userID := in.TenantID.String()
 	augmented := AugmentMessagesWithMemoryOrFallback(o.memory, ctx, userID, in.UserMessage)
@@ -163,6 +165,7 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 // StreamChat executes one user turn and streams the response via onChunk.
 // Tool calls are executed synchronously before streaming begins.
 func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk func(string)) (*ChatOutput, error) {
+	ctx = llmgateway.WithTenant(ctx, in.TenantID.String())
 	// Memory recall: augment user message with relevant past context.
 	userID := in.TenantID.String()
 	augmented := AugmentMessagesWithMemoryOrFallback(o.memory, ctx, userID, in.UserMessage)

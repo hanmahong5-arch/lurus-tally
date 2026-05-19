@@ -20,6 +20,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmgateway"
 )
 
 const (
@@ -242,6 +244,7 @@ func (c *Client) doChat(ctx context.Context, req ChatRequest) (*ChatResponse, er
 		return nil, fmt.Errorf("llmclient: unexpected HTTP %d: %s", resp.StatusCode, string(respBody))
 	}
 
+	llmgateway.RecordUsage(ctx, req.Model, chat.Usage.PromptTokens, chat.Usage.CompletionTokens)
 	return &chat, nil
 }
 

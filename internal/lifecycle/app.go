@@ -21,6 +21,7 @@ import (
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
+	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
@@ -398,8 +399,12 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// PAT CRUD handler — reuses the same patRepo wired into the auth middleware.
 	patHandler := handlerAuth.NewPATHandler(repoauth.New(db))
 
+	// /internal/v1/metrics — LLM cost + token counters (S0.Q2). Bearer-gated when
+	// PLATFORM_INTERNAL_KEY is set; open when blank for dev/test.
+	metricsHandler := handlermetrics.NewMetricsHandler(cfg.PlatformInternalKey)
+
 	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
-		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler)
+		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
