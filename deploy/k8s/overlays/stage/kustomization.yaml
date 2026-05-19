@@ -2,8 +2,43 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
   - ../../base
+patches:
+  # STAGE uses an isolated Zitadel instance at test-auth.lurus.cn so
+  # staging traffic never authenticates against the production tenant.
+  # base/configmap.yaml ships the PROD issuer (auth.lurus.cn).
+  - patch: |-
+      - op: replace
+        path: /data/ZITADEL_DOMAIN
+        value: test-auth.lurus.cn
+    target:
+      kind: ConfigMap
+      name: tally-config
+  # R6 STAGE fronts traffic with a node-level nginx (no in-cluster Traefik
+  # IngressRoute), so services MUST expose stable NodePorts to match
+  # /etc/nginx/sites-enabled/lurus-stage upstream (127.0.0.1:30820 / 30830).
+  # base/service*.yaml uses ClusterIP which is correct for PROD (Traefik).
+  - patch: |-
+      - op: replace
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30820
+    target:
+      kind: Service
+      name: tally-backend
+  - patch: |-
+      - op: replace
+        path: /spec/type
+        value: NodePort
+      - op: add
+        path: /spec/ports/0/nodePort
+        value: 30830
+    target:
+      kind: Service
+      name: tally-web
 images:
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-f78da4b
+    newTag: main-cca5045
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-227277d
+    newTag: main-cca5045
