@@ -5,6 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	handleracct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/account"
 	handlerai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/ai"
 	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
@@ -41,7 +42,7 @@ func notImplemented(c *gin.Context) {
 // The engine mode (release/debug) is controlled by GIN_MODE or gin.SetMode.
 //
 //nolint:cyclop // router wiring is intentionally long
-func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler, suph *handlersupp.Handler, wh *handlerwarehouse.Handler, exh *handlerexport.Handler) *gin.Engine {
+func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler, suph *handlersupp.Handler, wh *handlerwarehouse.Handler, exh *handlerexport.Handler, acct *handleracct.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
@@ -235,6 +236,20 @@ func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFun
 			api.GET("/exports/bills.csv", notImplemented)
 			api.GET("/exports/stock.csv", notImplemented)
 			api.GET("/exports/payments.csv", notImplemented)
+		}
+
+		// Account-center (Phase 3). When acct is nil the routes return 501
+		// so dev / migration-pending environments don't 404 the new tabs.
+		if acct != nil {
+			acct.RegisterRoutes(api)
+		} else {
+			api.GET("/account/sessions", notImplemented)
+			api.DELETE("/account/sessions/:id", notImplemented)
+			api.GET("/account/audit-log", notImplemented)
+			api.GET("/account/profile", notImplemented)
+			api.PUT("/account/profile", notImplemented)
+			api.POST("/account/avatar", notImplemented)
+			api.GET("/account/avatar", notImplemented)
 		}
 	}
 

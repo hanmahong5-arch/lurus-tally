@@ -16,6 +16,10 @@ func (a *App) Stop(ctx context.Context) error {
 	if a.stopOutbox != nil {
 		a.stopOutbox()
 	}
+	// Drain the audit subscriber too — owns its own JetStream consume goroutines.
+	if a.auditSub != nil {
+		a.auditSub.Stop()
+	}
 
 	a.log.Info("shutting down server")
 	if err := a.srv.Shutdown(ctx); err != nil {

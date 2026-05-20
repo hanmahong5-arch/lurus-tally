@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	handleracct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/account"
 	handlerai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/ai"
 	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
@@ -35,6 +36,7 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/platform"
+	repoacct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/account"
 	repoai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/ai"
 	repoauth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/auth"
 	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
@@ -49,6 +51,7 @@ import (
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
 	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"
+	appacct "github.com/hanmahong5-arch/lurus-tally/internal/app/account"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
 	appauth "github.com/hanmahong5-arch/lurus-tally/internal/app/auth"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
@@ -71,6 +74,7 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/logger"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/memorusclient"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
+	"github.com/nats-io/nats.go"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -83,6 +87,7 @@ type App struct {
 	srv        *http.Server
 	db         *sql.DB
 	stopOutbox context.CancelFunc // cancels the outbox worker goroutine on Stop
+	auditSub   *adapternats.AuditSubscriber
 }
 
 // NewApp wires all dependencies together and returns a ready-to-start App.
@@ -173,9 +178,35 @@ func NewApp(cfg *config.Config) (*App, error) {
 	l.Info("notification: enabled", slog.String("mode", notifyMode))
 	_ = notifyClient // capability ready; business events wired in subsequent stories
 
+	// Wire account-center (Phase 3): user_session + audit_log + user_profile.
+	// All three share a single repo pool against the shared *sql.DB.
+	acctSessionRepo := repoacct.NewSessionRepo(db)
+	acctAuditRepo := repoacct.NewAuditRepo(db)
+	acctProfileRepo := repoacct.NewProfileRepo(db)
+
+	acctListSessions := appacct.NewListSessions(acctSessionRepo)
+	acctRevokeSession := appacct.NewRevokeSession(acctSessionRepo)
+	acctRecordSession := appacct.NewRecordSession(acctSessionRepo)
+	acctAppendAudit := appacct.NewAppendAuditLog(acctAuditRepo)
+	acctListAudit := appacct.NewListAuditLog(acctAuditRepo)
+	acctGetProfile := appacct.NewGetProfile(acctProfileRepo)
+	acctUpdateProfile := appacct.NewUpdateProfile(acctProfileRepo)
+	acctSetAvatar := appacct.NewSetAvatar(acctProfileRepo)
+	acctGetAvatar := appacct.NewGetAvatar(acctProfileRepo)
+
+	accountHandler := handleracct.New(
+		acctListSessions,
+		acctRevokeSession,
+		acctListAudit,
+		acctGetProfile,
+		acctUpdateProfile,
+		acctSetAvatar,
+		acctGetAvatar,
+	)
+
 	authHandler := handlerAuth.New(
 		apptenant.NewChooseProfileUseCase(tenantStore, platClient, l),
-		apptenant.NewGetMeUseCase(tenantStore),
+		apptenant.NewGetMeUseCase(tenantStore).WithProfileGetter(acctGetProfile),
 	)
 
 	// Wire transactional outbox store. Shared between the use case (Enqueue) and
@@ -381,6 +412,19 @@ func NewApp(cfg *config.Config) (*App, error) {
 		l.Info("auth middleware enabled",
 			slog.String("issuer", issuer),
 			slog.String("jwks_url", jwksURL))
+
+		// Chain session-record after auth so every authenticated request
+		// upserts a tally.user_session row. Best-effort: a session repo
+		// hiccup must not interrupt the request path (recorder swallows err).
+		sessionMW := middleware.SessionRecord(acctRecordSession.Execute)
+		baseAuthMW := authMW
+		authMW = func(c *gin.Context) {
+			baseAuthMW(c)
+			if c.IsAborted() {
+				return
+			}
+			sessionMW(c)
+		}
 	} else {
 		l.Warn("auth middleware disabled (ZITADEL_DOMAIN not set) — /api/v1 is unauthenticated")
 	}
@@ -467,7 +511,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	metricsHandler := handlermetrics.NewMetricsHandler(cfg.PlatformInternalKey)
 
 	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
-		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler, exportHandler)
+		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler, exportHandler, accountHandler)
 
 	// POST /internal/v1/telemetry/web — browser-side product telemetry → NATS
 	// PSI_TELEMETRY.web.* (S0.Q3). Bearer-gated via the same key as metrics.
@@ -487,6 +531,31 @@ func NewApp(cfg *config.Config) (*App, error) {
 	go outboxWorker.Run(outboxCtx)
 	l.Info("outbox worker started", slog.String("poll_interval", "30s"))
 
+	// Audit subscriber (Phase 3) — best-effort consumer that mirrors business
+	// PSI_EVENTS into tally.audit_log. Skipped when NATS is in noop mode
+	// (dev) or when the connection can't be opened.
+	var auditSub *adapternats.AuditSubscriber
+	if cfg.NATSURL != "" {
+		nc, ncErr := nats.Connect(cfg.NATSURL)
+		if ncErr != nil {
+			l.Warn("audit subscriber: NATS connect failed, audit_log will not be populated",
+				slog.String("error", ncErr.Error()))
+		} else {
+			sub, subErr := adapternats.NewAuditSubscriber(nc, acctAppendAudit, l)
+			if subErr != nil {
+				l.Warn("audit subscriber: init failed",
+					slog.String("error", subErr.Error()))
+			} else if sub != nil {
+				if startErr := sub.Start(outboxCtx); startErr != nil {
+					l.Warn("audit subscriber: start failed",
+						slog.String("error", startErr.Error()))
+				} else {
+					auditSub = sub
+				}
+			}
+		}
+	}
+
 	return &App{
 		cfg:        cfg,
 		log:        l,
@@ -494,6 +563,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		srv:        srv,
 		db:         db,
 		stopOutbox: outboxCancel,
+		auditSub:   auditSub,
 	}, nil
 }
 
