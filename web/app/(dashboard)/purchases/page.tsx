@@ -15,6 +15,7 @@ import {
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
+import { TableSkeleton } from "@/components/ui/table-skeleton"
 import { formatCNY } from "@/lib/format"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
@@ -115,13 +116,23 @@ export default function PurchasesPage() {
           <p className="text-sm text-muted-foreground mt-0.5">共 {total} 条采购单</p>
         </div>
         <div className="flex items-center gap-2">
-          <a
-            href="/api/v1/exports/bills.csv"
-            download
-            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
-          >
-            导出 CSV
-          </a>
+          {bills.length === 0 && !loading ? (
+            <span
+              title="暂无可导出数据"
+              className="rounded-lg border border-border px-4 py-1.5 text-sm opacity-40 cursor-not-allowed select-none"
+              aria-disabled="true"
+            >
+              导出 CSV
+            </span>
+          ) : (
+            <a
+              href="/api/v1/exports/bills.csv"
+              download
+              className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
+            >
+              导出 CSV
+            </a>
+          )}
           <Link
             href="/purchases/new"
             className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
@@ -148,9 +159,7 @@ export default function PurchasesPage() {
         ))}
       </div>
 
-      {loading && (
-        <div className="py-12 text-center text-muted-foreground">加载中...</div>
-      )}
+      {loading && <TableSkeleton rows={5} cols={5} />}
       {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && bills.length === 0 && (
         <EmptyState

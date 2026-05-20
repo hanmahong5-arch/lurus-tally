@@ -8,6 +8,7 @@ import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
+import { TableSkeleton } from "@/components/ui/table-skeleton"
 
 /**
  * Products list page — GET /api/v1/products
@@ -114,9 +115,7 @@ export default function ProductsPage() {
         </button>
       </div>
 
-      {loading && (
-        <div className="py-12 text-center text-muted-foreground">加载中...</div>
-      )}
+      {loading && <TableSkeleton rows={5} cols={6} />}
       {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && products.length === 0 && (
         <EmptyState
