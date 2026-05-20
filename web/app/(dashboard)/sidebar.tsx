@@ -5,39 +5,111 @@ import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useProfile } from "@/lib/profile"
 
+import { AccountCard } from "@/components/account/account-card"
+
 interface NavItem {
   href: string
   label: string
   icon?: string
-  /** When set, this item is only shown to tenants whose profileType is in the list. */
+  /** Only shown when the current profileType is in this list. */
   industry?: string[]
+  /** Small badge text to the right of the label (e.g. "NEW"). */
+  badge?: string
 }
 
-const BASE_NAV_ITEMS: NavItem[] = [
-  { href: "/products", label: "商品管理", icon: "📦" },
-  { href: "/stock", label: "库存", icon: "🏬" },
-  { href: "/purchases", label: "采购管理", icon: "🛒" },
-  { href: "/sales", label: "销售管理", icon: "📊" },
-  { href: "/finance/exchange-rates", label: "财务管理", icon: "💰" },
-  { href: "/subscription", label: "订阅与计费", icon: "💳" },
-  { href: "/suppliers", label: "供应商", icon: "🏭" },
-  { href: "/warehouses", label: "仓库", icon: "🏪" },
-  { href: "/dictionary", label: "苗木字典", icon: "🌿", industry: ["horticulture"] },
-  { href: "/projects", label: "项目", icon: "🏗️" },
-  { href: "/settings/api-keys", label: "API 密钥", icon: "🔑" },
+interface NavSection {
+  /** Lowercase, displayed as a small uppercase header above the items. */
+  title?: string
+  items: NavItem[]
+}
+
+const SECTIONS: NavSection[] = [
+  {
+    title: "WORKSPACE",
+    items: [
+      { href: "/dashboard", label: "仪表盘", icon: "📊" },
+      { href: "/ai", label: "AI 助手", icon: "🤖", badge: "NEW" },
+      { href: "/todo", label: "待办", icon: "🔔" },
+    ],
+  },
+  {
+    title: "经营",
+    items: [
+      { href: "/products", label: "商品", icon: "📦" },
+      { href: "/stock", label: "库存", icon: "🏬" },
+      { href: "/purchases", label: "采购", icon: "🛒" },
+      { href: "/sales", label: "销售", icon: "📊" },
+      { href: "/payments", label: "付款", icon: "💳", badge: "NEW" },
+      { href: "/reports", label: "报表", icon: "📈", badge: "NEW" },
+    ],
+  },
+  {
+    title: "设置",
+    items: [
+      { href: "/suppliers", label: "供应商", icon: "🏭" },
+      { href: "/warehouses", label: "仓库", icon: "🏪" },
+      { href: "/units", label: "单位", icon: "📐", badge: "NEW" },
+      { href: "/account?tab=api-keys", label: "API 密钥", icon: "🔑" },
+      { href: "/account?tab=subscription", label: "订阅", icon: "💰" },
+      { href: "/dictionary", label: "苗木字典", icon: "🌿", industry: ["horticulture"] },
+      { href: "/projects", label: "项目", icon: "🏗️", industry: ["horticulture"] },
+    ],
+  },
 ]
 
+function filterSections(sections: NavSection[], profileType: string): NavSection[] {
+  return sections
+    .map((s) => ({
+      ...s,
+      items: s.items.filter(
+        (i) => !i.industry || (profileType !== "" && i.industry.includes(profileType)),
+      ),
+    }))
+    .filter((s) => s.items.length > 0)
+}
+
 /**
- * Shared nav link list. Used both inside the desktop sidebar and the mobile
- * drawer so the two views never drift.
+ * NavLink renders one row in the sidebar. We match on path prefix BUT not on
+ * query (so `/account?tab=api-keys` highlights when on `/account`).
  */
+function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+  return (
+    <Link
+      href={item.href}
+      className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
+        active
+          ? "bg-muted font-medium text-foreground"
+          : "text-muted-foreground hover:bg-muted hover:text-foreground"
+      }`}
+    >
+      {item.icon && (
+        <span className="text-base" aria-hidden="true">
+          {item.icon}
+        </span>
+      )}
+      <span className="flex-1">{item.label}</span>
+      {item.badge && (
+        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
+          {item.badge}
+        </span>
+      )}
+    </Link>
+  )
+}
+
+function isActive(pathname: string | null, href: string): boolean {
+  if (!pathname) return false
+  // For query-string hrefs, compare only the pathname part.
+  const target = href.split("?")[0]
+  if (target === "/") return pathname === "/"
+  return pathname === target || pathname.startsWith(target + "/")
+}
+
+/** Shared between desktop sidebar and mobile drawer. */
 function NavLinks() {
   const { profileType } = useProfile()
   const pathname = usePathname()
-
-  const navItems = BASE_NAV_ITEMS.filter(
-    (item) => !item.industry || (profileType !== null && item.industry.includes(profileType))
-  )
+  const sections = filterSections(SECTIONS, profileType ?? "")
 
   return (
     <>
@@ -57,45 +129,42 @@ function NavLinks() {
         </Link>
       )}
 
-      <div className="my-1 border-t border-border" />
-
-      {navItems.map((item) => (
-        <Link
-          key={item.href}
-          href={item.href}
-          className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm transition-colors ${
-            pathname?.startsWith(item.href)
-              ? "bg-muted font-medium text-foreground"
-              : "text-muted-foreground hover:bg-muted hover:text-foreground"
-          }`}
-        >
-          {item.icon && (
-            <span className="text-base" aria-hidden="true">
-              {item.icon}
-            </span>
-          )}
-          {item.label}
-        </Link>
-      ))}
+      <nav className="flex flex-col gap-3">
+        {sections.map((section, idx) => (
+          <div key={section.title ?? idx} className="flex flex-col gap-0.5">
+            {section.title && (
+              <div className="px-3 pt-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground/70">
+                {section.title}
+              </div>
+            )}
+            {section.items.map((item) => (
+              <NavLink key={item.href} item={item} active={isActive(pathname, item.href)} />
+            ))}
+          </div>
+        ))}
+      </nav>
     </>
   )
 }
 
 /**
- * DashboardSidebar — desktop-only sidebar (md and up). Mobile users get
- * MobileNav instead.
+ * DashboardSidebar — desktop-only sidebar (md and up). Layout is:
+ *   POS (retail only) → grouped nav (workspace / business / settings) → spacer
+ *   → AccountCard pinned at bottom.
  */
 export function DashboardSidebar() {
   return (
-    <nav className="hidden w-56 flex-col gap-1 border-r border-border bg-background p-3 md:flex">
+    <aside className="hidden w-56 flex-col gap-3 border-r border-border bg-background p-3 md:flex">
       <NavLinks />
-    </nav>
+      <AccountCard />
+    </aside>
   )
 }
 
 /**
- * MobileNav — sticky top bar with hamburger + slide-out drawer. Rendered only
- * below md. Closes automatically when the route changes.
+ * MobileNav — sticky top bar with hamburger + slide-out drawer. Closes on
+ * route change. Includes the account card at the bottom for parity with
+ * desktop.
  */
 export function MobileNav() {
   const [open, setOpen] = useState(false)
@@ -129,13 +198,13 @@ export function MobileNav() {
             onClick={() => setOpen(false)}
             aria-hidden="true"
           />
-          <nav
-            className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col gap-1 bg-background p-3 shadow-xl md:hidden"
+          <aside
+            className="fixed inset-y-0 left-0 z-50 flex w-64 flex-col gap-3 bg-background p-3 shadow-xl md:hidden"
             role="dialog"
             aria-modal="true"
             aria-label="导航菜单"
           >
-            <div className="mb-2 flex justify-end">
+            <div className="mb-1 flex justify-end">
               <button
                 type="button"
                 onClick={() => setOpen(false)}
@@ -146,7 +215,8 @@ export function MobileNav() {
               </button>
             </div>
             <NavLinks />
-          </nav>
+            <AccountCard />
+          </aside>
         </>
       )}
     </>

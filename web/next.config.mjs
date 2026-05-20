@@ -11,6 +11,15 @@ const nextConfig = {
   experimental: {
     outputFileTracingRoot: __dirname,
   },
+  // Account-center migration (Phase 1) — fold legacy entry routes into the
+  // unified /account?tab=... tab nav. Non-permanent so we can iterate without
+  // baking the redirect into client caches.
+  async redirects() {
+    return [
+      { source: "/settings/api-keys", destination: "/account?tab=api-keys", permanent: false },
+      { source: "/subscription", destination: "/account?tab=subscription", permanent: false },
+    ]
+  },
 }
 
 export default nextConfig

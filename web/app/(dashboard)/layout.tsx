@@ -4,6 +4,8 @@ import { GlobalAI } from "@/components/ai-assistant/GlobalAI"
 import { UndoToastProvider } from "@/components/undo/UndoToastProvider"
 import { ProfileProvider, type ProfileType } from "@/lib/profile"
 import { OfflineBanner } from "@/components/ui/offline-banner"
+import { AccountDrawerProvider } from "@/components/account/account-drawer-provider"
+import { AccountDrawer } from "@/components/account/account-drawer"
 
 /**
  * Dashboard layout — wraps all routes in the (dashboard) group with a sidebar + header.
@@ -31,17 +33,21 @@ export default async function DashboardLayout({
   return (
     <UndoToastProvider>
       <ProfileProvider value={{ profileType }}>
-        {/* OfflineBanner: fixed top strip, shown only when navigator.onLine is false */}
-        <OfflineBanner />
-        <div className="flex h-screen overflow-hidden">
-          <DashboardSidebar />
-          <main className="flex-1 overflow-y-auto">
-            <MobileNav />
-            {children}
-          </main>
-          {/* AI assistant: ⌘K Command Palette + Cmd+J Drawer */}
-          <GlobalAI />
-        </div>
+        <AccountDrawerProvider>
+          {/* OfflineBanner: fixed top strip, shown only when navigator.onLine is false */}
+          <OfflineBanner />
+          <div className="flex h-screen overflow-hidden">
+            <DashboardSidebar />
+            <main className="flex-1 overflow-y-auto">
+              <MobileNav />
+              {children}
+            </main>
+            {/* AI assistant: ⌘K Command Palette + Cmd+J Drawer */}
+            <GlobalAI />
+            {/* Tier 2 account drawer — opened by sidebar AccountCard / palette */}
+            <AccountDrawer />
+          </div>
+        </AccountDrawerProvider>
       </ProfileProvider>
     </UndoToastProvider>
   )
