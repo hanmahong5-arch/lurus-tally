@@ -91,6 +91,12 @@ func (h *Handler) Record(c *gin.Context) {
 		c.JSON(http.StatusUnprocessableEntity, errResp("payment_error", err.Error(), ""))
 		return
 	}
+
+	// Use a stable currency label. The payment domain does not carry ISO currency
+	// in this endpoint yet; emit "CNY" as the canonical default so the metric is
+	// immediately queryable. When multi-currency is wired, replace with the resolved value.
+	middleware.IncPaymentCreated("CNY", tenantID.String())
+
 	c.JSON(http.StatusCreated, gin.H{"status": "recorded"})
 }
 

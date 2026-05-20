@@ -66,6 +66,18 @@ func (s *fakeOutboxStore) RecordAttemptError(_ context.Context, id uuid.UUID, la
 	return nil
 }
 
+func (s *fakeOutboxStore) PendingStats(_ context.Context) (adapternats.OutboxPendingStats, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var count int64
+	for _, r := range s.rows {
+		if !s.published[r.ID] {
+			count++
+		}
+	}
+	return adapternats.OutboxPendingStats{PendingCount: count}, nil
+}
+
 // fakePublisher is a controllable Publisher stub.
 type fakePublisher struct {
 	mu         sync.Mutex

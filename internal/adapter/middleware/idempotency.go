@@ -10,6 +10,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/loghelper"
 )
 
 const (
@@ -135,6 +137,11 @@ func Idempotency(store IdempotencyStore) gin.HandlerFunc {
 				c.Header(HeaderIdempotencyReplay, "true")
 				c.Status(entry.Status)
 				_, _ = c.Writer.Write(entry.Body)
+				loghelper.Info(c.Request.Context(), "idempotency_skipped", map[string]any{
+					"reason": "cache_hit",
+					"key":    rawKey,
+					"status": entry.Status,
+				})
 				c.Abort()
 				return
 			}

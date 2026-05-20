@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
 )
 
@@ -180,6 +181,7 @@ func (uc *RecordMovementUseCase) Execute(ctx context.Context, req RecordMovement
 		return nil, txErr
 	}
 
+	middleware.IncStockMovement(string(req.Direction), req.TenantID.String())
 	return snap, nil
 }
 
@@ -250,6 +252,7 @@ func (uc *RecordMovementUseCase) ExecuteInTx(ctx context.Context, tx *sql.Tx, re
 		}
 	}
 
+	middleware.IncStockMovement(string(req.Direction), req.TenantID.String())
 	return snap, nil
 }
 

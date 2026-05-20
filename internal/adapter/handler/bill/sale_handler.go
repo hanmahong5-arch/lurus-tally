@@ -261,6 +261,7 @@ func (h *SaleHandler) Cancel(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
+	middleware.IncBillCancelled("sale", tenantID.String())
 	c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
 }
 

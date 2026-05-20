@@ -114,6 +114,38 @@ func (s *Store) MarkPublished(ctx context.Context, id uuid.UUID) error {
 	return tx.Commit()
 }
 
+// PendingStats returns a lightweight aggregate of the pending outbox queue.
+// Uses SET LOCAL app.tenant_id = 'service' so RLS is satisfied across all tenants.
+func (s *Store) PendingStats(ctx context.Context) (adapternats.OutboxPendingStats, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return adapternats.OutboxPendingStats{}, fmt.Errorf("event_outbox: pending stats begin tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if _, err := tx.ExecContext(ctx, `SET LOCAL app.tenant_id = 'service'`); err != nil {
+		return adapternats.OutboxPendingStats{}, fmt.Errorf("event_outbox: pending stats set tenant: %w", err)
+	}
+
+	const q = `
+		SELECT
+			COUNT(*),
+			COALESCE(EXTRACT(EPOCH FROM (now() - MIN(created_at))), 0)
+		FROM tally.event_outbox
+		WHERE published_at IS NULL AND attempts < $1`
+	var stats adapternats.OutboxPendingStats
+	if err := tx.QueryRowContext(ctx, q, adapternats.MaxOutboxAttempts).Scan(
+		&stats.PendingCount,
+		&stats.OldestAgeSeconds,
+	); err != nil {
+		return adapternats.OutboxPendingStats{}, fmt.Errorf("event_outbox: pending stats query: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return adapternats.OutboxPendingStats{}, fmt.Errorf("event_outbox: pending stats commit: %w", err)
+	}
+	return stats, nil
+}
+
 // RecordAttemptError increments attempts and persists the error message.
 // Uses SET LOCAL app.tenant_id = 'service' so RLS is satisfied.
 func (s *Store) RecordAttemptError(ctx context.Context, id uuid.UUID, lastErr string) error {

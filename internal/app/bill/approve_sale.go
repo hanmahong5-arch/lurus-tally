@@ -10,10 +10,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
 	domainpayment "github.com/hanmahong5-arch/lurus-tally/internal/domain/payment"
 	domainstock "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/loghelper"
 )
 
 // PaymentRecorder is the minimal interface needed to record a payment from the bill layer.
@@ -176,8 +178,20 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 		"approved_at": now,
 		"approved_by": req.CreatorID,
 	}); err != nil {
+		loghelper.Error(ctx, "bill_approved", err, map[string]any{
+			"bill_type": "sale",
+			"bill_id":   req.BillID.String(),
+			"result":    "failed",
+		})
 		return fmt.Errorf("approve sale: update status: %w", err)
 	}
+
+	middleware.IncBillApproved("sale", req.TenantID.String())
+	loghelper.Info(ctx, "bill_approved", map[string]any{
+		"bill_type": "sale",
+		"bill_id":   req.BillID.String(),
+		"result":    "ok",
+	})
 
 	// Write initial payment if paid_amount > 0.
 	if req.PaidAmount.GreaterThan(decimal.Zero) {

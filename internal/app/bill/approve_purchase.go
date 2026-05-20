@@ -9,9 +9,11 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
 	domainstock "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/loghelper"
 )
 
 // ErrInvalidUnitForProduct is returned when the item's unit_id is not valid for the product.
@@ -139,9 +141,20 @@ func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID,
 			"approved_at": now,
 			"approved_by": approvedBy,
 		}); err != nil {
+			loghelper.Error(ctx, "bill_approved", err, map[string]any{
+				"bill_type": "purchase",
+				"bill_id":   billID.String(),
+				"result":    "failed",
+			})
 			return fmt.Errorf("approve purchase: update status: %w", err)
 		}
 
+		middleware.IncBillApproved("purchase", tenantID.String())
+		loghelper.Info(ctx, "bill_approved", map[string]any{
+			"bill_type": "purchase",
+			"bill_id":   billID.String(),
+			"result":    "ok",
+		})
 		return nil
 	})
 }

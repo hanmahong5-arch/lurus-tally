@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
 )
 
@@ -50,6 +51,7 @@ func (uc *CancelPurchaseUseCase) Execute(ctx context.Context, tenantID, billID u
 		if err := uc.repo.UpdateBillStatus(ctx, tx, tenantID, billID, domain.StatusCancelled, nil); err != nil {
 			return fmt.Errorf("cancel purchase: update status: %w", err)
 		}
+		middleware.IncBillCancelled("purchase", tenantID.String())
 		return nil
 	})
 }

@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/loghelper"
 )
 
 const (
@@ -21,6 +24,15 @@ const (
 	MaxOutboxAttempts = 10
 )
 
+// OutboxPendingStats is the observability snapshot the worker reads each tick.
+type OutboxPendingStats struct {
+	// PendingCount is the number of rows with published_at IS NULL and attempts < MaxOutboxAttempts.
+	PendingCount int64
+	// OldestAgeSeconds is EXTRACT(EPOCH FROM now()-MIN(created_at)) for the pending set.
+	// Zero when PendingCount == 0.
+	OldestAgeSeconds float64
+}
+
 // OutboxStore is the minimal contract the worker needs from the outbox persistence layer.
 // Implemented by internal/adapter/repo/event_outbox.Store; a fake can be injected in tests.
 type OutboxStore interface {
@@ -30,6 +42,9 @@ type OutboxStore interface {
 	MarkPublished(ctx context.Context, id uuid.UUID) error
 	// RecordAttemptError increments attempts and persists the error message.
 	RecordAttemptError(ctx context.Context, id uuid.UUID, lastErr string) error
+	// PendingStats returns a lightweight aggregate of the pending outbox queue.
+	// Implementors that cannot query (e.g. fake stores) may return a zero value and nil.
+	PendingStats(ctx context.Context) (OutboxPendingStats, error)
 }
 
 // OutboxRow is one pending entry returned by OutboxStore.Drain.
@@ -84,6 +99,13 @@ func (w *OutboxWorker) Run(ctx context.Context) {
 }
 
 func (w *OutboxWorker) drainOnce(ctx context.Context) {
+	// Update outbox gauges before draining so the metrics reflect the pre-drain
+	// backlog, which is the most actionable signal for an on-call engineer.
+	if stats, err := w.store.PendingStats(ctx); err == nil {
+		middleware.SetOutboxPending(float64(stats.PendingCount))
+		middleware.SetOutboxOldestAge(stats.OldestAgeSeconds)
+	}
+
 	rows, err := w.store.Drain(ctx, outboxDrainLimit)
 	if err != nil {
 		w.log.Error("outbox: drain failed",
@@ -97,6 +119,10 @@ func (w *OutboxWorker) drainOnce(ctx context.Context) {
 		// They remain in the table so ops can inspect and replay manually.
 		w.processRow(ctx, row)
 	}
+
+	loghelper.Info(ctx, "outbox_drain_tick", map[string]any{
+		"drained": len(rows),
+	})
 }
 
 func (w *OutboxWorker) processRow(ctx context.Context, row OutboxRow) {
