@@ -153,6 +153,26 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# Phase 3 — account center (sessions / audit-log / profile)
+# ---------------------------------------------------------------------------
+echo "[P3] account center"
+if [ -n "$AUTH" ]; then
+  for EP in account/sessions account/audit-log account/profile; do
+    STATUS=$(curl -sS -o /dev/null -w "%{http_code}" \
+      -H "Authorization: $AUTH" "$BASE/api/v1/$EP" || echo "000")
+    if [ "$STATUS" = "200" ]; then
+      ok "/api/v1/$EP returns 200"
+    elif [ "$STATUS" = "501" ]; then
+      skip "/api/v1/$EP returns 501 (account handler not wired in this env)"
+    else
+      bad "/api/v1/$EP returned $STATUS"
+    fi
+  done
+else
+  skip "AUTH not set, cannot probe account endpoints"
+fi
+
+# ---------------------------------------------------------------------------
 # Observability — /internal/v1/metrics exposes business counters
 # ---------------------------------------------------------------------------
 echo "[obs] Prometheus metrics"
