@@ -18,6 +18,10 @@ export interface AccountIdentity {
   role: string
   is_owner: boolean
   profile_type: string
+  /** Set when the user has uploaded a profile avatar (Phase 3). Resolved
+   *  against the same /api/proxy prefix everything else uses. */
+  avatar_url?: string
+  phone?: string
 }
 
 export interface AccountSummary {

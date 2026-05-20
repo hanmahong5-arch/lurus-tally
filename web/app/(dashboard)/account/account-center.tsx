@@ -3,14 +3,28 @@
 import Link from "next/link"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useCallback, useState } from "react"
+import { toast } from "sonner"
 
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useConfirm } from "@/hooks/useConfirm"
 import { EmptyState } from "@/components/ui/empty-state"
+import { ErrorBanner } from "@/components/ui/error-banner"
+import { TableSkeleton } from "@/components/ui/table-skeleton"
 import {
   fetchAccountSummary,
   type AccountSummary,
   daysUntilExpiry,
 } from "@/lib/api/account"
+import {
+  getProfile,
+  listAuditLog,
+  listSessions,
+  revokeSession,
+  updateProfile,
+  uploadAvatar,
+  type AccountSession,
+  type AuditEntry,
+} from "@/lib/api/account-extra"
 import { formatCNY } from "@/lib/format"
 import { useAccountDrawer } from "@/components/account/account-drawer-provider"
 import { cn } from "@/lib/utils"
@@ -147,26 +161,11 @@ function TabContent({ tab }: { tab: TabKey }) {
         <ApiKeysPage />
       )
     case "security":
-      return (
-        <PlaceholderTab
-          title="安全"
-          description="登录会话列表 / 撤销其他设备 / 修改密码 / 2FA —— Phase 3 上线"
-        />
-      )
+      return <SecurityTab />
     case "audit":
-      return (
-        <PlaceholderTab
-          title="活动日志"
-          description="审计流水（建单 / 审核 / 退款 / 密钥变更）—— Phase 3 上线"
-        />
-      )
+      return <AuditTab />
     case "team":
-      return (
-        <PlaceholderTab
-          title="团队成员"
-          description="成员列表 / 邀请 / 角色 —— platform-core 接口对接中"
-        />
-      )
+      return <TeamTab />
     case "notifications":
       return <NotificationsTab />
     default:
@@ -177,37 +176,192 @@ function TabContent({ tab }: { tab: TabKey }) {
 function ProfileTab() {
   const [summary, setSummary] = useState<AccountSummary | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [editing, setEditing] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [displayName, setDisplayName] = useState("")
+  const [phone, setPhone] = useState("")
+  const [avatarUrl, setAvatarUrl] = useState<string>("")
+  const [uploading, setUploading] = useState(false)
+
+  const refresh = useCallback(() => {
+    Promise.all([fetchAccountSummary(), getProfile().catch(() => null)])
+      .then(([s, p]) => {
+        setSummary(s)
+        setDisplayName(p?.display_name || s.identity.display_name || "")
+        setPhone(p?.phone || "")
+        setAvatarUrl(toProxyUrl(p?.avatar_url || ""))
+      })
+      .catch((err: Error) => setError(err.message))
+  }, [])
 
   useAbortableEffect((_signal, isCancelled) => {
-    fetchAccountSummary()
-      .then((s) => !isCancelled() && setSummary(s))
-      .catch((err: Error) => !isCancelled() && setError(err.message))
-  }, [])
+    if (isCancelled()) return
+    refresh()
+  }, [refresh])
+
+  async function handleSave() {
+    setSaving(true)
+    try {
+      await updateProfile(displayName.trim(), phone.trim())
+      toast.success("已保存")
+      setEditing(false)
+      refresh()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    if (!file) return
+    if (file.size > 200 * 1024) {
+      toast.error("文件超过 200KB")
+      return
+    }
+    setUploading(true)
+    try {
+      const { avatar_url } = await uploadAvatar(file)
+      setAvatarUrl(toProxyUrl(avatar_url) + "?t=" + Date.now())
+      toast.success("头像已更新")
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setUploading(false)
+      e.target.value = ""
+    }
+  }
 
   return (
     <div className="px-6 py-6">
       <h1 className="mb-2 text-xl font-semibold">个人资料</h1>
       <p className="mb-6 text-sm text-muted-foreground">
-        基础身份信息来自 Zitadel SSO。修改 display_name / 手机 / 头像需 Phase 3 后端接口。
+        显示名 / 手机 / 头像可在此修改；邮箱和角色由 Zitadel SSO 管理。
       </p>
-      {error && (
-        <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
-          加载失败：{error}
-        </p>
-      )}
+      {error && <ErrorBanner>加载失败：{error}</ErrorBanner>}
+
       {summary && (
-        <dl className="divide-y divide-border rounded-xl border border-border bg-card">
-          <ProfileRow label="显示名" value={summary.identity.display_name || "—"} />
-          <ProfileRow label="邮箱" value={summary.identity.email || "—"} />
-          <ProfileRow label="角色" value={summary.identity.role || "—"} />
-          <ProfileRow label="租户 ID" value={summary.identity.tenant_id || "—"} mono />
-          <ProfileRow label="用户 ID" value={summary.identity.user_id || "—"} mono />
-          <ProfileRow
-            label="业务类型"
-            value={summary.identity.profile_type || "未设置"}
-          />
-        </dl>
+        <div className="space-y-4">
+          <div className="flex items-center gap-4 rounded-xl border border-border bg-card p-4">
+            <div className="relative h-16 w-16 overflow-hidden rounded-full bg-muted">
+              {avatarUrl ? (
+                /* eslint-disable-next-line @next/next/no-img-element */
+                <img src={avatarUrl} alt="头像" className="h-full w-full object-cover" />
+              ) : (
+                <div className="flex h-full w-full items-center justify-center text-xl font-medium uppercase">
+                  {(displayName || summary.identity.email || "?")[0]?.toUpperCase() ?? "?"}
+                </div>
+              )}
+            </div>
+            <div className="flex-1">
+              <label className="inline-block cursor-pointer rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted">
+                {uploading ? "上传中..." : "上传头像"}
+                <input
+                  type="file"
+                  accept="image/png,image/jpeg,image/webp"
+                  className="hidden"
+                  onChange={handleAvatarChange}
+                  disabled={uploading}
+                />
+              </label>
+              <p className="mt-1 text-[10px] text-muted-foreground">PNG / JPEG / WebP · ≤200KB</p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-card">
+            <div className="flex items-center justify-between border-b border-border px-4 py-3">
+              <h2 className="text-sm font-medium">基本信息</h2>
+              {!editing ? (
+                <button
+                  type="button"
+                  onClick={() => setEditing(true)}
+                  className="rounded-md border border-border bg-background px-3 py-1 text-xs hover:bg-muted"
+                >
+                  编辑
+                </button>
+              ) : (
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditing(false)
+                      refresh()
+                    }}
+                    className="rounded-md border border-border bg-background px-3 py-1 text-xs hover:bg-muted"
+                  >
+                    取消
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={saving}
+                    className="rounded-md bg-primary px-3 py-1 text-xs text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {saving ? "保存中..." : "保存"}
+                  </button>
+                </div>
+              )}
+            </div>
+            <dl className="divide-y divide-border">
+              <ProfileEditRow
+                label="显示名"
+                value={displayName}
+                onChange={setDisplayName}
+                editing={editing}
+                fallback={summary.identity.display_name}
+              />
+              <ProfileEditRow
+                label="手机"
+                value={phone}
+                onChange={setPhone}
+                editing={editing}
+                fallback="未填写"
+              />
+              <ProfileRow label="邮箱" value={summary.identity.email || "—"} />
+              <ProfileRow label="角色" value={summary.identity.role || "—"} />
+              <ProfileRow label="租户 ID" value={summary.identity.tenant_id || "—"} mono />
+              <ProfileRow label="用户 ID" value={summary.identity.user_id || "—"} mono />
+              <ProfileRow
+                label="业务类型"
+                value={summary.identity.profile_type || "未设置"}
+              />
+            </dl>
+          </div>
+        </div>
       )}
+    </div>
+  )
+}
+
+function ProfileEditRow({
+  label,
+  value,
+  onChange,
+  editing,
+  fallback,
+}: {
+  label: string
+  value: string
+  onChange: (next: string) => void
+  editing: boolean
+  fallback: string
+}) {
+  return (
+    <div className="grid grid-cols-3 gap-4 px-4 py-3 text-sm">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="col-span-2">
+        {editing ? (
+          <input
+            type="text"
+            value={value}
+            onChange={(e) => onChange(e.target.value)}
+            className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-ring"
+          />
+        ) : (
+          <span>{value || fallback || "—"}</span>
+        )}
+      </dd>
     </div>
   )
 }
@@ -386,12 +540,278 @@ function NotificationsTab() {
   )
 }
 
-function PlaceholderTab({ title, description }: { title: string; description: string }) {
+function toProxyUrl(url: string): string {
+  if (!url) return ""
+  if (url.startsWith("/api/v1/")) return "/api/proxy" + url.slice("/api/v1".length)
+  return url
+}
+
+function formatDateTime(iso: string): string {
+  if (!iso) return "—"
+  try {
+    return new Date(iso).toLocaleString("zh-CN")
+  } catch {
+    return iso
+  }
+}
+
+function SecurityTab() {
+  const [sessions, setSessions] = useState<AccountSession[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const confirm = useConfirm()
+
+  const load = useCallback(
+    (signal?: AbortSignal, isCancelled?: () => boolean) => {
+      setLoading(true)
+      setError(null)
+      listSessions(signal)
+        .then((r) => {
+          if (isCancelled?.()) return
+          setSessions(r.items ?? [])
+        })
+        .catch((err: Error) => {
+          if (isCancelled?.() || signal?.aborted) return
+          setError(err.message)
+        })
+        .finally(() => {
+          if (isCancelled?.()) return
+          setLoading(false)
+        })
+    },
+    [],
+  )
+
+  useAbortableEffect((signal, isCancelled) => {
+    load(signal, isCancelled)
+  }, [load])
+
+  async function handleRevoke(s: AccountSession) {
+    const ok = await confirm({
+      title: s.current ? "撤销当前会话？" : "撤销该会话？",
+      body: s.current
+        ? "撤销后你需要重新登录。"
+        : "该设备上未保存的工作将丢失，需要重新登录。",
+      confirmText: "撤销",
+      cancelText: "保留",
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      await revokeSession(s.id)
+      toast.success("已撤销")
+      load()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   return (
     <div className="px-6 py-6">
-      <h1 className="mb-2 text-xl font-semibold">{title}</h1>
-      <p className="mb-6 text-sm text-muted-foreground">{description}</p>
-      <EmptyState title="即将上线" description={description} />
+      <h1 className="mb-2 text-xl font-semibold">安全</h1>
+      <p className="mb-6 text-sm text-muted-foreground">
+        登录会话列表。撤销其他设备会立即让那些浏览器失效；当前会话也可撤销（系统会要求重新登录）。
+      </p>
+
+      <section className="mb-6 rounded-xl border border-border bg-card p-4">
+        <h2 className="mb-1 text-sm font-medium">密码 / 2FA</h2>
+        <p className="mb-3 text-xs text-muted-foreground">
+          密码和两步验证由 Zitadel 统一管理。点击下方按钮在 SSO 控制台修改。
+        </p>
+        <a
+          href="https://auth.lurus.cn"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted"
+        >
+          打开 Zitadel 控制台 →
+        </a>
+      </section>
+
+      <section>
+        <h2 className="mb-3 text-sm font-medium">活动会话</h2>
+        {loading && <TableSkeleton rows={3} />}
+        {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
+        {!loading && !error && sessions.length === 0 && (
+          <EmptyState title="无活动会话" description="没有其他登录设备 — 此页将在你下次登录后填充。" />
+        )}
+        {!loading && sessions.length > 0 && (
+          <ul className="divide-y divide-border rounded-xl border border-border bg-card">
+            {sessions.map((s) => (
+              <li key={s.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <p className="truncate text-sm font-medium">{s.user_agent || "未知设备"}</p>
+                    {s.current && (
+                      <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] uppercase text-emerald-600">
+                        当前
+                      </span>
+                    )}
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {s.ip_addr ? `${s.ip_addr} · ` : ""}最近活动 {formatDateTime(s.last_active)}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleRevoke(s)}
+                  className="text-xs text-destructive hover:underline"
+                >
+                  撤销
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+    </div>
+  )
+}
+
+const AUDIT_ACTION_LABEL: Record<string, string> = {
+  "bill.created": "建单",
+  "bill.approved": "审单通过",
+  "bill.rejected": "审单拒绝",
+  "alert.low_stock": "低库存预警",
+  "alert.overstock": "高库存预警",
+  "stock.movement_recorded": "库存变动",
+  "stock.snapshot_updated": "库存快照更新",
+}
+
+function AuditTab() {
+  const [items, setItems] = useState<AuditEntry[]>([])
+  const [total, setTotal] = useState(0)
+  const [offset, setOffset] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const limit = 50
+
+  useAbortableEffect((signal, isCancelled) => {
+    setLoading(true)
+    setError(null)
+    listAuditLog(limit, offset, signal)
+      .then((r) => {
+        if (isCancelled()) return
+        setItems(r.items ?? [])
+        setTotal(r.total)
+      })
+      .catch((err: Error) => {
+        if (isCancelled() || signal.aborted) return
+        setError(err.message)
+      })
+      .finally(() => {
+        if (isCancelled()) return
+        setLoading(false)
+      })
+  }, [offset])
+
+  const totalPages = Math.max(1, Math.ceil(total / limit))
+  const currentPage = Math.floor(offset / limit) + 1
+
+  return (
+    <div className="px-6 py-6">
+      <h1 className="mb-2 text-xl font-semibold">活动日志</h1>
+      <p className="mb-6 text-sm text-muted-foreground">
+        审计流水（建单 / 审单 / 库存变动 / 预警事件）。最新事件在前。
+      </p>
+
+      {loading && <TableSkeleton rows={8} />}
+      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
+      {!loading && !error && items.length === 0 && (
+        <EmptyState
+          title="暂无审计记录"
+          description="业务事件会在发生时自动出现在这里 — 通常审单 / 建单 / 预警都会留痕。"
+        />
+      )}
+      {!loading && items.length > 0 && (
+        <>
+          <ul className="divide-y divide-border rounded-xl border border-border bg-card">
+            {items.map((e) => (
+              <li key={e.id} className="px-4 py-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium">
+                      {AUDIT_ACTION_LABEL[e.action] ?? e.action}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                      {e.actor_id || "system"}
+                      {e.target_kind && e.target_id ? ` · ${e.target_kind}/${e.target_id}` : ""}
+                    </p>
+                  </div>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {formatDateTime(e.created_at)}
+                  </span>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
+            <span>
+              共 {total} 条 · 第 {currentPage} / {totalPages} 页
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setOffset(Math.max(0, offset - limit))}
+                disabled={offset === 0}
+                className="rounded-md border border-border bg-background px-2 py-1 hover:bg-muted disabled:opacity-40"
+              >
+                上一页
+              </button>
+              <button
+                type="button"
+                onClick={() => setOffset(offset + limit)}
+                disabled={offset + limit >= total}
+                className="rounded-md border border-border bg-background px-2 py-1 hover:bg-muted disabled:opacity-40"
+              >
+                下一页
+              </button>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+function TeamTab() {
+  const [summary, setSummary] = useState<AccountSummary | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useAbortableEffect((_signal, isCancelled) => {
+    fetchAccountSummary()
+      .then((s) => !isCancelled() && setSummary(s))
+      .catch((err: Error) => !isCancelled() && setError(err.message))
+  }, [])
+
+  return (
+    <div className="px-6 py-6">
+      <h1 className="mb-2 text-xl font-semibold">团队成员</h1>
+      <p className="mb-6 text-sm text-muted-foreground">
+        多成员协作 (邀请 / 角色管理) 由 platform-core 接管 — 接口对接中，当前仅显示自己。
+      </p>
+      {error && <ErrorBanner>{error}</ErrorBanner>}
+      {summary && (
+        <ul className="divide-y divide-border rounded-xl border border-border bg-card">
+          <li className="flex items-center justify-between gap-3 px-4 py-3">
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">
+                {summary.identity.display_name || "—"}
+                <span className="ml-2 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] uppercase text-emerald-600">
+                  你
+                </span>
+              </p>
+              <p className="truncate text-xs text-muted-foreground">{summary.identity.email}</p>
+            </div>
+            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase text-muted-foreground">
+              {summary.identity.role || "owner"}
+            </span>
+          </li>
+        </ul>
+      )}
+      <p className="mt-4 text-xs text-muted-foreground">
+        邀请功能上线后会在此卡片下方出现 “+ 邀请成员” 按钮。
+      </p>
     </div>
   )
 }

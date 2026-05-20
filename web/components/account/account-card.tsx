@@ -18,6 +18,16 @@ const STATUS_TONE: Record<AccountStatusLight, { dot: string; label: string }> = 
   red: { dot: "bg-red-500", label: "已到期" },
 }
 
+// The backend exposes avatars at /api/v1/account/avatar; the browser must hit
+// the /api/proxy bridge so the session cookie translates into a Bearer token.
+function avatarProxyUrl(rawUrl: string): string {
+  if (!rawUrl) return ""
+  if (rawUrl.startsWith("/api/v1/")) {
+    return "/api/proxy" + rawUrl.slice("/api/v1".length)
+  }
+  return rawUrl
+}
+
 /**
  * AccountCard — Tier 1 of the account-center progression. Lives at the bottom
  * of the sidebar, ~64px tall, click-to-open the Tier 2 drawer.
@@ -47,6 +57,10 @@ export function AccountCard() {
   const displayName = summary?.identity.display_name || summary?.identity.email || "账户"
   const planCode = summary?.billing?.subscription?.plan_code ?? "free"
 
+  const avatarSrc = summary?.identity.avatar_url
+    ? avatarProxyUrl(summary.identity.avatar_url)
+    : null
+
   return (
     <button
       type="button"
@@ -54,8 +68,15 @@ export function AccountCard() {
       aria-label="账户摘要"
       className="mt-auto flex items-center gap-3 rounded-lg border border-border bg-card px-3 py-2.5 text-left transition-colors hover:bg-muted"
     >
-      <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted text-sm font-medium uppercase">
-        {(displayName[0] ?? "?").toUpperCase()}
+      <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full bg-muted text-sm font-medium uppercase">
+        {avatarSrc ? (
+          /* eslint-disable-next-line @next/next/no-img-element */
+          <img src={avatarSrc} alt="" className="h-full w-full object-cover" />
+        ) : (
+          <span className="flex h-full w-full items-center justify-center">
+            {(displayName[0] ?? "?").toUpperCase()}
+          </span>
+        )}
         <span
           className={cn(
             "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-background",
