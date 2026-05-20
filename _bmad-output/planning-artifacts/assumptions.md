@@ -92,3 +92,4 @@ last_updated: null
 | 日期 | H1 status | H1 current_value | H2 status | H2 current_value | H3 status | H3 current_value |
 |---|---|---|---|---|---|---|
 | 2026-05-18 | pending | — | pending | — | pending | — |
+| 2026-05-20 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
