@@ -12,6 +12,7 @@ import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { formatCNY } from "@/lib/format"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
+import { TableSkeleton } from "@/components/ui/table-skeleton"
 
 /**
  * Stock list page — GET /api/v1/stock/snapshots.
@@ -103,13 +104,23 @@ export default function StockPage() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <a
-            href="/api/v1/exports/stock.csv"
-            download
-            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
-          >
-            导出 CSV
-          </a>
+          {snapshots.length === 0 ? (
+            <span
+              title="暂无可导出数据"
+              className="rounded-lg border border-border px-4 py-1.5 text-sm opacity-40 cursor-not-allowed select-none"
+              aria-disabled="true"
+            >
+              导出 CSV
+            </span>
+          ) : (
+            <a
+              href="/api/v1/exports/stock.csv"
+              download
+              className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
+            >
+              导出 CSV
+            </a>
+          )}
           <button
             onClick={() => load()}
             className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
@@ -143,9 +154,7 @@ export default function StockPage() {
         </select>
       </div>
 
-      {loading && (
-        <div className="py-12 text-center text-muted-foreground">加载中...</div>
-      )}
+      {loading && <TableSkeleton rows={5} cols={7} />}
       {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && snapshots.length === 0 && (
         <EmptyState

@@ -3,6 +3,7 @@ import { DashboardSidebar, MobileNav } from "./sidebar"
 import { GlobalAI } from "@/components/ai-assistant/GlobalAI"
 import { UndoToastProvider } from "@/components/undo/UndoToastProvider"
 import { ProfileProvider, type ProfileType } from "@/lib/profile"
+import { OfflineBanner } from "@/components/ui/offline-banner"
 
 /**
  * Dashboard layout — wraps all routes in the (dashboard) group with a sidebar + header.
@@ -30,6 +31,8 @@ export default async function DashboardLayout({
   return (
     <UndoToastProvider>
       <ProfileProvider value={{ profileType }}>
+        {/* OfflineBanner: fixed top strip, shown only when navigator.onLine is false */}
+        <OfflineBanner />
         <div className="flex h-screen overflow-hidden">
           <DashboardSidebar />
           <main className="flex-1 overflow-y-auto">

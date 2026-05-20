@@ -15,6 +15,7 @@ import {
 import { useConfirm } from "@/hooks/useConfirm"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
+import { TableSkeleton } from "@/components/ui/table-skeleton"
 
 const PAGE_SIZE = 20
 
@@ -211,7 +212,7 @@ export default function SuppliersPage() {
       </div>
 
       {/* States */}
-      {loading && <div className="py-12 text-center text-muted-foreground">加载中...</div>}
+      {loading && <TableSkeleton rows={5} cols={5} />}
       {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && items.length === 0 && (
         <EmptyState

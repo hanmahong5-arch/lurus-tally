@@ -14,6 +14,7 @@ import {
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
+import { TableSkeleton } from "@/components/ui/table-skeleton"
 import { formatCNY } from "@/lib/format"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
@@ -149,9 +150,7 @@ export default function SalesPage() {
         ))}
       </div>
 
-      {loading && (
-        <div className="py-12 text-center text-muted-foreground">加载中...</div>
-      )}
+      {loading && <TableSkeleton rows={5} cols={7} />}
       {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && bills.length === 0 && (
         <EmptyState
