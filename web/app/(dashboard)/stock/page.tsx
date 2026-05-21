@@ -3,16 +3,18 @@
 import { useCallback, useMemo, useState } from "react"
 import { useRouter } from "next/navigation"
 import Link from "next/link"
-import {
-  listStockSnapshots,
-  type StockSnapshot,
-} from "@/lib/api/stock"
+import type { ColumnDef } from "@tanstack/react-table"
+import { listStockSnapshots, type StockSnapshot } from "@/lib/api/stock"
 import { listProducts, type Product } from "@/lib/api/products"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { formatCNY } from "@/lib/format"
-import { ErrorBanner } from "@/components/ui/error-banner"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { DataTable } from "@/components/ui/data-table"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/empty-state"
-import { TableSkeleton } from "@/components/ui/table-skeleton"
+import { cn } from "@/lib/utils"
 
 /**
  * Stock list page — GET /api/v1/stock/snapshots.
@@ -20,6 +22,9 @@ import { TableSkeleton } from "@/components/ui/table-skeleton"
  * display name / SKU instead of bare UUIDs.
  */
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
+
+const SELECT_CLASS =
+  "h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
 function formatDecimal(raw: string | undefined, fractionDigits = 3): string {
   if (!raw) return "0"
@@ -75,8 +80,6 @@ export default function StockPage() {
     load(signal, isCancelled)
   }, [load])
 
-  // Derive the list of distinct warehouse IDs from the snapshot data so the
-  // warehouse filter dropdown only offers values actually present.
   const warehouseOptions = useMemo(() => {
     const set = new Set<string>()
     for (const s of snapshots) set.add(s.warehouse_id)
@@ -94,47 +97,121 @@ export default function StockPage() {
     })
   }, [snapshots, products, q, warehouseFilter])
 
-  return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-semibold">库存</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            共 {filtered.length} 条 {filtered.length !== snapshots.length && `（已筛选自 ${snapshots.length}）`}
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          {snapshots.length === 0 ? (
-            <span
-              title="暂无可导出数据"
-              className="rounded-lg border border-border px-4 py-1.5 text-sm opacity-40 cursor-not-allowed select-none"
-              aria-disabled="true"
-            >
-              导出 CSV
-            </span>
-          ) : (
-            <a
-              href="/api/v1/exports/stock.csv"
-              download
-              className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
-            >
-              导出 CSV
-            </a>
-          )}
-          <button
-            onClick={() => load()}
-            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
+  const columns: ColumnDef<StockSnapshot>[] = [
+    {
+      id: "product",
+      header: "商品",
+      cell: ({ row }) => {
+        const p = products.get(row.original.product_id)
+        return (
+          <Link
+            href={`/stock/${row.original.product_id}`}
+            className="font-medium hover:underline"
+            onClick={(e) => e.stopPropagation()}
           >
-            刷新
-          </button>
-        </div>
-      </div>
+            {p?.name ?? `商品 ${shortId(row.original.product_id)}`}
+          </Link>
+        )
+      },
+    },
+    {
+      id: "sku",
+      header: "SKU",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs text-muted-foreground">
+          {products.get(row.original.product_id)?.code ?? "—"}
+        </span>
+      ),
+    },
+    {
+      id: "warehouse",
+      header: "仓库",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs text-muted-foreground">
+          {shortId(row.original.warehouse_id)}
+        </span>
+      ),
+    },
+    {
+      id: "on_hand",
+      header: "在手",
+      meta: { align: "right" },
+      cell: ({ row }) => {
+        const lowStock = Number(row.original.on_hand_qty ?? "0") <= 0
+        return (
+          <span className={cn("block text-right font-mono tabular-nums", lowStock && "text-warning")}>
+            {formatDecimal(row.original.on_hand_qty)}
+          </span>
+        )
+      },
+    },
+    {
+      id: "available",
+      header: "可用",
+      meta: { align: "right" },
+      cell: ({ row }) => (
+        <span className="block text-right font-mono tabular-nums">
+          {formatDecimal(row.original.available_qty)}
+        </span>
+      ),
+    },
+    {
+      id: "unit_cost",
+      header: "单位成本",
+      meta: { align: "right" },
+      cell: ({ row }) => (
+        <span className="block text-right font-mono tabular-nums">
+          {formatCNY(row.original.unit_cost)}
+        </span>
+      ),
+    },
+    {
+      id: "updated_at",
+      header: "更新时间",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">
+          {row.original.updated_at ? new Date(row.original.updated_at).toLocaleString("zh-CN") : "—"}
+        </span>
+      ),
+    },
+  ]
 
-      {/* Toolbar */}
+  const subtitle =
+    filtered.length !== snapshots.length
+      ? `共 ${filtered.length} 条（已筛选自 ${snapshots.length}）`
+      : `共 ${filtered.length} 条`
+
+  return (
+    <PageContainer width="wide">
+      <PageHeader
+        title="库存"
+        subtitle={subtitle}
+        actions={
+          <>
+            {snapshots.length === 0 ? (
+              <span
+                title="暂无可导出数据"
+                aria-disabled="true"
+                className={buttonVariants({ variant: "outline", className: "pointer-events-none opacity-40" })}
+              >
+                导出 CSV
+              </span>
+            ) : (
+              <a href="/api/v1/exports/stock.csv" download className={buttonVariants({ variant: "outline" })}>
+                导出 CSV
+              </a>
+            )}
+            <Button variant="outline" onClick={() => load()}>
+              刷新
+            </Button>
+          </>
+        }
+      />
+
       <div className="mb-4 flex flex-wrap gap-2">
-        <input
+        <Input
           aria-label="搜索库存商品"
-          className="flex-1 min-w-[14rem] rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+          className="min-w-[14rem] flex-1"
           placeholder="搜索商品名称、编码、助记码..."
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -143,7 +220,7 @@ export default function StockPage() {
           aria-label="按仓库筛选"
           value={warehouseFilter}
           onChange={(e) => setWarehouseFilter(e.target.value)}
-          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+          className={SELECT_CLASS}
         >
           <option value="">全部仓库</option>
           {warehouseOptions.map((id) => (
@@ -154,90 +231,31 @@ export default function StockPage() {
         </select>
       </div>
 
-      {loading && <TableSkeleton rows={5} cols={7} />}
-      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
-      {!loading && !error && snapshots.length === 0 && (
-        <EmptyState
-          title="暂无库存记录"
-          description="完成一笔采购入库后这里会出现快照"
-          action={
-            <Link
-              href="/purchases/new"
-              className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
-            >
-              录入采购单
-            </Link>
-          }
-        />
-      )}
-      {!loading && !error && snapshots.length > 0 && filtered.length === 0 && (
-        <EmptyState
-          title="没有匹配的库存"
-          description="试试清空搜索或仓库筛选"
-        />
-      )}
-
-      {!loading && filtered.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2.5 text-left font-medium">商品</th>
-                <th className="px-4 py-2.5 text-left font-medium">SKU</th>
-                <th className="px-4 py-2.5 text-left font-medium">仓库</th>
-                <th className="px-4 py-2.5 text-right font-medium">在手</th>
-                <th className="px-4 py-2.5 text-right font-medium">可用</th>
-                <th className="px-4 py-2.5 text-right font-medium">单位成本</th>
-                <th className="px-4 py-2.5 text-left font-medium">更新时间</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {filtered.map((s) => {
-                const p = products.get(s.product_id)
-                const onHand = Number(s.on_hand_qty ?? "0")
-                const lowStock = onHand <= 0
-                return (
-                  <tr
-                    key={`${s.product_id}-${s.warehouse_id}`}
-                    className="hover:bg-muted/30 transition-colors cursor-pointer"
-                    onClick={() => router.push(`/stock/${s.product_id}`)}
-                  >
-                    <td className="px-4 py-2.5">
-                      <Link
-                        href={`/stock/${s.product_id}`}
-                        className="font-medium hover:underline"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {p?.name ?? `商品 ${shortId(s.product_id)}`}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
-                      {p?.code ?? "—"}
-                    </td>
-                    <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
-                      {shortId(s.warehouse_id)}
-                    </td>
-                    <td
-                      className={`px-4 py-2.5 text-right font-mono ${lowStock ? "text-amber-600" : ""}`}
-                    >
-                      {formatDecimal(s.on_hand_qty)}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono">
-                      {formatDecimal(s.available_qty)}
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono">
-                      {formatCNY(s.unit_cost)}
-                    </td>
-                    <td className="px-4 py-2.5 text-muted-foreground">
-                      {s.updated_at ? new Date(s.updated_at).toLocaleString("zh-CN") : "—"}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+      <DataTable
+        columns={columns}
+        data={filtered}
+        loading={loading}
+        error={error}
+        getRowId={(s) => `${s.product_id}-${s.warehouse_id}`}
+        onRowClick={(s) => router.push(`/stock/${s.product_id}`)}
+        animateRows
+        skeletonRows={5}
+        empty={
+          snapshots.length === 0 ? (
+            <EmptyState
+              title="暂无库存记录"
+              description="完成一笔采购入库后这里会出现快照"
+              action={
+                <Link href="/purchases/new" className="text-sm text-primary hover:underline">
+                  录入采购单
+                </Link>
+              }
+            />
+          ) : (
+            <EmptyState title="没有匹配的库存" description="试试清空搜索或仓库筛选" />
+          )
+        }
+      />
+    </PageContainer>
   )
 }

@@ -2,70 +2,49 @@
 
 import Link from "next/link"
 import { useState } from "react"
+import type { ColumnDef } from "@tanstack/react-table"
 
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { Tabs } from "@/components/ui/tabs"
+import { DataTable } from "@/components/ui/data-table"
 import { EmptyState } from "@/components/ui/empty-state"
-import { ErrorBanner } from "@/components/ui/error-banner"
-import { TableSkeleton } from "@/components/ui/table-skeleton"
 import { listSaleBills, type SaleBillHead } from "@/lib/api/sale"
 import { listPurchaseBills, type BillHead } from "@/lib/api/purchase"
 import { formatCNY } from "@/lib/format"
+import { cn } from "@/lib/utils"
 
 /**
  * /payments — collections / payables 对账闭环.
  *
  * The existing GET /payments backend requires bill_id, so this page presents
  * the same data via the bill-level view: recent approved sales (应收) and
- * purchases (应付), each with paid / unpaid columns. Click into a bill to
- * record a new payment or see the full audit trail.
+ * purchases (应付). Click into a bill to record a new payment or audit trail.
  */
 export default function PaymentsPage() {
   const [tab, setTab] = useState<"sales" | "purchases">("sales")
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-6">
-      <header className="mb-4">
-        <h1 className="text-xl font-semibold">付款 / 对账</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          已审核的销售单（应收）和采购单（应付）。点击单据进入详情录入收付款。
-        </p>
-      </header>
+    <PageContainer width="default">
+      <PageHeader
+        title="付款 / 对账"
+        subtitle="已审核的销售单（应收）和采购单（应付）。点击单据进入详情录入收付款。"
+      />
 
-      <div className="mb-4 inline-flex rounded-lg border border-border p-0.5 text-sm">
-        <TabButton active={tab === "sales"} onClick={() => setTab("sales")}>
-          应收（销售）
-        </TabButton>
-        <TabButton active={tab === "purchases"} onClick={() => setTab("purchases")}>
-          应付（采购）
-        </TabButton>
-      </div>
+      <Tabs
+        variant="segment"
+        className="mb-4"
+        value={tab}
+        onValueChange={setTab}
+        items={[
+          { label: "应收（销售）", value: "sales" },
+          { label: "应付（采购）", value: "purchases" },
+        ]}
+      />
 
       {tab === "sales" ? <SalesView /> : <PurchasesView />}
-    </div>
-  )
-}
-
-function TabButton({
-  active,
-  onClick,
-  children,
-}: {
-  active: boolean
-  onClick: () => void
-  children: React.ReactNode
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-md px-3 py-1.5 text-xs transition-colors ${
-        active
-          ? "bg-primary text-primary-foreground"
-          : "text-muted-foreground hover:text-foreground"
-      }`}
-    >
-      {children}
-    </button>
+    </PageContainer>
   )
 }
 
@@ -92,60 +71,80 @@ function SalesView() {
       })
   }, [])
 
-  if (loading) return <TableSkeleton rows={8} />
-  if (error) return <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>
-  if (bills.length === 0) {
-    return <EmptyState title="暂无已审核销售单" description="销售单审核通过后会出现在这里。" />
-  }
+  const columns: ColumnDef<SaleBillHead>[] = [
+    {
+      id: "bill_no",
+      header: "单号",
+      cell: ({ row }) => <span className="font-mono text-xs">{row.original.bill_no}</span>,
+    },
+    {
+      id: "date",
+      header: "日期",
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground">{row.original.bill_date?.slice(0, 10) ?? "—"}</span>
+      ),
+    },
+    {
+      id: "total",
+      header: "金额",
+      meta: { align: "right" },
+      cell: ({ row }) => (
+        <span className="block text-right font-mono tabular-nums">
+          {formatCNY(Number(row.original.total_amount) || 0)}
+        </span>
+      ),
+    },
+    {
+      id: "paid",
+      header: "已收",
+      meta: { align: "right" },
+      cell: ({ row }) => (
+        <span className="block text-right font-mono tabular-nums text-success">
+          {formatCNY(Number(row.original.paid_amount) || 0)}
+        </span>
+      ),
+    },
+    {
+      id: "outstanding",
+      header: "未收",
+      meta: { align: "right" },
+      cell: ({ row }) => {
+        const outstanding = (Number(row.original.total_amount) || 0) - (Number(row.original.paid_amount) || 0)
+        return (
+          <span
+            className={cn(
+              "block text-right font-mono tabular-nums",
+              outstanding > 0 ? "text-warning" : "text-muted-foreground"
+            )}
+          >
+            {formatCNY(outstanding)}
+          </span>
+        )
+      },
+    },
+    {
+      id: "actions",
+      header: "操作",
+      meta: { align: "right" },
+      cell: ({ row }) => (
+        <Link href={`/sales/${row.original.id}`} className="text-xs text-primary hover:underline">
+          详情
+        </Link>
+      ),
+    },
+  ]
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full text-sm">
-        <thead className="bg-muted/50 text-muted-foreground">
-          <tr>
-            <th className="px-4 py-2.5 text-left font-medium">单号</th>
-            <th className="px-4 py-2.5 text-left font-medium">日期</th>
-            <th className="px-4 py-2.5 text-right font-medium">金额</th>
-            <th className="px-4 py-2.5 text-right font-medium">已收</th>
-            <th className="px-4 py-2.5 text-right font-medium">未收</th>
-            <th className="px-4 py-2.5 text-right font-medium">操作</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {bills.map((b) => {
-            const paid = Number(b.paid_amount) || 0
-            const total = Number(b.total_amount) || 0
-            const outstanding = total - paid
-            return (
-              <tr key={b.id} className="hover:bg-muted/30">
-                <td className="px-4 py-2.5 font-mono text-xs">{b.bill_no}</td>
-                <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                  {b.bill_date?.slice(0, 10) ?? "—"}
-                </td>
-                <td className="px-4 py-2.5 text-right font-mono tabular-nums">
-                  {formatCNY(total)}
-                </td>
-                <td className="px-4 py-2.5 text-right font-mono tabular-nums text-emerald-600">
-                  {formatCNY(paid)}
-                </td>
-                <td
-                  className={`px-4 py-2.5 text-right font-mono tabular-nums ${
-                    outstanding > 0 ? "text-amber-600" : "text-muted-foreground"
-                  }`}
-                >
-                  {formatCNY(outstanding)}
-                </td>
-                <td className="px-4 py-2.5 text-right">
-                  <Link href={`/sales/${b.id}`} className="text-xs text-primary hover:underline">
-                    详情
-                  </Link>
-                </td>
-              </tr>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={columns}
+      data={bills}
+      loading={loading}
+      error={error}
+      getRowId={(b) => b.id}
+      skeletonRows={8}
+      animateRows
+      empty={<EmptyState title="暂无已审核销售单" description="销售单审核通过后会出现在这里。" />}
+    />
   )
 }
 
@@ -172,45 +171,51 @@ function PurchasesView() {
       })
   }, [])
 
-  if (loading) return <TableSkeleton rows={8} />
-  if (error) return <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>
-  if (bills.length === 0) {
-    return <EmptyState title="暂无已审核采购单" description="采购单审核通过后会出现在这里。" />
-  }
+  const columns: ColumnDef<BillHead>[] = [
+    {
+      id: "bill_no",
+      header: "单号",
+      cell: ({ row }) => <span className="font-mono text-xs">{row.original.bill_no}</span>,
+    },
+    {
+      id: "date",
+      header: "日期",
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground">{row.original.bill_date?.slice(0, 10) ?? "—"}</span>
+      ),
+    },
+    {
+      id: "total",
+      header: "金额",
+      meta: { align: "right" },
+      cell: ({ row }) => (
+        <span className="block text-right font-mono tabular-nums">
+          {formatCNY(Number(row.original.total_amount) || 0)}
+        </span>
+      ),
+    },
+    {
+      id: "actions",
+      header: "操作",
+      meta: { align: "right" },
+      cell: ({ row }) => (
+        <Link href={`/purchases/${row.original.id}`} className="text-xs text-primary hover:underline">
+          详情
+        </Link>
+      ),
+    },
+  ]
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-border">
-      <table className="w-full text-sm">
-        <thead className="bg-muted/50 text-muted-foreground">
-          <tr>
-            <th className="px-4 py-2.5 text-left font-medium">单号</th>
-            <th className="px-4 py-2.5 text-left font-medium">日期</th>
-            <th className="px-4 py-2.5 text-right font-medium">金额</th>
-            <th className="px-4 py-2.5 text-right font-medium">操作</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-border">
-          {bills.map((b) => (
-            <tr key={b.id} className="hover:bg-muted/30">
-              <td className="px-4 py-2.5 font-mono text-xs">{b.bill_no}</td>
-              <td className="px-4 py-2.5 text-xs text-muted-foreground">
-                {b.bill_date?.slice(0, 10) ?? "—"}
-              </td>
-              <td className="px-4 py-2.5 text-right font-mono tabular-nums">
-                {formatCNY(Number(b.total_amount) || 0)}
-              </td>
-              <td className="px-4 py-2.5 text-right">
-                <Link
-                  href={`/purchases/${b.id}`}
-                  className="text-xs text-primary hover:underline"
-                >
-                  详情
-                </Link>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      columns={columns}
+      data={bills}
+      loading={loading}
+      error={error}
+      getRowId={(b) => b.id}
+      skeletonRows={8}
+      animateRows
+      empty={<EmptyState title="暂无已审核采购单" description="采购单审核通过后会出现在这里。" />}
+    />
   )
 }

@@ -1,17 +1,19 @@
 "use client"
 
 import { useCallback, useState } from "react"
+import type { ColumnDef } from "@tanstack/react-table"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useConfirm } from "@/hooks/useConfirm"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { DataTable } from "@/components/ui/data-table"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
-import {
-  type PAT,
-  type CreatedPAT,
-  createPAT,
-  listPATs,
-  revokePAT,
-} from "@/lib/api/pats"
+import { type PAT, type CreatedPAT, createPAT, listPATs, revokePAT } from "@/lib/api/pats"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
@@ -123,30 +125,90 @@ export default function ApiKeysPage() {
     }
   }
 
-  return (
-    <div className="p-6 max-w-4xl">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">API 密钥</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            Personal Access Token —— 给 tally-mcp、Claude Desktop、OpenHuman、CI 脚本等外部客户端使用
-          </p>
+  const columns: ColumnDef<PAT>[] = [
+    {
+      id: "name",
+      header: "名称",
+      cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    },
+    {
+      id: "prefix",
+      header: "前缀",
+      cell: ({ row }) => (
+        <span className="font-mono text-xs text-muted-foreground">tally_pat_{row.original.prefix}…</span>
+      ),
+    },
+    {
+      id: "scopes",
+      header: "权限",
+      cell: ({ row }) => (
+        <div className="flex flex-wrap gap-1">
+          {row.original.scopes.map((s) => (
+            <Badge key={s} tone="neutral">
+              {s}
+            </Badge>
+          ))}
         </div>
+      ),
+    },
+    {
+      id: "created",
+      header: "创建",
+      cell: ({ row }) => <span className="text-muted-foreground">{formatDateTime(row.original.created_at)}</span>,
+    },
+    {
+      id: "last_used",
+      header: "上次使用",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{formatDateTime(row.original.last_used_at)}</span>
+      ),
+    },
+    {
+      id: "expires",
+      header: "过期",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">
+          {row.original.expires_at ? formatDateTime(row.original.expires_at) : "无"}
+        </span>
+      ),
+    },
+    {
+      id: "actions",
+      header: "操作",
+      meta: { align: "right" },
+      cell: ({ row }) => (
         <button
-          onClick={() => {
-            setShowCreate(true)
-            setCreateError(null)
-            setNewToken(null)
-          }}
-          className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
+          type="button"
+          onClick={() => handleRevoke(row.original)}
+          className="text-xs text-destructive hover:underline"
         >
-          + 新建密钥
+          吊销
         </button>
-      </div>
+      ),
+    },
+  ]
+
+  return (
+    <PageContainer width="default">
+      <PageHeader
+        title="API 密钥"
+        subtitle="Personal Access Token —— 给 tally-mcp、Claude Desktop、OpenHuman、CI 脚本等外部客户端使用"
+        actions={
+          <Button
+            onClick={() => {
+              setShowCreate(true)
+              setCreateError(null)
+              setNewToken(null)
+            }}
+          >
+            + 新建密钥
+          </Button>
+        }
+      />
 
       {/* One-time plaintext token banner */}
       {newToken && (
-        <div className="mb-6 rounded-xl border border-amber-500/40 bg-amber-500/5 p-4">
+        <div className="mb-6 rounded-xl border border-warning/40 bg-warning/10 p-4">
           <div className="mb-2 flex items-center gap-2">
             <span aria-hidden="true">⚠️</span>
             <span className="font-medium">请立即复制并妥善保存</span>
@@ -155,41 +217,32 @@ export default function ApiKeysPage() {
             「{newToken.name}」已创建。此令牌仅显示一次，关闭后无法再次查看 —— 服务器只保存哈希值。
           </p>
           <div className="flex gap-2">
-            <input
+            <Input
               readOnly
               value={newToken.token}
               onFocus={(e) => e.currentTarget.select()}
-              className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 font-mono text-xs"
+              className="flex-1 font-mono text-xs"
             />
-            <button
-              onClick={copyToken}
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted transition-colors"
-            >
+            <Button variant="outline" size="sm" onClick={copyToken}>
               {copied ? "已复制" : "复制"}
-            </button>
-            <button
-              onClick={() => setNewToken(null)}
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted transition-colors"
-            >
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => setNewToken(null)}>
               我已保存
-            </button>
+            </Button>
           </div>
         </div>
       )}
 
       {/* Create form */}
       {showCreate && (
-        <form
-          onSubmit={handleCreate}
-          className="mb-6 rounded-xl border border-border bg-card p-4 space-y-3"
-        >
+        <form onSubmit={handleCreate} className="mb-6 space-y-3 rounded-xl border border-border bg-card p-4">
           <h2 className="text-sm font-medium">新建 Personal Access Token</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label htmlFor="pat-name" className="text-xs text-muted-foreground">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="pat-name">
                 名称 <span className="text-destructive">*</span>
-              </label>
-              <input
+              </Label>
+              <Input
                 id="pat-name"
                 type="text"
                 required
@@ -197,115 +250,55 @@ export default function ApiKeysPage() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="例如：tally-mcp-laptop"
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
               />
             </div>
-            <div className="space-y-1">
-              <label htmlFor="pat-expires" className="text-xs text-muted-foreground">
-                过期时间（可选）
-              </label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="pat-expires">过期时间（可选）</Label>
+              <Input
                 id="pat-expires"
                 type="datetime-local"
                 value={expiresAt}
                 onChange={(e) => setExpiresAt(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
               />
             </div>
           </div>
           {createError && <ErrorBanner>{createError}</ErrorBanner>}
           <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setShowCreate(false)}
-              disabled={creating}
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50"
-            >
+            <Button type="button" variant="outline" size="sm" disabled={creating} onClick={() => setShowCreate(false)}>
               取消
-            </button>
-            <button
-              type="submit"
-              disabled={creating}
-              className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-            >
+            </Button>
+            <Button type="submit" size="sm" disabled={creating}>
               {creating ? "创建中..." : "创建"}
-            </button>
+            </Button>
           </div>
         </form>
       )}
 
-      {loading && (
-        <div className="py-12 text-center text-muted-foreground">加载中...</div>
-      )}
-      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
-      {!loading && !error && items.length === 0 && (
-        <EmptyState
-          title="暂无 API 密钥"
-          description="为外部客户端创建第一把密钥 —— 例如本地运行 tally-mcp 接 Claude Desktop"
-          action={
-            <button
-              onClick={() => {
-                setShowCreate(true)
-                setNewToken(null)
-              }}
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted transition-colors"
-            >
-              新建第一把密钥
-            </button>
-          }
-        />
-      )}
-
-      {!loading && items.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2.5 text-left font-medium">名称</th>
-                <th className="px-4 py-2.5 text-left font-medium">前缀</th>
-                <th className="px-4 py-2.5 text-left font-medium">权限</th>
-                <th className="px-4 py-2.5 text-left font-medium">创建</th>
-                <th className="px-4 py-2.5 text-left font-medium">上次使用</th>
-                <th className="px-4 py-2.5 text-left font-medium">过期</th>
-                <th className="px-4 py-2.5 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {items.map((p) => (
-                <tr key={p.id} className="hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-2.5 font-medium">{p.name}</td>
-                  <td className="px-4 py-2.5 font-mono text-xs text-muted-foreground">
-                    tally_pat_{p.prefix}…
-                  </td>
-                  <td className="px-4 py-2.5">
-                    {p.scopes.map((s) => (
-                      <span
-                        key={s}
-                        className="mr-1 rounded-full bg-muted px-2 py-0.5 text-xs"
-                      >
-                        {s}
-                      </span>
-                    ))}
-                  </td>
-                  <td className="px-4 py-2.5 text-muted-foreground">{formatDateTime(p.created_at)}</td>
-                  <td className="px-4 py-2.5 text-muted-foreground">{formatDateTime(p.last_used_at)}</td>
-                  <td className="px-4 py-2.5 text-muted-foreground">
-                    {p.expires_at ? formatDateTime(p.expires_at) : "无"}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <button
-                      onClick={() => handleRevoke(p)}
-                      className="text-xs text-destructive hover:underline"
-                    >
-                      吊销
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+      <DataTable
+        columns={columns}
+        data={items}
+        loading={loading}
+        error={error}
+        getRowId={(p) => p.id}
+        animateRows
+        empty={
+          <EmptyState
+            title="暂无 API 密钥"
+            description="为外部客户端创建第一把密钥 —— 例如本地运行 tally-mcp 接 Claude Desktop"
+            action={
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setShowCreate(true)
+                  setNewToken(null)
+                }}
+              >
+                新建第一把密钥
+              </Button>
+            }
+          />
+        }
+      />
+    </PageContainer>
   )
 }

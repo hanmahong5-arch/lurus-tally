@@ -61,6 +61,8 @@ interface DataTableProps<T> {
   skeletonRows?: number
   /** Fade-and-rise the first paint of rows. Off by default to keep paging snappy. */
   animateRows?: boolean
+  /** Whole-row click (e.g. open a detail panel). Action cells should stopPropagation. */
+  onRowClick?: (row: T) => void
   className?: string
 }
 
@@ -79,6 +81,7 @@ export function DataTable<T>({
   empty,
   skeletonRows = 5,
   animateRows = false,
+  onRowClick,
   className,
 }: DataTableProps<T>) {
   const table = useReactTable({
@@ -126,8 +129,10 @@ export function DataTable<T>({
             return (
               <tr
                 key={row.id}
+                onClick={onRowClick ? () => onRowClick(row.original) : undefined}
                 className={cn(
                   "transition-colors hover:bg-muted/30",
+                  onRowClick && "cursor-pointer",
                   stagger && "animate-fade-in-up"
                 )}
                 style={

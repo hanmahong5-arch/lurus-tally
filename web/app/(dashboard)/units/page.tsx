@@ -2,12 +2,19 @@
 
 import { useCallback, useState } from "react"
 import { toast } from "sonner"
+import type { ColumnDef } from "@tanstack/react-table"
 
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useConfirm } from "@/hooks/useConfirm"
-import { EmptyState } from "@/components/ui/empty-state"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { DataTable } from "@/components/ui/data-table"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { ErrorBanner } from "@/components/ui/error-banner"
-import { TableSkeleton } from "@/components/ui/table-skeleton"
+import { EmptyState } from "@/components/ui/empty-state"
 import {
   createUnit,
   deleteUnit,
@@ -27,6 +34,9 @@ const UNIT_TYPE_LABEL: Record<UnitType, string> = {
 }
 
 const UNIT_TYPES: UnitType[] = ["count", "weight", "length", "volume", "area", "time"]
+
+const SELECT_CLASS =
+  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
 /**
  * /units — unit catalogue. Tenant-level unit definitions used by product
@@ -116,71 +126,99 @@ export default function UnitsPage() {
     }
   }
 
+  const columns: ColumnDef<UnitDef>[] = [
+    {
+      id: "code",
+      header: "代码",
+      cell: ({ row }) => <span className="font-mono text-xs">{row.original.code}</span>,
+    },
+    { id: "name", header: "名称", cell: ({ row }) => row.original.name },
+    {
+      id: "type",
+      header: "类型",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{UNIT_TYPE_LABEL[row.original.unit_type]}</span>
+      ),
+    },
+    {
+      id: "source",
+      header: "来源",
+      cell: ({ row }) =>
+        row.original.is_system ? (
+          <Badge tone="neutral">系统</Badge>
+        ) : (
+          <Badge tone="accent">自定义</Badge>
+        ),
+    },
+    {
+      id: "actions",
+      header: "操作",
+      meta: { align: "right" },
+      cell: ({ row }) =>
+        row.original.is_system ? (
+          <span className="text-xs text-muted-foreground">—</span>
+        ) : (
+          <button
+            type="button"
+            onClick={() => handleDelete(row.original)}
+            className="text-xs text-destructive hover:underline"
+          >
+            删除
+          </button>
+        ),
+    },
+  ]
+
   return (
-    <div className="mx-auto max-w-4xl px-6 py-6">
-      <header className="mb-4 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-semibold">单位</h1>
-          <p className="mt-0.5 text-sm text-muted-foreground">
-            商品和单据使用的计量单位 — 系统内置不可删，自定义可增删。
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => {
-            setShowCreate(true)
-            setCreateError(null)
-          }}
-          className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90"
-        >
-          + 新建单位
-        </button>
-      </header>
+    <PageContainer width="default">
+      <PageHeader
+        title="单位"
+        subtitle="商品和单据使用的计量单位 — 系统内置不可删，自定义可增删。"
+        actions={
+          <Button
+            onClick={() => {
+              setShowCreate(true)
+              setCreateError(null)
+            }}
+          >
+            + 新建单位
+          </Button>
+        }
+      />
 
       {showCreate && (
-        <form
-          onSubmit={handleCreate}
-          className="mb-4 space-y-3 rounded-xl border border-border bg-card p-4"
-        >
+        <form onSubmit={handleCreate} className="mb-4 space-y-3 rounded-xl border border-border bg-card p-4">
           <h2 className="text-sm font-medium">新建单位</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-            <div className="space-y-1">
-              <label htmlFor="unit-code" className="text-xs text-muted-foreground">
-                代码 *
-              </label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="unit-code">代码 *</Label>
+              <Input
                 id="unit-code"
                 required
                 maxLength={32}
                 value={form.code}
                 onChange={(e) => setForm({ ...form, code: e.target.value })}
                 placeholder="例如：carton"
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
               />
             </div>
-            <div className="space-y-1">
-              <label htmlFor="unit-name" className="text-xs text-muted-foreground">
-                名称 *
-              </label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="unit-name">名称 *</Label>
+              <Input
                 id="unit-name"
                 required
                 maxLength={64}
                 value={form.name}
                 onChange={(e) => setForm({ ...form, name: e.target.value })}
                 placeholder="例如：箱"
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
               />
             </div>
-            <div className="space-y-1">
-              <label htmlFor="unit-type" className="text-xs text-muted-foreground">
-                类型 *
-              </label>
+            <div className="space-y-1.5">
+              <Label htmlFor="unit-type">类型 *</Label>
               <select
                 id="unit-type"
                 value={form.unit_type}
                 onChange={(e) => setForm({ ...form, unit_type: e.target.value as UnitType })}
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
+                className={SELECT_CLASS}
               >
                 {UNIT_TYPES.map((t) => (
                   <option key={t} value={t}>
@@ -192,83 +230,31 @@ export default function UnitsPage() {
           </div>
           {createError && <ErrorBanner>{createError}</ErrorBanner>}
           <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setShowCreate(false)}
-              disabled={creating}
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted disabled:opacity-50"
-            >
+            <Button type="button" variant="outline" size="sm" disabled={creating} onClick={() => setShowCreate(false)}>
               取消
-            </button>
-            <button
-              type="submit"
-              disabled={creating}
-              className="rounded-md bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-            >
+            </Button>
+            <Button type="submit" size="sm" disabled={creating}>
               {creating ? "创建中..." : "创建"}
-            </button>
+            </Button>
           </div>
         </form>
       )}
 
-      {loading && <TableSkeleton rows={6} />}
-      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
-      {!loading && !error && items.length === 0 && (
-        <EmptyState
-          title="暂无单位"
-          description="新建一个自定义单位，或重新启用系统内置单位（pcs / kg 等）。"
-        />
-      )}
-      {!loading && items.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2.5 text-left font-medium">代码</th>
-                <th className="px-4 py-2.5 text-left font-medium">名称</th>
-                <th className="px-4 py-2.5 text-left font-medium">类型</th>
-                <th className="px-4 py-2.5 text-left font-medium">来源</th>
-                <th className="px-4 py-2.5 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {items.map((u) => (
-                <tr key={u.id} className="hover:bg-muted/30">
-                  <td className="px-4 py-2.5 font-mono text-xs">{u.code}</td>
-                  <td className="px-4 py-2.5">{u.name}</td>
-                  <td className="px-4 py-2.5 text-muted-foreground">
-                    {UNIT_TYPE_LABEL[u.unit_type]}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    {u.is_system ? (
-                      <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-                        系统
-                      </span>
-                    ) : (
-                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] uppercase tracking-wide text-primary">
-                        自定义
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    {u.is_system ? (
-                      <span className="text-xs text-muted-foreground">—</span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleDelete(u)}
-                        className="text-xs text-destructive hover:underline"
-                      >
-                        删除
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+      <DataTable
+        columns={columns}
+        data={items}
+        loading={loading}
+        error={error}
+        getRowId={(u) => u.id}
+        skeletonRows={6}
+        animateRows
+        empty={
+          <EmptyState
+            title="暂无单位"
+            description="新建一个自定义单位，或重新启用系统内置单位（pcs / kg 等）。"
+          />
+        }
+      />
+    </PageContainer>
   )
 }

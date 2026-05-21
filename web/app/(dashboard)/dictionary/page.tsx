@@ -2,6 +2,7 @@
 
 import { useCallback, useRef, useState } from "react"
 import { toast } from "sonner"
+import type { ColumnDef } from "@tanstack/react-table"
 import {
   listNurseryDict,
   deleteNurseryDict,
@@ -12,7 +13,14 @@ import {
 import NurseryDictForm from "@/components/horticulture/NurseryDictForm"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useConfirm } from "@/hooks/useConfirm"
-import { ErrorBanner } from "@/components/ui/error-banner"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { DataTable } from "@/components/ui/data-table"
+import { Pagination } from "@/components/ui/pagination"
+import { Sheet } from "@/components/ui/sheet"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/empty-state"
 
 const TYPE_LABELS: Record<NurseryType, string> = {
@@ -26,18 +34,12 @@ const TYPE_LABELS: Record<NurseryType, string> = {
   fruit: "果树",
 }
 
-const ALL_TYPES: NurseryType[] = [
-  "tree",
-  "shrub",
-  "herb",
-  "vine",
-  "bamboo",
-  "aquatic",
-  "bulb",
-  "fruit",
-]
+const ALL_TYPES: NurseryType[] = ["tree", "shrub", "herb", "vine", "bamboo", "aquatic", "bulb", "fruit"]
 
 const PAGE_SIZE = 20
+
+const SELECT_CLASS =
+  "h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
 /**
  * DictionaryPage renders the nursery species dictionary list with search,
@@ -52,7 +54,6 @@ export default function DictionaryPage() {
   const [typeFilter, setTypeFilter] = useState<NurseryType | "">("")
   const [offset, setOffset] = useState(0)
 
-  // Drawer state: null = closed, 'create' = new form, item = detail/edit
   const [drawerItem, setDrawerItem] = useState<NurseryDictItem | null>(null)
   const [drawerMode, setDrawerMode] = useState<"view" | "edit" | "create">("view")
   const [showDrawer, setShowDrawer] = useState(false)
@@ -165,39 +166,96 @@ export default function DictionaryPage() {
     }
   }
 
-  const totalPages = Math.ceil(total / PAGE_SIZE)
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
 
-  return (
-    <div className="p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-semibold">苗木字典</h1>
-          <p className="text-sm text-muted-foreground mt-0.5" data-testid="total-count">
-            共 {total} 种苗木
-          </p>
+  const columns: ColumnDef<NurseryDictItem>[] = [
+    {
+      id: "name",
+      header: "名称",
+      cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    },
+    {
+      id: "latin",
+      header: "拉丁名",
+      cell: ({ row }) => (
+        <span className="text-xs italic text-muted-foreground">{row.original.latin_name || "—"}</span>
+      ),
+    },
+    {
+      id: "family",
+      header: "科",
+      cell: ({ row }) => <span className="text-muted-foreground">{row.original.family || "—"}</span>,
+    },
+    {
+      id: "type",
+      header: "类型",
+      cell: ({ row }) => <Badge tone="neutral">{TYPE_LABELS[row.original.type] ?? row.original.type}</Badge>,
+    },
+    {
+      id: "evergreen",
+      header: "落叶/常绿",
+      cell: ({ row }) => (
+        <Badge tone={row.original.is_evergreen ? "ok" : "warn"}>
+          {row.original.is_evergreen ? "常绿" : "落叶"}
+        </Badge>
+      ),
+    },
+    {
+      id: "unit",
+      header: "默认单位",
+      cell: ({ row }) => (
+        <span className="text-xs text-muted-foreground">{row.original.default_unit_id ?? "—"}</span>
+      ),
+    },
+    {
+      id: "actions",
+      header: "操作",
+      meta: { align: "right" },
+      cell: ({ row }) => (
+        <div className="flex justify-end gap-3" onClick={(e) => e.stopPropagation()}>
+          <button
+            type="button"
+            onClick={() => {
+              setDrawerItem(row.original)
+              setDrawerMode("edit")
+              setShowDrawer(true)
+            }}
+            className="text-xs text-primary hover:underline"
+          >
+            编辑
+          </button>
+          <button
+            type="button"
+            onClick={() => handleDelete(row.original)}
+            className="text-xs text-destructive hover:underline"
+          >
+            删除
+          </button>
         </div>
-        <button
-          onClick={openCreate}
-          className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          + 新增苗木
-        </button>
-      </div>
+      ),
+    },
+  ]
 
-      {/* Search + filter bar */}
+  return (
+    <PageContainer width="wide">
+      <PageHeader
+        title="苗木字典"
+        subtitle={<span data-testid="total-count">共 {total} 种苗木</span>}
+        actions={<Button onClick={openCreate}>+ 新增苗木</Button>}
+      />
+
       <div className="mb-4 flex gap-2">
-        <input
+        <Input
           aria-label="搜索苗木"
-          className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+          className="flex-1"
           placeholder="搜索苗木名称..."
           value={q}
           onChange={(e) => handleSearchChange(e.target.value)}
         />
         <select
           aria-label="按类型筛选"
-          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none"
+          className={SELECT_CLASS}
           value={typeFilter}
           onChange={(e) => handleTypeChange(e.target.value as NurseryType | "")}
         >
@@ -210,241 +268,116 @@ export default function DictionaryPage() {
         </select>
       </div>
 
-      {/* States */}
-      {loading && (
-        <div className="py-12 text-center text-muted-foreground">加载中...</div>
-      )}
-      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
-      {!loading && !error && items.length === 0 && (
-        <EmptyState
-          title="暂无苗木"
-          description="开始建立你的苗木字典，方便后续采购和销售选品"
-          action={
-            <button
-              onClick={openCreate}
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted transition-colors"
-            >
-              新增第一个苗木
-            </button>
-          }
-        />
-      )}
-
-      {/* Table */}
-      {!loading && items.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2.5 text-left font-medium">名称</th>
-                <th className="px-4 py-2.5 text-left font-medium">拉丁名</th>
-                <th className="px-4 py-2.5 text-left font-medium">科</th>
-                <th className="px-4 py-2.5 text-left font-medium">类型</th>
-                <th className="px-4 py-2.5 text-left font-medium">落叶/常绿</th>
-                <th className="px-4 py-2.5 text-left font-medium">默认单位</th>
-                <th className="px-4 py-2.5 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {items.map((item) => (
-                <tr
-                  key={item.id}
-                  className="hover:bg-muted/30 transition-colors cursor-pointer"
-                  onClick={() => openDetail(item)}
-                >
-                  <td className="px-4 py-2.5 font-medium">{item.name}</td>
-                  <td className="px-4 py-2.5 text-muted-foreground italic text-xs">
-                    {item.latin_name || "—"}
-                  </td>
-                  <td className="px-4 py-2.5 text-muted-foreground">
-                    {item.family || "—"}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                      {TYPE_LABELS[item.type] ?? item.type}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${
-                        item.is_evergreen
-                          ? "bg-green-500/10 text-green-600"
-                          : "bg-amber-500/10 text-amber-600"
-                      }`}
-                    >
-                      {item.is_evergreen ? "常绿" : "落叶"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-muted-foreground text-xs">
-                    {item.default_unit_id ?? "—"}
-                  </td>
-                  <td
-                    className="px-4 py-2.5 text-right"
-                    onClick={(e) => e.stopPropagation()}
-                  >
-                    <div className="flex justify-end gap-2">
-                      <button
-                        onClick={() => {
-                          setDrawerItem(item)
-                          setDrawerMode("edit")
-                          setShowDrawer(true)
-                        }}
-                        className="text-xs text-primary hover:underline"
-                      >
-                        编辑
-                      </button>
-                      <button
-                        onClick={() => handleDelete(item)}
-                        className="text-xs text-destructive hover:underline"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-
-      {/* Pagination */}
-      {total > PAGE_SIZE && (
-        <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            第 {currentPage} / {totalPages} 页，共 {total} 条
-          </span>
-          <div className="flex gap-2">
-            <button
-              disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
-            >
-              上一页
-            </button>
-            <button
-              disabled={offset + PAGE_SIZE >= total}
-              onClick={() => setOffset(offset + PAGE_SIZE)}
-              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Detail / Create / Edit drawer */}
-      {showDrawer && (
-        <div className="fixed inset-0 z-50 flex">
-          {/* Backdrop */}
-          <div
-            className="flex-1 bg-black/30"
-            onClick={closeDrawer}
+      <DataTable
+        columns={columns}
+        data={items}
+        loading={loading}
+        error={error}
+        getRowId={(item) => item.id}
+        onRowClick={openDetail}
+        animateRows
+        empty={
+          <EmptyState
+            title="暂无苗木"
+            description="开始建立你的苗木字典，方便后续采购和销售选品"
+            action={<Button variant="outline" onClick={openCreate}>新增第一个苗木</Button>}
           />
-          {/* Sheet panel */}
-          <div
-            className="w-[480px] bg-background border-l border-border overflow-y-auto p-6 flex flex-col gap-4"
-            data-testid="nursery-detail-drawer"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">
-                {drawerMode === "create"
-                  ? "新增苗木"
-                  : drawerMode === "edit"
-                  ? "编辑苗木"
-                  : drawerItem?.name}
-              </h2>
-              <button
-                onClick={closeDrawer}
-                className="text-muted-foreground hover:text-foreground"
-              >
-                ✕
-              </button>
-            </div>
+        }
+      />
 
-            {drawerMode === "view" && drawerItem ? (
-              <div className="flex flex-col gap-3 text-sm">
-                <div>
-                  <span className="text-muted-foreground">拉丁名：</span>
-                  <span data-testid="latin-name">{drawerItem.latin_name || "—"}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">科：</span>
-                  <span>{drawerItem.family || "—"}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">属：</span>
-                  <span>{drawerItem.genus || "—"}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">类型：</span>
-                  <span>{TYPE_LABELS[drawerItem.type] ?? drawerItem.type}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">常绿：</span>
-                  <span>{drawerItem.is_evergreen ? "是" : "否"}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">气候带：</span>
-                  <span>{drawerItem.climate_zones.join("、") || "—"}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">最佳移植期：</span>
-                  <span>
-                    {drawerItem.best_season[0]
-                      ? `${drawerItem.best_season[0]}月—${drawerItem.best_season[1]}月`
-                      : "—"}
-                  </span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">规格模板：</span>
-                  <div className="mt-1 rounded-md bg-muted p-2 text-xs font-mono">
-                    {Object.keys(drawerItem.spec_template).length > 0
-                      ? Object.keys(drawerItem.spec_template).map((k) => (
-                          <div key={k}>{k}</div>
-                        ))
-                      : "—"}
-                  </div>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">备注：</span>
-                  <span>{drawerItem.remark || "—"}</span>
-                </div>
-                <div className="flex gap-2 pt-2">
-                  <button
-                    onClick={() => setDrawerMode("edit")}
-                    className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90"
-                  >
-                    编辑
-                  </button>
-                  <button
-                    onClick={() => {
-                      void handleDelete(drawerItem)
-                      closeDrawer()
-                    }}
-                    className="rounded-lg border border-destructive px-4 py-1.5 text-sm text-destructive hover:bg-destructive/10"
-                  >
-                    软删除
-                  </button>
-                  <button
-                    onClick={() => void handleRestoreById(drawerItem.id)}
-                    className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted"
-                  >
-                    恢复
-                  </button>
-                </div>
+      <Pagination
+        page={currentPage}
+        totalPages={totalPages}
+        onPageChange={(p) => setOffset((p - 1) * PAGE_SIZE)}
+      />
+
+      <Sheet
+        open={showDrawer}
+        onOpenChange={(o) => {
+          if (!o) closeDrawer()
+        }}
+        title={
+          drawerMode === "create" ? "新增苗木" : drawerMode === "edit" ? "编辑苗木" : drawerItem?.name
+        }
+        footer={
+          drawerMode === "view" && drawerItem ? (
+            <>
+              <Button variant="outline" size="sm" onClick={() => void handleRestoreById(drawerItem.id)}>
+                恢复
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  void handleDelete(drawerItem)
+                  closeDrawer()
+                }}
+              >
+                软删除
+              </Button>
+              <Button size="sm" onClick={() => setDrawerMode("edit")}>
+                编辑
+              </Button>
+            </>
+          ) : undefined
+        }
+      >
+        {drawerMode === "view" && drawerItem ? (
+          <div className="flex flex-col gap-3 text-sm" data-testid="nursery-detail-drawer">
+            <div>
+              <span className="text-muted-foreground">拉丁名：</span>
+              <span data-testid="latin-name">{drawerItem.latin_name || "—"}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">科：</span>
+              <span>{drawerItem.family || "—"}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">属：</span>
+              <span>{drawerItem.genus || "—"}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">类型：</span>
+              <span>{TYPE_LABELS[drawerItem.type] ?? drawerItem.type}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">常绿：</span>
+              <span>{drawerItem.is_evergreen ? "是" : "否"}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">气候带：</span>
+              <span>{drawerItem.climate_zones.join("、") || "—"}</span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">最佳移植期：</span>
+              <span>
+                {drawerItem.best_season[0]
+                  ? `${drawerItem.best_season[0]}月—${drawerItem.best_season[1]}月`
+                  : "—"}
+              </span>
+            </div>
+            <div>
+              <span className="text-muted-foreground">规格模板：</span>
+              <div className="mt-1 rounded-md bg-muted p-2 font-mono text-xs">
+                {Object.keys(drawerItem.spec_template).length > 0
+                  ? Object.keys(drawerItem.spec_template).map((k) => <div key={k}>{k}</div>)
+                  : "—"}
               </div>
-            ) : (
-              <NurseryDictForm
-                mode={drawerMode === "create" ? "create" : "edit"}
-                initialData={drawerItem ?? undefined}
-                onSuccess={handleFormSuccess}
-                onCancel={closeDrawer}
-              />
-            )}
+            </div>
+            <div>
+              <span className="text-muted-foreground">备注：</span>
+              <span>{drawerItem.remark || "—"}</span>
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        ) : (
+          <NurseryDictForm
+            mode={drawerMode === "create" ? "create" : "edit"}
+            initialData={drawerItem ?? undefined}
+            onSuccess={handleFormSuccess}
+            onCancel={closeDrawer}
+          />
+        )}
+      </Sheet>
+    </PageContainer>
   )
 }
