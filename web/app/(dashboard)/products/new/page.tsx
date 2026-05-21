@@ -6,6 +6,8 @@ import { createProduct, type CreateProductInput } from "@/lib/api/products"
 import { useDraft } from "@/hooks/useDraft"
 import { DraftBadge } from "@/components/draft/DraftBadge"
 import { DraftRestoreToast } from "@/components/draft/DraftRestoreToast"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
 
 /**
  * New product page.
@@ -19,10 +21,7 @@ const PRODUCT_INITIAL: Partial<CreateProductInput> = {}
 export default function NewProductPage() {
   const router = useRouter()
 
-  const draft = useDraft<Partial<CreateProductInput>>(
-    "draft:product:new",
-    PRODUCT_INITIAL
-  )
+  const draft = useDraft<Partial<CreateProductInput>>("draft:product:new", PRODUCT_INITIAL)
 
   async function handleSubmit(input: CreateProductInput) {
     await createProduct(input, devTenantId)
@@ -32,21 +31,18 @@ export default function NewProductPage() {
   }
 
   return (
-    <div className="p-6 max-w-2xl">
-      <div className="mb-6">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold">新建商品</h1>
-          <DraftBadge status={draft.status} />
-        </div>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          填写基本信息并保存
-        </p>
-      </div>
-
-      <DraftRestoreToast
-        restoredAt={draft.restoredAt}
-        onDiscard={draft.discardDraft}
+    <PageContainer width="narrow">
+      <PageHeader
+        title={
+          <span className="flex items-center gap-3">
+            新建商品
+            <DraftBadge status={draft.status} />
+          </span>
+        }
+        subtitle="填写基本信息并保存"
       />
+
+      <DraftRestoreToast restoredAt={draft.restoredAt} onDiscard={draft.discardDraft} />
 
       <ProductForm
         initial={draft.value}
@@ -55,6 +51,6 @@ export default function NewProductPage() {
         tenantId={devTenantId}
         onChange={draft.setValue}
       />
-    </div>
+    </PageContainer>
   )
 }

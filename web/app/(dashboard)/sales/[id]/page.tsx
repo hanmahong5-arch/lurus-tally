@@ -11,28 +11,26 @@ import {
   type SaleBillDetail,
   type SaleBillHead,
   type Payment,
-  type BillStatus,
 } from "@/lib/api/sale"
+import { BILL_STATUS_TONE, BILL_STATUS_LABEL } from "@/lib/status"
 import { SaleLineEditor, type SaleLineItem } from "@/components/sale-line-editor"
 import { PaymentForm } from "@/components/payment-form"
 import { useConfirm } from "@/hooks/useConfirm"
-import { formatCNY } from "@/lib/format"
+import { formatCNY, formatDate, formatDateTime } from "@/lib/format"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { Badge } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { Skeleton } from "@/components/ui/skeleton"
+import { cn } from "@/lib/utils"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
-const BILL_STATUS_LABEL: Record<BillStatus, string> = {
-  0: "草稿",
-  2: "已审核",
-  9: "已取消",
-}
-
-// draft=gray, approved=blue, cancelled=red
-const STATUS_BADGE: Record<BillStatus, string> = {
-  0: "bg-muted text-muted-foreground",
-  2: "bg-blue-500/10 text-blue-600",
-  9: "bg-red-500/10 text-red-500",
-}
+const SELECT_CLASS =
+  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
 export default function SaleDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -79,10 +77,7 @@ export default function SaleDetailPage() {
     try {
       await approveSaleBill(
         id,
-        {
-          paid_amount: paidAmount || undefined,
-          payment_method: payMethod,
-        },
+        { paid_amount: paidAmount || undefined, payment_method: payMethod },
         devTenantId
       )
       setShowApproveForm(false)
@@ -112,14 +107,8 @@ export default function SaleDetailPage() {
   function handlePaymentRecorded(payment: Payment) {
     if (!detail) return
     const updatedPayments = [...detail.payments, payment]
-    const paidSum = updatedPayments.reduce(
-      (acc, p) => acc + parseFloat(p.amount),
-      0
-    )
-    const receivable = Math.max(
-      0,
-      parseFloat(detail.head.total_amount) - paidSum
-    )
+    const paidSum = updatedPayments.reduce((acc, p) => acc + parseFloat(p.amount), 0)
+    const receivable = Math.max(0, parseFloat(detail.head.total_amount) - paidSum)
     const updatedHead: SaleBillHead = {
       ...detail.head,
       paid_amount: String(paidSum.toFixed(4)),
@@ -130,18 +119,24 @@ export default function SaleDetailPage() {
 
   if (loading) {
     return (
-      <div className="p-6 text-center text-muted-foreground">加载中...</div>
+      <PageContainer width="wide">
+        <Skeleton className="mb-2 h-7 w-48" />
+        <Skeleton className="mb-6 h-4 w-64" />
+        <Skeleton className="h-40" />
+      </PageContainer>
     )
   }
 
   if (error || !detail) {
     return (
-      <div className="p-6 space-y-4">
-        <ErrorBanner hint="请刷新页面重试">{error ?? "销售单不存在"}</ErrorBanner>
-        <Link href="/sales" className="text-sm text-primary hover:underline">
-          返回列表
-        </Link>
-      </div>
+      <PageContainer width="wide">
+        <div className="space-y-4">
+          <ErrorBanner hint="请刷新页面重试">{error ?? "销售单不存在"}</ErrorBanner>
+          <Link href="/sales" className="text-sm text-primary hover:underline">
+            返回列表
+          </Link>
+        </div>
+      </PageContainer>
     )
   }
 
@@ -160,173 +155,144 @@ export default function SaleDetailPage() {
   const receivable = parseFloat(head.receivable_amount) || 0
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
-      {/* Header row */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold font-mono">{head.bill_no}</h1>
-            <span
-              className={`rounded-full px-2 py-0.5 text-xs ${STATUS_BADGE[head.status]}`}
-            >
-              {BILL_STATUS_LABEL[head.status]}
-            </span>
-            {isApproved && (
-              <span className="inline-flex items-center rounded border border-blue-600/30 bg-blue-500/10 px-2 py-0.5 text-xs font-medium text-blue-700">
-                已批准，无法编辑
-              </span>
-            )}
-          </div>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            单据日期：{new Date(head.bill_date).toLocaleDateString("zh-CN")}
-            {head.approved_at &&
-              `　审核时间：${new Date(head.approved_at).toLocaleString("zh-CN")}`}
-          </p>
-        </div>
-
-        <div className="flex gap-2 flex-shrink-0">
-          {isDraft && (
+    <PageContainer width="wide">
+      <PageHeader
+        title={
+          <span className="flex flex-wrap items-center gap-3">
+            <span className="font-mono">{head.bill_no}</span>
+            <Badge tone={BILL_STATUS_TONE[head.status]}>{BILL_STATUS_LABEL[head.status]}</Badge>
+            {isApproved && <Badge tone="ok">已批准，无法编辑</Badge>}
+          </span>
+        }
+        subtitle={
+          <>
+            单据日期：{formatDate(head.bill_date)}
+            {head.approved_at && `　审核时间：${formatDateTime(head.approved_at)}`}
+          </>
+        }
+        actions={
+          isDraft ? (
             <>
-              <button
-                disabled={acting}
-                onClick={handleCancel}
-                className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50"
-              >
+              <Button variant="outline" disabled={acting} onClick={handleCancel}>
                 取消单据
-              </button>
-              <button
-                disabled={acting}
-                onClick={() => setShowApproveForm(!showApproveForm)}
-                className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-              >
+              </Button>
+              <Button disabled={acting} onClick={() => setShowApproveForm(!showApproveForm)}>
                 审核出库
-              </button>
+              </Button>
             </>
-          )}
-        </div>
-      </div>
+          ) : undefined
+        }
+      />
 
-      {actionError && <ErrorBanner>{actionError}</ErrorBanner>}
+      <div className="space-y-6">
+        {actionError && <ErrorBanner>{actionError}</ErrorBanner>}
 
-      {/* Approve form — expanded on click */}
-      {isDraft && showApproveForm && (
-        <div className="rounded-xl border border-border bg-card p-4 space-y-3">
-          <h2 className="text-sm font-medium">审核并收款（可选）</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div className="space-y-1">
-              <label htmlFor="approve-pay-method" className="text-xs text-muted-foreground">支付方式</label>
-              <select
-                id="approve-pay-method"
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
-                value={payMethod}
-                onChange={(e) => setPayMethod(e.target.value)}
-              >
-                <option value="cash">现金</option>
-                <option value="wechat">微信</option>
-                <option value="alipay">支付宝</option>
-                <option value="card">银行卡</option>
-                <option value="transfer">转账</option>
-              </select>
+        {/* Approve form — expanded on click */}
+        {isDraft && showApproveForm && (
+          <div className="space-y-3 rounded-xl border border-border bg-card p-4">
+            <h2 className="text-sm font-medium">审核并收款（可选）</h2>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="approve-pay-method">支付方式</Label>
+                <select
+                  id="approve-pay-method"
+                  className={SELECT_CLASS}
+                  value={payMethod}
+                  onChange={(e) => setPayMethod(e.target.value)}
+                >
+                  <option value="cash">现金</option>
+                  <option value="wechat">微信</option>
+                  <option value="alipay">支付宝</option>
+                  <option value="card">银行卡</option>
+                  <option value="transfer">转账</option>
+                </select>
+              </div>
+              <div className="space-y-1.5">
+                <Label htmlFor="approve-paid-amount">
+                  实收金额（应收 {formatCNY(parseFloat(head.total_amount))}，留空=0）
+                </Label>
+                <Input
+                  id="approve-paid-amount"
+                  type="number"
+                  value={paidAmount}
+                  placeholder="0.00"
+                  min="0"
+                  step="0.01"
+                  onChange={(e) => setPaidAmount(e.target.value)}
+                />
+              </div>
             </div>
-            <div className="space-y-1">
-              <label htmlFor="approve-paid-amount" className="text-xs text-muted-foreground">
-                实收金额（应收 {formatCNY(parseFloat(head.total_amount))}，留空=0）
-              </label>
-              <input
-                id="approve-paid-amount"
-                type="number"
-                className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
-                value={paidAmount}
-                placeholder="0.00"
-                min="0"
-                step="0.01"
-                onChange={(e) => setPaidAmount(e.target.value)}
-              />
+            <div className="flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setShowApproveForm(false)}>
+                取消
+              </Button>
+              <Button size="sm" disabled={acting} onClick={handleApprove}>
+                {acting ? "处理中..." : "确认审核"}
+              </Button>
             </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={() => setShowApproveForm(false)}
-              className="rounded-lg border border-border px-3 py-1.5 text-sm hover:bg-muted transition-colors"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              disabled={acting}
-              onClick={handleApprove}
-              className="rounded-lg bg-primary px-3 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-            >
-              {acting ? "处理中..." : "确认审核"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Meta info */}
-      <div className="rounded-xl border border-border bg-card p-4 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
-        <div>
-          <p className="text-muted-foreground">单据类型</p>
-          <p className="font-medium">{head.sub_type}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground">总金额</p>
-          <p className="font-mono font-medium">{formatCNY(parseFloat(head.total_amount))}</p>
-        </div>
-        <div>
-          <p className="text-muted-foreground">已收</p>
-          <p className="font-mono font-medium text-green-600">
-            {formatCNY(parseFloat(head.paid_amount))}
-          </p>
-        </div>
-        <div>
-          <p className="text-muted-foreground">应收</p>
-          <p
-            className={`font-mono font-medium ${
-              receivable > 0 ? "text-amber-600" : "text-green-600"
-            }`}
-          >
-            {formatCNY(receivable)}
-          </p>
-        </div>
-        {head.remark && (
-          <div className="col-span-2 sm:col-span-4">
-            <p className="text-muted-foreground">备注</p>
-            <p>{head.remark}</p>
           </div>
         )}
-      </div>
 
-      {/* Line items (read-only) */}
-      <div className="rounded-xl border border-border bg-card p-4">
-        <h2 className="text-sm font-medium text-muted-foreground mb-3">商品明细</h2>
-        <SaleLineEditor items={lineItems} onChange={() => {}} readOnly />
-      </div>
-
-      {/* Payments section (approved bills only) */}
-      {isApproved && (
-        <div className="rounded-xl border border-border bg-card p-4">
-          <h2 className="text-sm font-medium text-muted-foreground mb-4">收款记录</h2>
-          <PaymentForm
-            billId={id}
-            receivableAmount={head.receivable_amount}
-            payments={payments}
-            tenantId={devTenantId}
-            onSuccess={handlePaymentRecorded}
-          />
+        {/* Meta info */}
+        <div className="grid grid-cols-2 gap-4 rounded-xl border border-border bg-card p-4 text-sm sm:grid-cols-4">
+          <div>
+            <p className="text-muted-foreground">单据类型</p>
+            <p className="font-medium">{head.sub_type}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">总金额</p>
+            <p className="font-mono font-medium tabular-nums">{formatCNY(parseFloat(head.total_amount))}</p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">已收</p>
+            <p className="font-mono font-medium tabular-nums text-success">
+              {formatCNY(parseFloat(head.paid_amount))}
+            </p>
+          </div>
+          <div>
+            <p className="text-muted-foreground">应收</p>
+            <p className={cn("font-mono font-medium tabular-nums", receivable > 0 ? "text-warning" : "text-success")}>
+              {formatCNY(receivable)}
+            </p>
+          </div>
+          {head.remark && (
+            <div className="col-span-2 sm:col-span-4">
+              <p className="text-muted-foreground">备注</p>
+              <p>{head.remark}</p>
+            </div>
+          )}
         </div>
-      )}
 
-      <div className="text-center">
-        <button
-          type="button"
-          onClick={() => router.push("/sales")}
-          className="text-sm text-muted-foreground hover:text-foreground transition-colors"
-        >
-          返回销售单列表
-        </button>
+        {/* Line items (read-only) */}
+        <div className="rounded-xl border border-border bg-card p-4">
+          <h2 className="mb-3 text-sm font-medium text-muted-foreground">商品明细</h2>
+          <SaleLineEditor items={lineItems} onChange={() => {}} readOnly />
+        </div>
+
+        {/* Payments section (approved bills only) */}
+        {isApproved && (
+          <div className="rounded-xl border border-border bg-card p-4">
+            <h2 className="mb-4 text-sm font-medium text-muted-foreground">收款记录</h2>
+            <PaymentForm
+              billId={id}
+              receivableAmount={head.receivable_amount}
+              payments={payments}
+              tenantId={devTenantId}
+              onSuccess={handlePaymentRecorded}
+            />
+          </div>
+        )}
+
+        <div className="text-center">
+          <button
+            type="button"
+            onClick={() => router.push("/sales")}
+            className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+          >
+            返回销售单列表
+          </button>
+        </div>
       </div>
-    </div>
+    </PageContainer>
   )
 }

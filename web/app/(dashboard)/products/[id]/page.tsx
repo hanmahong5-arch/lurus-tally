@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react"
 import { useRouter, useParams } from "next/navigation"
+import Link from "next/link"
 import {
   getProduct,
   updateProduct,
@@ -10,8 +11,10 @@ import {
 } from "@/lib/api/products"
 import { ProductForm } from "@/components/product-form"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
 import { ErrorBanner } from "@/components/ui/error-banner"
-import Link from "next/link"
+import { Skeleton } from "@/components/ui/skeleton"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
@@ -53,35 +56,42 @@ export default function ProductDetailPage() {
 
   if (loading) {
     return (
-      <div className="p-6 text-muted-foreground text-sm">加载中...</div>
+      <PageContainer width="narrow">
+        <PageHeader title="编辑商品" />
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <Skeleton className="h-9" />
+            <Skeleton className="h-9" />
+          </div>
+          <Skeleton className="h-9" />
+          <Skeleton className="h-24" />
+        </div>
+      </PageContainer>
     )
   }
 
   if (error || !product) {
     return (
-      <div className="p-6 space-y-4">
-        <ErrorBanner hint="请刷新页面重试">{error ?? "商品不存在"}</ErrorBanner>
-        <Link href="/products" className="text-sm text-primary hover:underline">
-          返回商品列表
-        </Link>
-      </div>
+      <PageContainer width="narrow">
+        <div className="space-y-4">
+          <ErrorBanner hint="请刷新页面重试">{error ?? "商品不存在"}</ErrorBanner>
+          <Link href="/products" className="text-sm text-primary hover:underline">
+            返回商品列表
+          </Link>
+        </div>
+      </PageContainer>
     )
   }
 
   return (
-    <div className="p-6 max-w-2xl">
-      <div className="mb-6">
-        <h1 className="text-xl font-semibold">编辑商品</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          {product.code} · {product.name}
-        </p>
-      </div>
+    <PageContainer width="narrow">
+      <PageHeader title="编辑商品" subtitle={`${product.code} · ${product.name}`} />
       <ProductForm
         initial={product}
         onSubmit={handleSubmit}
         onCancel={() => router.back()}
         tenantId={devTenantId}
       />
-    </div>
+    </PageContainer>
   )
 }

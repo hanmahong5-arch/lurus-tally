@@ -10,6 +10,11 @@ import type {
   Product,
 } from "@/lib/api/products"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { Input } from "@/components/ui/input"
+import { Textarea } from "@/components/ui/textarea"
+import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
+import { Button } from "@/components/ui/button"
 
 type ProfileType = "cross_border" | "retail" | "hybrid" | "horticulture" | null
 
@@ -36,17 +41,20 @@ const STRATEGY_LABELS: Record<MeasurementStrategy, string> = {
   serial: "序列号管理",
 }
 
+// Shared control style for child selectors that take a className (UnitSelector,
+// HsCodeInput, native <select>) — mirrors the Input primitive.
+const CONTROL_CLASS =
+  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
+
 /**
  * ProductForm is a profile-aware form for creating and editing products.
  *
  * Profile-aware fields:
- *   cross_border: hs_code (attributes.hs_code), en_name (attributes.en_name),
- *                 origin (attributes.origin)
- *   retail:       is_bulk (attributes.is_bulk), allow_credit (attributes.allow_credit)
+ *   cross_border: hs_code, en_name, origin (under attributes)
+ *   retail:       is_bulk, allow_credit (under attributes)
  *
- * Profile is read from useProfile() which is a stub returning 'cross_border' until
- * Story 2.1 implements real session integration.
- * Story 2.1 TODO: wrap this form inside ProfileProvider with the real profileType.
+ * Field state stays on useState because the page-level draft autosave hooks into
+ * `onChange` on every keystroke; that integration is preserved verbatim.
  */
 export function ProductForm({
   initial,
@@ -75,23 +83,13 @@ export function ProductForm({
 
   // Cross-border profile attributes
   const initialAttrs = (initial?.attributes ?? {}) as Record<string, unknown>
-  const [hsCode, setHsCode] = useState<string>(
-    String(initialAttrs.hs_code ?? "")
-  )
-  const [enName, setEnName] = useState<string>(
-    String(initialAttrs.en_name ?? "")
-  )
-  const [origin, setOrigin] = useState<string>(
-    String(initialAttrs.origin ?? "")
-  )
+  const [hsCode, setHsCode] = useState<string>(String(initialAttrs.hs_code ?? ""))
+  const [enName, setEnName] = useState<string>(String(initialAttrs.en_name ?? ""))
+  const [origin, setOrigin] = useState<string>(String(initialAttrs.origin ?? ""))
 
   // Retail profile attributes
-  const [isBulk, setIsBulk] = useState<boolean>(
-    Boolean(initialAttrs.is_bulk ?? false)
-  )
-  const [allowCredit, setAllowCredit] = useState<boolean>(
-    Boolean(initialAttrs.allow_credit ?? false)
-  )
+  const [isBulk, setIsBulk] = useState<boolean>(Boolean(initialAttrs.is_bulk ?? false))
+  const [allowCredit, setAllowCredit] = useState<boolean>(Boolean(initialAttrs.allow_credit ?? false))
 
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -158,93 +156,75 @@ export function ProductForm({
     }
   }
 
-  const inputCls =
-    "w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring disabled:opacity-50"
-  const labelCls = "block text-sm font-medium text-foreground mb-1"
+  const busy = disabled || submitting
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {error && <ErrorBanner>{error}</ErrorBanner>}
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className={labelCls}>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="pf-code">
             商品编码 <span className="text-destructive">*</span>
-          </label>
-          <input
-            className={inputCls}
+          </Label>
+          <Input
+            id="pf-code"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             required
-            disabled={disabled || submitting}
+            disabled={busy}
             placeholder="如 SKU-001"
           />
         </div>
-        <div>
-          <label className={labelCls}>
+        <div className="space-y-1.5">
+          <Label htmlFor="pf-name">
             商品名称 <span className="text-destructive">*</span>
-          </label>
-          <input
-            className={inputCls}
+          </Label>
+          <Input
+            id="pf-name"
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
-            disabled={disabled || submitting}
+            disabled={busy}
             placeholder="商品全称"
           />
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4">
-        <div>
-          <label className={labelCls}>品牌</label>
-          <input
-            className={inputCls}
-            value={brand}
-            onChange={(e) => setBrand(e.target.value)}
-            disabled={disabled || submitting}
-          />
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+        <div className="space-y-1.5">
+          <Label htmlFor="pf-brand">品牌</Label>
+          <Input id="pf-brand" value={brand} onChange={(e) => setBrand(e.target.value)} disabled={busy} />
         </div>
-        <div>
-          <label className={labelCls}>型号</label>
-          <input
-            className={inputCls}
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            disabled={disabled || submitting}
-          />
+        <div className="space-y-1.5">
+          <Label htmlFor="pf-model">型号</Label>
+          <Input id="pf-model" value={model} onChange={(e) => setModel(e.target.value)} disabled={busy} />
         </div>
-        <div>
-          <label className={labelCls}>规格</label>
-          <input
-            className={inputCls}
-            value={spec}
-            onChange={(e) => setSpec(e.target.value)}
-            disabled={disabled || submitting}
-          />
+        <div className="space-y-1.5">
+          <Label htmlFor="pf-spec">规格</Label>
+          <Input id="pf-spec" value={spec} onChange={(e) => setSpec(e.target.value)} disabled={busy} />
         </div>
       </div>
 
-      <div>
-        <label className={labelCls}>制造商</label>
-        <input
-          className={inputCls}
+      <div className="space-y-1.5">
+        <Label htmlFor="pf-manufacturer">制造商</Label>
+        <Input
+          id="pf-manufacturer"
           value={manufacturer}
           onChange={(e) => setManufacturer(e.target.value)}
-          disabled={disabled || submitting}
+          disabled={busy}
         />
       </div>
 
-      <div className="grid grid-cols-2 gap-4">
-        <div>
-          <label className={labelCls}>计量策略</label>
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label htmlFor="pf-strategy">计量策略</Label>
           <select
-            className={inputCls}
+            id="pf-strategy"
+            className={CONTROL_CLASS}
             value={measurementStrategy}
-            onChange={(e) =>
-              setMeasurementStrategy(e.target.value as MeasurementStrategy)
-            }
-            disabled={disabled || submitting}
+            onChange={(e) => setMeasurementStrategy(e.target.value as MeasurementStrategy)}
+            disabled={busy}
           >
             {Object.entries(STRATEGY_LABELS).map(([k, v]) => (
               <option key={k} value={k}>
@@ -253,51 +233,46 @@ export function ProductForm({
             ))}
           </select>
         </div>
-        <div>
-          <label className={labelCls}>默认单位</label>
+        <div className="space-y-1.5">
+          <Label>默认单位</Label>
           <UnitSelector
             value={defaultUnitId}
             onChange={setDefaultUnitId}
             tenantId={tenantId}
-            disabled={disabled || submitting}
-            className={inputCls}
+            disabled={busy}
+            className={CONTROL_CLASS}
           />
         </div>
       </div>
 
       {/* cross_border profile fields */}
       <ProfileGate profiles={["cross_border"]}>
-        <div className="rounded-lg border border-border p-4 space-y-3">
+        <div className="space-y-3 rounded-lg border border-border p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             跨境贸易信息
           </p>
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className={labelCls}>HS Code</label>
-              <HsCodeInput
-                className={inputCls}
-                value={hsCode}
-                onChange={setHsCode}
-                disabled={disabled || submitting}
-              />
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label>HS Code</Label>
+              <HsCodeInput className={CONTROL_CLASS} value={hsCode} onChange={setHsCode} disabled={busy} />
             </div>
-            <div>
-              <label className={labelCls}>英文名称</label>
-              <input
-                className={inputCls}
+            <div className="space-y-1.5">
+              <Label htmlFor="pf-enname">英文名称</Label>
+              <Input
+                id="pf-enname"
                 value={enName}
                 onChange={(e) => setEnName(e.target.value)}
-                disabled={disabled || submitting}
+                disabled={busy}
                 placeholder="English name"
               />
             </div>
-            <div>
-              <label className={labelCls}>原产地</label>
-              <input
-                className={inputCls}
+            <div className="space-y-1.5">
+              <Label htmlFor="pf-origin">原产地</Label>
+              <Input
+                id="pf-origin"
                 value={origin}
                 onChange={(e) => setOrigin(e.target.value)}
-                disabled={disabled || submitting}
+                disabled={busy}
                 placeholder="如 China"
               />
             </div>
@@ -307,28 +282,24 @@ export function ProductForm({
 
       {/* retail profile fields */}
       <ProfileGate profiles={["retail"]}>
-        <div className="rounded-lg border border-border p-4 space-y-3">
+        <div className="space-y-3 rounded-lg border border-border p-4">
           <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
             零售设置
           </p>
-          <div className="flex gap-6">
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
+          <div className="flex flex-wrap gap-6">
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <Checkbox
                 checked={isBulk}
-                onChange={(e) => setIsBulk(e.target.checked)}
-                disabled={disabled || submitting}
-                className="rounded"
+                onCheckedChange={(c) => setIsBulk(c === true)}
+                disabled={busy}
               />
               散装/称重商品
             </label>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input
-                type="checkbox"
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
+              <Checkbox
                 checked={allowCredit}
-                onChange={(e) => setAllowCredit(e.target.checked)}
-                disabled={disabled || submitting}
-                className="rounded"
+                onCheckedChange={(c) => setAllowCredit(c === true)}
+                disabled={busy}
               />
               允许赊账
             </label>
@@ -336,34 +307,26 @@ export function ProductForm({
         </div>
       </ProfileGate>
 
-      <div>
-        <label className={labelCls}>备注</label>
-        <textarea
-          className={inputCls + " min-h-[80px] resize-y"}
+      <div className="space-y-1.5">
+        <Label htmlFor="pf-remark">备注</Label>
+        <Textarea
+          id="pf-remark"
+          className="min-h-[80px] resize-y"
           value={remark}
           onChange={(e) => setRemark(e.target.value)}
-          disabled={disabled || submitting}
+          disabled={busy}
         />
       </div>
 
       <div className="flex justify-end gap-3 pt-2">
         {onCancel && (
-          <button
-            type="button"
-            onClick={onCancel}
-            disabled={submitting}
-            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50"
-          >
+          <Button type="button" variant="outline" onClick={onCancel} disabled={submitting}>
             取消
-          </button>
+          </Button>
         )}
-        <button
-          type="submit"
-          disabled={disabled || submitting}
-          className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-        >
+        <Button type="submit" disabled={busy}>
           {submitting ? "保存中..." : "保存"}
-        </button>
+        </Button>
       </div>
     </form>
   )
