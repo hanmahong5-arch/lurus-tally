@@ -3,12 +3,17 @@
 import { useCallback, useState } from "react"
 import Link from "next/link"
 import { toast } from "sonner"
+import type { ColumnDef } from "@tanstack/react-table"
 import { listProducts, deleteProduct, restoreProduct, type Product } from "@/lib/api/products"
 import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
-import { ErrorBanner } from "@/components/ui/error-banner"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { DataTable } from "@/components/ui/data-table"
+import { Badge } from "@/components/ui/badge"
+import { Button, buttonVariants } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/empty-state"
-import { TableSkeleton } from "@/components/ui/table-skeleton"
 
 /**
  * Products list page — GET /api/v1/products
@@ -17,6 +22,15 @@ import { TableSkeleton } from "@/components/ui/table-skeleton"
  * Replace with tenantId from the NextAuth session.
  */
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
+
+const STRATEGY_LABELS: Record<string, string> = {
+  individual: "标准件",
+  weight: "按重量",
+  length: "按长度",
+  volume: "按体积",
+  batch: "批次",
+  serial: "序列号",
+}
 
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([])
@@ -70,36 +84,82 @@ export default function ProductsPage() {
     }
   }
 
-  const STRATEGY_LABELS: Record<string, string> = {
-    individual: "标准件",
-    weight: "按重量",
-    length: "按长度",
-    volume: "按体积",
-    batch: "批次",
-    serial: "序列号",
-  }
+  const columns: ColumnDef<Product>[] = [
+    {
+      id: "code",
+      header: "编码",
+      cell: ({ row }) => <span className="font-mono text-xs">{row.original.code}</span>,
+    },
+    {
+      id: "name",
+      header: "名称",
+      cell: ({ row }) => <span className="font-medium">{row.original.name}</span>,
+    },
+    {
+      id: "brand",
+      header: "品牌",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{row.original.brand || "—"}</span>
+      ),
+    },
+    {
+      id: "strategy",
+      header: "计量策略",
+      cell: ({ row }) => (
+        <Badge tone="neutral">
+          {STRATEGY_LABELS[row.original.measurement_strategy] ?? row.original.measurement_strategy}
+        </Badge>
+      ),
+    },
+    {
+      id: "status",
+      header: "状态",
+      cell: ({ row }) => (
+        <Badge tone={row.original.enabled ? "ok" : "neutral"}>
+          {row.original.enabled ? "启用" : "停用"}
+        </Badge>
+      ),
+    },
+    {
+      id: "actions",
+      header: "操作",
+      meta: { align: "right" },
+      cell: ({ row }) => (
+        <div className="flex justify-end gap-2">
+          <Link
+            href={`/products/${row.original.id}`}
+            className="text-xs text-primary hover:underline"
+          >
+            编辑
+          </Link>
+          <button
+            type="button"
+            onClick={() => handleDelete(row.original)}
+            className="text-xs text-destructive hover:underline"
+          >
+            删除
+          </button>
+        </div>
+      ),
+    },
+  ]
 
   return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-semibold">商品管理</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            共 {total} 条商品
-          </p>
-        </div>
-        <Link
-          href="/products/new"
-          className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          + 新建商品
-        </Link>
-      </div>
+    <PageContainer width="wide">
+      <PageHeader
+        title="商品管理"
+        subtitle={`共 ${total} 条商品`}
+        actions={
+          <Link href="/products/new" className={buttonVariants()}>
+            + 新建商品
+          </Link>
+        }
+      />
 
       <div className="mb-4 flex gap-2">
-        <input
+        <Input
           aria-label="搜索商品"
-          className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+          className="flex-1"
           placeholder="搜索商品名称、编码、助记码..."
           value={q}
           onChange={(e) => setQ(e.target.value)}
@@ -107,88 +167,31 @@ export default function ProductsPage() {
             if (e.key === "Enter") load(q || undefined)
           }}
         />
-        <button
-          onClick={() => load(q || undefined)}
-          className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
-        >
+        <Button variant="outline" onClick={() => load(q || undefined)}>
           搜索
-        </button>
+        </Button>
       </div>
 
-      {loading && <TableSkeleton rows={5} cols={6} />}
-      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
-      {!loading && !error && products.length === 0 && (
-        <EmptyState
-          title="暂无商品"
-          description="创建第一个商品以开始管理库存"
-          action={
-            <Link href="/products/new" className="text-sm text-primary hover:underline">
-              立即新建
-            </Link>
-          }
-        />
-      )}
-
-      {!loading && products.length > 0 && (
-        <div className="overflow-x-auto rounded-xl border border-border">
-          <table className="w-full text-sm">
-            <thead className="bg-muted/50 text-muted-foreground">
-              <tr>
-                <th className="px-4 py-2.5 text-left font-medium">编码</th>
-                <th className="px-4 py-2.5 text-left font-medium">名称</th>
-                <th className="px-4 py-2.5 text-left font-medium">品牌</th>
-                <th className="px-4 py-2.5 text-left font-medium">计量策略</th>
-                <th className="px-4 py-2.5 text-left font-medium">状态</th>
-                <th className="px-4 py-2.5 text-right font-medium">操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border">
-              {products.map((p) => (
-                <tr key={p.id} className="hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-2.5 font-mono text-xs">{p.code}</td>
-                  <td className="px-4 py-2.5 font-medium">{p.name}</td>
-                  <td className="px-4 py-2.5 text-muted-foreground">
-                    {p.brand || "—"}
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs">
-                      {STRATEGY_LABELS[p.measurement_strategy] ??
-                        p.measurement_strategy}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-xs ${
-                        p.enabled
-                          ? "bg-green-500/10 text-green-500"
-                          : "bg-muted text-muted-foreground"
-                      }`}
-                    >
-                      {p.enabled ? "启用" : "停用"}
-                    </span>
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    <div className="flex justify-end gap-2">
-                      <Link
-                        href={`/products/${p.id}`}
-                        className="text-xs text-primary hover:underline"
-                      >
-                        编辑
-                      </Link>
-                      <button
-                        onClick={() => handleDelete(p)}
-                        className="text-xs text-destructive hover:underline"
-                      >
-                        删除
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+      <DataTable
+        columns={columns}
+        data={products}
+        loading={loading}
+        error={error}
+        getRowId={(p) => p.id}
+        animateRows
+        skeletonRows={5}
+        empty={
+          <EmptyState
+            title="暂无商品"
+            description="创建第一个商品以开始管理库存"
+            action={
+              <Link href="/products/new" className="text-sm text-primary hover:underline">
+                立即新建
+              </Link>
+            }
+          />
+        }
+      />
+    </PageContainer>
   )
 }

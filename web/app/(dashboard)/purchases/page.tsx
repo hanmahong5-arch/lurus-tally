@@ -4,6 +4,7 @@ import { useCallback, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
+import type { ColumnDef } from "@tanstack/react-table"
 import {
   listPurchaseBills,
   cancelPurchaseBill,
@@ -12,26 +13,27 @@ import {
   type BillStatus,
   BILL_STATUS_LABEL,
 } from "@/lib/api/purchase"
+import { BILL_STATUS_TONE } from "@/lib/status"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
-import { ErrorBanner } from "@/components/ui/error-banner"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { DataTable, currencyCell, statusCell } from "@/components/ui/data-table"
+import { Tabs, type TabItem } from "@/components/ui/tabs"
+import { Pagination } from "@/components/ui/pagination"
+import { buttonVariants } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
-import { TableSkeleton } from "@/components/ui/table-skeleton"
-import { formatCNY } from "@/lib/format"
+import { formatDate } from "@/lib/format"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
-const STATUS_TABS: { label: string; value: BillStatus | undefined }[] = [
+const PAGE_SIZE = 20
+
+const STATUS_TABS: TabItem<BillStatus | undefined>[] = [
   { label: "全部", value: undefined },
   { label: "草稿", value: 0 },
   { label: "已审核", value: 2 },
   { label: "已取消", value: 9 },
 ]
-
-const STATUS_BADGE: Record<BillStatus, string> = {
-  0: "bg-muted text-muted-foreground",
-  2: "bg-green-500/10 text-green-600",
-  9: "bg-red-500/10 text-red-500",
-}
 
 export default function PurchasesPage() {
   const router = useRouter()
@@ -51,7 +53,7 @@ export default function PurchasesPage() {
     ) => {
       setLoading(true)
       setError(null)
-      listPurchaseBills({ page: p, size: 20, status: s, tenantId: devTenantId, signal, retry: 2 })
+      listPurchaseBills({ page: p, size: PAGE_SIZE, status: s, tenantId: devTenantId, signal, retry: 2 })
         .then((res) => {
           if (isCancelled?.()) return
           setBills(res.items ?? [])
@@ -77,6 +79,11 @@ export default function PurchasesPage() {
     setStatus(s)
     setPage(1)
     load(1, s)
+  }
+
+  function handlePageChange(p: number) {
+    setPage(p)
+    load(p, status)
   }
 
   async function handleCancel(bill: BillHead) {
@@ -106,147 +113,119 @@ export default function PurchasesPage() {
     }
   }
 
-  const totalPages = Math.max(1, Math.ceil(total / 20))
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
+  const exportDisabled = bills.length === 0 && !loading
 
-  return (
-    <div className="p-6">
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-semibold">采购单管理</h1>
-          <p className="text-sm text-muted-foreground mt-0.5">共 {total} 条采购单</p>
-        </div>
-        <div className="flex items-center gap-2">
-          {bills.length === 0 && !loading ? (
-            <span
-              title="暂无可导出数据"
-              className="rounded-lg border border-border px-4 py-1.5 text-sm opacity-40 cursor-not-allowed select-none"
-              aria-disabled="true"
+  const columns: ColumnDef<BillHead>[] = [
+    {
+      id: "bill_no",
+      header: "单据号",
+      cell: ({ row }) => <span className="font-mono text-xs">{row.original.bill_no}</span>,
+    },
+    {
+      id: "status",
+      header: "状态",
+      cell: ({ row }) =>
+        statusCell(BILL_STATUS_LABEL[row.original.status], BILL_STATUS_TONE[row.original.status]),
+    },
+    {
+      id: "total_amount",
+      header: "合计金额",
+      meta: { align: "right" },
+      cell: ({ row }) => currencyCell(row.original.total_amount),
+    },
+    {
+      id: "bill_date",
+      header: "单据日期",
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{formatDate(row.original.bill_date)}</span>
+      ),
+    },
+    {
+      id: "actions",
+      header: "操作",
+      meta: { align: "right" },
+      cell: ({ row }) => (
+        <div className="flex justify-end gap-3">
+          {row.original.status === 0 && (
+            <button
+              type="button"
+              onClick={() => handleCancel(row.original)}
+              className="text-xs text-destructive hover:underline"
             >
-              导出 CSV
-            </span>
-          ) : (
-            <a
-              href="/api/v1/exports/bills.csv"
-              download
-              className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors"
-            >
-              导出 CSV
-            </a>
+              取消
+            </button>
           )}
           <Link
-            href="/purchases/new"
-            className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
+            href={`/purchases/${row.original.id}`}
+            className="text-xs text-primary hover:underline"
           >
-            + 新建采购单
+            查看
           </Link>
         </div>
-      </div>
+      ),
+    },
+  ]
 
-      {/* Status tabs */}
-      <div className="flex gap-1 mb-4 border-b border-border">
-        {STATUS_TABS.map((tab) => (
-          <button
-            key={tab.label}
-            onClick={() => handleTabChange(tab.value)}
-            className={`px-4 py-2 text-sm transition-colors border-b-2 -mb-px ${
-              status === tab.value
-                ? "border-primary text-primary font-medium"
-                : "border-transparent text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {loading && <TableSkeleton rows={5} cols={5} />}
-      {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
-      {!loading && !error && bills.length === 0 && (
-        <EmptyState
-          title="暂无采购单"
-          description="创建第一笔采购单以开始入库"
-          action={
-            <Link href="/purchases/new" className="text-sm text-primary hover:underline">
-              立即新建
-            </Link>
-          }
-        />
-      )}
-
-      {!loading && bills.length > 0 && (
-        <>
-          <div className="overflow-x-auto rounded-xl border border-border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/50 text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-2.5 text-left font-medium">单据号</th>
-                  <th className="px-4 py-2.5 text-left font-medium">状态</th>
-                  <th className="px-4 py-2.5 text-right font-medium">合计金额</th>
-                  <th className="px-4 py-2.5 text-left font-medium">单据日期</th>
-                  <th className="px-4 py-2.5 text-right font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border">
-                {bills.map((b) => (
-                  <tr key={b.id} className="hover:bg-muted/30 transition-colors">
-                    <td className="px-4 py-2.5 font-mono text-xs">{b.bill_no}</td>
-                    <td className="px-4 py-2.5">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs ${STATUS_BADGE[b.status]}`}
-                      >
-                        {BILL_STATUS_LABEL[b.status]}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right font-mono">{formatCNY(b.total_amount)}</td>
-                    <td className="px-4 py-2.5 text-muted-foreground">
-                      {new Date(b.bill_date).toLocaleDateString("zh-CN")}
-                    </td>
-                    <td className="px-4 py-2.5 text-right flex items-center justify-end gap-2">
-                      {b.status === 0 && (
-                        <button
-                          onClick={() => handleCancel(b)}
-                          className="text-xs text-red-500 hover:underline"
-                        >
-                          取消
-                        </button>
-                      )}
-                      <Link
-                        href={`/purchases/${b.id}`}
-                        className="text-xs text-primary hover:underline"
-                      >
-                        查看
-                      </Link>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex justify-center gap-2 mt-4">
-              <button
-                disabled={page <= 1}
-                onClick={() => { setPage(page - 1); load(page - 1, status) }}
-                className="text-sm px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-50"
+  return (
+    <PageContainer width="wide">
+      <PageHeader
+        title="采购单管理"
+        subtitle={`共 ${total} 条采购单`}
+        actions={
+          <>
+            {exportDisabled ? (
+              <span
+                title="暂无可导出数据"
+                aria-disabled="true"
+                className={buttonVariants({ variant: "outline", className: "pointer-events-none opacity-40" })}
               >
-                上一页
-              </button>
-              <span className="text-sm py-1 text-muted-foreground">
-                {page} / {totalPages}
+                导出 CSV
               </span>
-              <button
-                disabled={page >= totalPages}
-                onClick={() => { setPage(page + 1); load(page + 1, status) }}
-                className="text-sm px-3 py-1 rounded border border-border hover:bg-muted disabled:opacity-50"
+            ) : (
+              <a
+                href="/api/v1/exports/bills.csv"
+                download
+                className={buttonVariants({ variant: "outline" })}
               >
-                下一页
-              </button>
-            </div>
-          )}
-        </>
-      )}
-    </div>
+                导出 CSV
+              </a>
+            )}
+            <Link href="/purchases/new" className={buttonVariants()}>
+              + 新建采购单
+            </Link>
+          </>
+        }
+      />
+
+      <Tabs
+        items={STATUS_TABS}
+        value={status}
+        onValueChange={handleTabChange}
+        className="mb-4"
+      />
+
+      <DataTable
+        columns={columns}
+        data={bills}
+        loading={loading}
+        error={error}
+        getRowId={(b) => b.id}
+        animateRows
+        empty={
+          <EmptyState
+            title="暂无采购单"
+            description="创建第一笔采购单以开始入库"
+            action={
+              <Link href="/purchases/new" className="text-sm text-primary hover:underline">
+                立即新建
+              </Link>
+            }
+          />
+        }
+      />
+
+      <Pagination page={page} totalPages={totalPages} onPageChange={handlePageChange} />
+    </PageContainer>
   )
 }
