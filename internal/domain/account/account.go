@@ -2,9 +2,9 @@
 //
 // Three companion records are exposed:
 //   - Session     — one row per browser login; lets the user see and revoke
-//                   active devices
+//     active devices
 //   - AuditEntry  — append-only flow of business-significant events the
-//                   tenant should be able to inspect ("活动日志" tab)
+//     tenant should be able to inspect ("活动日志" tab)
 //   - Profile     — per-user editable display_name / phone / avatar
 //
 // The types are intentionally simple value structs; the persistence and use
@@ -36,7 +36,7 @@ type Session struct {
 // IsActive reports whether the session is still usable at the given moment.
 func (s *Session) IsActive() bool { return s.RevokedAt == nil }
 
-// AuditEntry is one row in the per-tenant audit_log. Action is a dotted
+// AuditEntry is one row in the per-tenant account_audit_log. Action is a dotted
 // string like "pat.created" or "bill.approved". Payload is opaque JSON.
 type AuditEntry struct {
 	ID         uuid.UUID

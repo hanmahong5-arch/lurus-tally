@@ -46,7 +46,7 @@ type SessionRepo interface {
 	Touch(ctx context.Context, tenantID uuid.UUID, userID, userAgent string) error
 }
 
-// AuditRepo persists audit_log rows.
+// AuditRepo persists account_audit_log rows.
 type AuditRepo interface {
 	Append(ctx context.Context, e *domain.AuditEntry) error
 	List(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]*domain.AuditEntry, int, error)

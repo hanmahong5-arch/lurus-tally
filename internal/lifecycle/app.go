@@ -178,7 +178,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	l.Info("notification: enabled", slog.String("mode", notifyMode))
 	_ = notifyClient // capability ready; business events wired in subsequent stories
 
-	// Wire account-center (Phase 3): user_session + audit_log + user_profile.
+	// Wire account-center (Phase 3): user_session + account_audit_log + user_profile.
 	// All three share a single repo pool against the shared *sql.DB.
 	acctSessionRepo := repoacct.NewSessionRepo(db)
 	acctAuditRepo := repoacct.NewAuditRepo(db)
@@ -532,13 +532,13 @@ func NewApp(cfg *config.Config) (*App, error) {
 	l.Info("outbox worker started", slog.String("poll_interval", "30s"))
 
 	// Audit subscriber (Phase 3) — best-effort consumer that mirrors business
-	// PSI_EVENTS into tally.audit_log. Skipped when NATS is in noop mode
+	// PSI_EVENTS into tally.account_audit_log. Skipped when NATS is in noop mode
 	// (dev) or when the connection can't be opened.
 	var auditSub *adapternats.AuditSubscriber
 	if cfg.NATSURL != "" {
 		nc, ncErr := nats.Connect(cfg.NATSURL)
 		if ncErr != nil {
-			l.Warn("audit subscriber: NATS connect failed, audit_log will not be populated",
+			l.Warn("audit subscriber: NATS connect failed, account_audit_log will not be populated",
 				slog.String("error", ncErr.Error()))
 		} else {
 			sub, subErr := adapternats.NewAuditSubscriber(nc, acctAppendAudit, l)

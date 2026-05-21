@@ -1,5 +1,5 @@
 // Package account implements the account-center repositories (sessions,
-// audit_log, user_profile) using PostgreSQL.
+// account_audit_log, user_profile) using PostgreSQL.
 //
 // All queries enforce tenant_id = $1 in WHERE clauses as defence in depth on
 // top of the RLS policies declared in migration 000036.
@@ -145,7 +145,7 @@ func nullableIP(ip net.IP) any {
 
 // ----- Audit repository -----------------------------------------------------
 
-// AuditRepo persists tally.audit_log.
+// AuditRepo persists tally.account_audit_log.
 type AuditRepo struct{ db DB }
 
 // NewAuditRepo wires the repo to db.
@@ -157,7 +157,7 @@ var _ appacct.AuditRepo = (*AuditRepo)(nil)
 // Append inserts one audit row.
 func (r *AuditRepo) Append(ctx context.Context, e *domain.AuditEntry) error {
 	const q = `
-		INSERT INTO tally.audit_log
+		INSERT INTO tally.account_audit_log
 			(id, tenant_id, actor_id, action, target_kind, target_id, payload, created_at)
 		VALUES
 			($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`
@@ -178,7 +178,7 @@ func (r *AuditRepo) Append(ctx context.Context, e *domain.AuditEntry) error {
 func (r *AuditRepo) List(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]*domain.AuditEntry, int, error) {
 	var total int
 	if err := r.db.QueryRowContext(ctx,
-		`SELECT count(*) FROM tally.audit_log WHERE tenant_id = $1`, tenantID,
+		`SELECT count(*) FROM tally.account_audit_log WHERE tenant_id = $1`, tenantID,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("account repo: audit count: %w", err)
 	}
@@ -190,7 +190,7 @@ func (r *AuditRepo) List(ctx context.Context, tenantID uuid.UUID, limit, offset 
 		SELECT id, tenant_id, actor_id, action,
 		       COALESCE(target_kind, ''), COALESCE(target_id, ''),
 		       payload::text, created_at
-		FROM tally.audit_log
+		FROM tally.account_audit_log
 		WHERE tenant_id = $1
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3`

@@ -21,7 +21,7 @@ type AuditAppender interface {
 }
 
 // AuditSubscriber consumes business events from PSI_EVENTS and writes a row
-// per event into tally.audit_log. Subscribes to bill.* and alert.* — read-
+// per event into tally.account_audit_log. Subscribes to bill.* and alert.* — read-
 // only / draft events are intentionally NOT captured (audit ≠ activity log).
 //
 // Resilience: a connection drop is logged and the subscriber retries forever
@@ -60,8 +60,8 @@ func (s *AuditSubscriber) Start(ctx context.Context) error {
 		return nil
 	}
 	consumer, err := s.js.CreateOrUpdateConsumer(ctx, defaultStreamName, jetstream.ConsumerConfig{
-		Durable:       "tally-audit",
-		AckPolicy:     jetstream.AckExplicitPolicy,
+		Durable:   "tally-audit",
+		AckPolicy: jetstream.AckExplicitPolicy,
 		FilterSubjects: []string{
 			"PSI_EVENTS.bill.>",
 			"PSI_EVENTS.alert.>",
@@ -97,7 +97,7 @@ func (s *AuditSubscriber) Stop() {
 	}
 }
 
-// dispatch maps one event to one audit_log row.
+// dispatch maps one event to one account_audit_log row.
 func (s *AuditSubscriber) dispatch(msg jetstream.Msg) {
 	var env Event
 	if err := json.Unmarshal(msg.Data(), &env); err != nil {
@@ -131,7 +131,7 @@ func (s *AuditSubscriber) dispatch(msg jetstream.Msg) {
 		Action:     env.EventType,
 		TargetKind: targetKind,
 		TargetID:   targetID,
-		Payload:    json.RawMessage(env.Payload),
+		Payload:    env.Payload,
 	}); err != nil {
 		// Retryable — let JetStream redeliver. After MaxDeliver the message
 		// goes to the dead-letter ceiling and stops eating ack budget.
