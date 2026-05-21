@@ -1,7 +1,7 @@
 "use client"
 
-import { Dialog } from "@base-ui/react/dialog"
-import { cn } from "@/lib/utils"
+import { Button } from "@/components/ui/button"
+import { Modal } from "@/components/ui/modal"
 
 export interface ConfirmDialogOptions {
   title?: string
@@ -21,7 +21,8 @@ interface ConfirmDialogProps extends ConfirmDialogOptions {
 /**
  * ConfirmDialog is the project's single confirmation primitive. Always reach for
  * `useConfirm()` rather than mounting this directly — the hook handles the
- * Promise wiring and keeps one dialog instance per provider tree.
+ * Promise wiring and keeps one dialog instance per provider tree. It now renders
+ * through Modal, so it inherits the shared backdrop + fade/scale transition.
  */
 export function ConfirmDialog({
   open,
@@ -34,53 +35,34 @@ export function ConfirmDialog({
   onCancel,
 }: ConfirmDialogProps) {
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onCancel() }}>
-      <Dialog.Portal>
-        <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/40 data-[state=open]:animate-in data-[state=open]:fade-in-0" />
-        <Dialog.Popup
-          className={cn(
-            "fixed left-1/2 top-1/2 z-50 w-[92vw] max-w-md -translate-x-1/2 -translate-y-1/2",
-            "rounded-lg border border-border bg-background p-5 shadow-xl outline-none",
-          )}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault()
-              onConfirm()
-            }
-          }}
-        >
-          <Dialog.Title className="text-base font-semibold text-foreground">
-            {title}
-          </Dialog.Title>
-          {body && (
-            <Dialog.Description className="mt-2 text-sm text-muted-foreground">
-              {body}
-            </Dialog.Description>
-          )}
-          <div className="mt-5 flex justify-end gap-2">
-            <button
-              type="button"
-              onClick={onCancel}
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50"
-            >
-              {cancelText}
-            </button>
-            <button
-              type="button"
-              autoFocus
-              onClick={onConfirm}
-              className={cn(
-                "rounded-md px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50",
-                danger
-                  ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                  : "bg-primary text-primary-foreground hover:bg-primary/90",
-              )}
-            >
-              {confirmText}
-            </button>
-          </div>
-        </Dialog.Popup>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <Modal
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) onCancel()
+      }}
+      title={title}
+      description={body}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          e.preventDefault()
+          onConfirm()
+        }
+      }}
+      footer={
+        <>
+          <Button variant="outline" size="sm" onClick={onCancel}>
+            {cancelText}
+          </Button>
+          <Button
+            variant={danger ? "destructive" : "default"}
+            size="sm"
+            autoFocus
+            onClick={onConfirm}
+          >
+            {confirmText}
+          </Button>
+        </>
+      }
+    />
   )
 }

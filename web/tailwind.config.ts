@@ -38,6 +38,7 @@ const config: Config = {
         },
         destructive: {
           DEFAULT: "var(--destructive)",
+          foreground: "var(--destructive-foreground)",
         },
         border: "var(--border)",
         input: "var(--input)",
@@ -45,21 +46,28 @@ const config: Config = {
         success: "var(--success)",
         warning: "var(--warning)",
         danger: "var(--danger)",
-        // Tally v2.5 brand-spec tokens
-        paper: "var(--paper)",
-        bg: "var(--bg)",
-        ink: "var(--ink)",
-        rule: "var(--rule)",
-        "brand-accent": "var(--brand-accent)",
-        ok: "var(--ok)",
-        warn: "var(--warn)",
-        err: "var(--err)",
-        info: "var(--info)",
+      },
+      ringWidth: {
+        3: "3px",
       },
       borderRadius: {
         lg: "var(--radius)",
         md: "calc(var(--radius) - 2px)",
         sm: "calc(var(--radius) - 4px)",
+      },
+      keyframes: {
+        "fade-in": {
+          from: { opacity: "0" },
+          to: { opacity: "1" },
+        },
+        "fade-in-up": {
+          from: { opacity: "0", transform: "translateY(4px)" },
+          to: { opacity: "1", transform: "translateY(0)" },
+        },
+      },
+      animation: {
+        "fade-in": "fade-in 80ms ease-out",
+        "fade-in-up": "fade-in-up 160ms ease-out",
       },
       fontFamily: {
         heading: "var(--font-heading, inherit)",
