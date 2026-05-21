@@ -127,7 +127,7 @@ export function BillLineEditor({
                     <span>{item.product_id}</span>
                   ) : (
                     <select
-                      className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-ring"
+                      className="w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                       value={item.product_id}
                       onChange={(e) => updateRow(idx, { product_id: e.target.value })}
                     >
@@ -145,7 +145,7 @@ export function BillLineEditor({
                     <span>{item.unit_name ?? item.unit_id ?? "—"}</span>
                   ) : (
                     <select
-                      className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-ring"
+                      className="w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                       value={item.unit_id ?? ""}
                       onChange={(e) => {
                         const uid = e.target.value
@@ -165,7 +165,7 @@ export function BillLineEditor({
                 <td className="px-3 py-2">
                   <input
                     type="number"
-                    className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm text-right outline-none focus:ring-1 focus:ring-ring"
+                    className="w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm text-right outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                     value={item.qty}
                     min="0"
                     step="0.0001"
@@ -176,7 +176,7 @@ export function BillLineEditor({
                 <td className="px-3 py-2">
                   <input
                     type="number"
-                    className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm text-right outline-none focus:ring-1 focus:ring-ring"
+                    className="w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm text-right outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                     value={item.unit_price}
                     min="0"
                     step="0.000001"
@@ -237,7 +237,7 @@ export function BillLineEditor({
           ) : (
             <input
               type="number"
-              className="w-28 rounded-md border border-input bg-background px-2 py-1 text-sm text-right outline-none focus:ring-1 focus:ring-ring"
+              className="w-28 rounded-md border border-input bg-transparent px-2 py-1 text-sm text-right outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               value={shippingFee}
               min="0"
               step="0.01"
@@ -252,7 +252,7 @@ export function BillLineEditor({
           ) : (
             <input
               type="number"
-              className="w-28 rounded-md border border-input bg-background px-2 py-1 text-sm text-right outline-none focus:ring-1 focus:ring-ring"
+              className="w-28 rounded-md border border-input bg-transparent px-2 py-1 text-sm text-right outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
               value={taxAmount}
               min="0"
               step="0.01"

@@ -8,12 +8,16 @@
 import { useState } from "react"
 import { recordPayment, PAY_TYPE_LABEL, type Payment } from "@/lib/api/payment"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { formatCNY } from "@/lib/format"
+import { cn } from "@/lib/utils"
 
-const PAY_METHODS = Object.entries(PAY_TYPE_LABEL).map(([value, label]) => ({
-  value,
-  label,
-}))
+const PAY_METHODS = Object.entries(PAY_TYPE_LABEL).map(([value, label]) => ({ value, label }))
+
+const SELECT_CLASS =
+  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
 interface Props {
   billId: string
@@ -23,13 +27,7 @@ interface Props {
   onSuccess: (payment: Payment) => void
 }
 
-export function PaymentForm({
-  billId,
-  receivableAmount,
-  payments,
-  tenantId,
-  onSuccess,
-}: Props) {
+export function PaymentForm({ billId, receivableAmount, payments, tenantId, onSuccess }: Props) {
   const [amount, setAmount] = useState("")
   const [method, setMethod] = useState("cash")
   const [remark, setRemark] = useState("")
@@ -37,9 +35,6 @@ export function PaymentForm({
   const [error, setError] = useState<string | null>(null)
 
   const remaining = parseFloat(receivableAmount) || 0
-
-  const inputCls =
-    "w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -57,12 +52,7 @@ export function PaymentForm({
     setError(null)
     try {
       const payment = await recordPayment(
-        {
-          bill_id: billId,
-          amount: String(amt),
-          payment_method: method,
-          remark: remark || undefined,
-        },
+        { bill_id: billId, amount: String(amt), payment_method: method, remark: remark || undefined },
         tenantId
       )
       setAmount("")
@@ -79,7 +69,7 @@ export function PaymentForm({
     <div className="space-y-4">
       {/* Payment history */}
       {payments.length > 0 && (
-        <div className="rounded-lg border border-border overflow-hidden">
+        <div className="overflow-x-auto rounded-lg border border-border">
           <table className="w-full text-sm">
             <thead className="bg-muted/50 text-muted-foreground">
               <tr>
@@ -92,16 +82,12 @@ export function PaymentForm({
             <tbody className="divide-y divide-border">
               {payments.map((p) => (
                 <tr key={p.id} className="hover:bg-muted/20">
-                  <td className="px-4 py-2 text-muted-foreground text-xs">
+                  <td className="px-4 py-2 text-xs text-muted-foreground">
                     {new Date(p.pay_date).toLocaleDateString("zh-CN")}
                   </td>
-                  <td className="px-4 py-2">
-                    {PAY_TYPE_LABEL[p.pay_type] ?? p.pay_type}
-                  </td>
-                  <td className="px-4 py-2 text-right font-mono">{p.amount}</td>
-                  <td className="px-4 py-2 text-muted-foreground text-xs">
-                    {p.remark ?? "—"}
-                  </td>
+                  <td className="px-4 py-2">{PAY_TYPE_LABEL[p.pay_type] ?? p.pay_type}</td>
+                  <td className="px-4 py-2 text-right font-mono tabular-nums">{p.amount}</td>
+                  <td className="px-4 py-2 text-xs text-muted-foreground">{p.remark ?? "—"}</td>
                 </tr>
               ))}
             </tbody>
@@ -112,11 +98,7 @@ export function PaymentForm({
       {/* Receivable summary */}
       <div className="flex items-center gap-4 text-sm">
         <span className="text-muted-foreground">待收金额</span>
-        <span
-          className={`font-mono font-semibold ${
-            remaining > 0 ? "text-amber-600" : "text-green-600"
-          }`}
-        >
+        <span className={cn("font-mono font-semibold tabular-nums", remaining > 0 ? "text-warning" : "text-success")}>
           {formatCNY(remaining)}
         </span>
       </div>
@@ -125,14 +107,10 @@ export function PaymentForm({
       {remaining > 0 && (
         <form onSubmit={handleSubmit} className="space-y-3">
           <h3 className="text-sm font-medium">登记收款</h3>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">支付方式</label>
-              <select
-                className={inputCls}
-                value={method}
-                onChange={(e) => setMethod(e.target.value)}
-              >
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="space-y-1.5">
+              <Label htmlFor="pay-method">支付方式</Label>
+              <select id="pay-method" className={SELECT_CLASS} value={method} onChange={(e) => setMethod(e.target.value)}>
                 {PAY_METHODS.map((m) => (
                   <option key={m.value} value={m.value}>
                     {m.label}
@@ -140,11 +118,11 @@ export function PaymentForm({
                 ))}
               </select>
             </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">金额</label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="pay-amount">金额</Label>
+              <Input
+                id="pay-amount"
                 type="number"
-                className={inputCls}
                 value={amount}
                 placeholder={remaining.toFixed(2)}
                 min="0.01"
@@ -152,11 +130,11 @@ export function PaymentForm({
                 onChange={(e) => setAmount(e.target.value)}
               />
             </div>
-            <div className="space-y-1">
-              <label className="text-xs text-muted-foreground">备注</label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="pay-remark">备注</Label>
+              <Input
+                id="pay-remark"
                 type="text"
-                className={inputCls}
                 value={remark}
                 placeholder="可选"
                 onChange={(e) => setRemark(e.target.value)}
@@ -167,19 +145,15 @@ export function PaymentForm({
           {error && <ErrorBanner>{error}</ErrorBanner>}
 
           <div className="flex justify-end">
-            <button
-              type="submit"
-              disabled={saving}
-              className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-            >
+            <Button type="submit" disabled={saving}>
               {saving ? "处理中..." : "确认收款"}
-            </button>
+            </Button>
           </div>
         </form>
       )}
 
       {remaining <= 0 && payments.length > 0 && (
-        <div className="rounded-md bg-green-500/10 border border-green-500/30 px-4 py-2 text-sm text-green-700">
+        <div className="rounded-md border border-success/30 bg-success/10 px-4 py-2 text-sm text-success">
           该销售单已结清
         </div>
       )}

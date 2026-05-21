@@ -2,23 +2,25 @@
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
-import {
-  createPurchaseBill,
-  type BillLineItemInput,
-} from "@/lib/api/purchase"
-import {
-  BillLineEditor,
-  type BillLineItem,
-} from "@/components/bill-line-editor"
+import { createPurchaseBill, type BillLineItemInput } from "@/lib/api/purchase"
+import { BillLineEditor, type BillLineItem } from "@/components/bill-line-editor"
 import { ProfileGate } from "@/lib/profile"
 import { CurrencySelector } from "@/components/cross-border/currency-selector"
 import { RateInput } from "@/components/cross-border/rate-input"
 import { useDraft } from "@/hooks/useDraft"
 import { DraftBadge } from "@/components/draft/DraftBadge"
 import { DraftRestoreToast } from "@/components/draft/DraftRestoreToast"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { ErrorBanner } from "@/components/ui/error-banner"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
+
+const CONTROL_CLASS =
+  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
 
 /** Fields persisted as a purchase bill draft. */
 interface PurchaseDraft {
@@ -47,9 +49,7 @@ export default function NewPurchasePage() {
   const draft = useDraft<PurchaseDraft>("draft:purchase:new", PURCHASE_INITIAL)
 
   const [items, setItems] = useState<BillLineItem[]>(draft.value.items ?? [])
-  const [billDate, setBillDate] = useState(
-    draft.value.billDate ?? new Date().toISOString().slice(0, 10)
-  )
+  const [billDate, setBillDate] = useState(draft.value.billDate ?? new Date().toISOString().slice(0, 10))
   const [shippingFee, setShippingFee] = useState(draft.value.shippingFee ?? "0")
   const [taxAmount, setTaxAmount] = useState(draft.value.taxAmount ?? "0")
   const [remark, setRemark] = useState(draft.value.remark ?? "")
@@ -75,20 +75,9 @@ export default function NewPurchasePage() {
 
   // Persist field changes to draft (debounced inside useDraft).
   useEffect(() => {
-    draft.setValue({
-      items,
-      billDate,
-      shippingFee,
-      taxAmount,
-      remark,
-      currency,
-      exchangeRate,
-    })
+    draft.setValue({ items, billDate, shippingFee, taxAmount, remark, currency, exchangeRate })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, billDate, shippingFee, taxAmount, remark, currency, exchangeRate])
-
-  const inputCls =
-    "w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
@@ -135,42 +124,39 @@ export default function NewPurchasePage() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
-      <div className="mb-6">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold">新建采购单</h1>
-          <DraftBadge status={draft.status} />
-        </div>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          填写采购单信息，保存后将生成草稿
-        </p>
-      </div>
-
-      <DraftRestoreToast
-        restoredAt={draft.restoredAt}
-        onDiscard={draft.discardDraft}
+    <PageContainer width="wide">
+      <PageHeader
+        title={
+          <span className="flex items-center gap-3">
+            新建采购单
+            <DraftBadge status={draft.status} />
+          </span>
+        }
+        subtitle="填写采购单信息，保存后将生成草稿"
       />
+
+      <DraftRestoreToast restoredAt={draft.restoredAt} onDiscard={draft.discardDraft} />
 
       <form onSubmit={handleSubmit} className="space-y-6">
         {/* Header fields */}
-        <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+        <div className="space-y-4 rounded-xl border border-border bg-card p-4">
           <h2 className="text-sm font-medium text-muted-foreground">基本信息</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-sm font-medium">单据日期</label>
-              <input
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="bill-date">单据日期</Label>
+              <Input
+                id="bill-date"
                 type="date"
-                className={inputCls}
                 value={billDate}
                 onChange={(e) => setBillDate(e.target.value)}
                 required
               />
             </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium">备注</label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="bill-remark">备注</Label>
+              <Input
+                id="bill-remark"
                 type="text"
-                className={inputCls}
                 value={remark}
                 placeholder="可选"
                 onChange={(e) => setRemark(e.target.value)}
@@ -178,31 +164,31 @@ export default function NewPurchasePage() {
             </div>
           </div>
 
-          {/* Cross-border: currency + exchange rate (cross_border profile only) */}
+          {/* Cross-border: currency + exchange rate */}
           <ProfileGate profiles={["cross_border", "hybrid"]}>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border">
-              <div className="space-y-1">
-                <label className="text-sm font-medium">货币</label>
+            <div className="grid grid-cols-1 gap-4 border-t border-border pt-2 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>货币</Label>
                 <CurrencySelector
                   value={currency}
                   onChange={(code) => {
                     setCurrency(code)
                     if (code === "CNY") setExchangeRate("1")
                   }}
-                  className={inputCls}
+                  className={CONTROL_CLASS}
                   disabled={saving}
                 />
               </div>
               {currency !== "CNY" && (
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">汇率（→ CNY）</label>
+                <div className="space-y-1.5">
+                  <Label>汇率（→ CNY）</Label>
                   <RateInput
                     currency={currency}
                     value={exchangeRate}
                     onChange={setExchangeRate}
                     date={billDate}
                     disabled={saving}
-                    className={inputCls}
+                    className={CONTROL_CLASS}
                   />
                 </div>
               )}
@@ -212,7 +198,7 @@ export default function NewPurchasePage() {
 
         {/* Line items */}
         <div className="rounded-xl border border-border bg-card p-4">
-          <h2 className="text-sm font-medium text-muted-foreground mb-3">商品明细</h2>
+          <h2 className="mb-3 text-sm font-medium text-muted-foreground">商品明细</h2>
           <BillLineEditor
             items={items}
             onChange={setItems}
@@ -226,23 +212,14 @@ export default function NewPurchasePage() {
         {error && <ErrorBanner>{error}</ErrorBanner>}
 
         <div className="flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            disabled={saving}
-            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
+          <Button type="button" variant="outline" onClick={() => router.back()} disabled={saving}>
             取消
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-          >
+          </Button>
+          <Button type="submit" disabled={saving}>
             {saving ? "保存中..." : "保存草稿"}
-          </button>
+          </Button>
         </div>
       </form>
-    </div>
+    </PageContainer>
   )
 }

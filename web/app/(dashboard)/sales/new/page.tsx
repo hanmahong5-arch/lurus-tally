@@ -14,10 +14,18 @@ import { RateInput } from "@/components/cross-border/rate-input"
 import { useDraft } from "@/hooks/useDraft"
 import { DraftBadge } from "@/components/draft/DraftBadge"
 import { DraftRestoreToast } from "@/components/draft/DraftRestoreToast"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { formatCNY } from "@/lib/format"
 
 const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
+
+const CONTROL_CLASS =
+  "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
 
 const PAY_METHODS = [
   { value: "cash", label: "现金" },
@@ -64,9 +72,7 @@ function NewSaleInner() {
 
   const [isQuick, setIsQuick] = useState(draft.value.isQuick ?? defaultQuick)
   const [items, setItems] = useState<SaleLineItem[]>(draft.value.items ?? [])
-  const [billDate, setBillDate] = useState(
-    draft.value.billDate ?? new Date().toISOString().slice(0, 10)
-  )
+  const [billDate, setBillDate] = useState(draft.value.billDate ?? new Date().toISOString().slice(0, 10))
   const [customerName, setCustomerName] = useState(draft.value.customerName ?? "")
   const [remark, setRemark] = useState(draft.value.remark ?? "")
   const [paymentMethod, setPaymentMethod] = useState(draft.value.paymentMethod ?? "cash")
@@ -108,9 +114,6 @@ function NewSaleInner() {
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isQuick, items, billDate, customerName, remark, paymentMethod, paidAmount, currency, exchangeRate])
-
-  const inputCls =
-    "w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-1 focus:ring-ring"
 
   const totalAmount = items.reduce((acc, it) => {
     const qty = parseFloat(it.qty) || 0
@@ -201,67 +204,53 @@ function NewSaleInner() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-xl font-semibold">
-              {isQuick ? "快速收银" : "新建销售单"}
-            </h1>
+    <PageContainer width="wide">
+      <PageHeader
+        title={
+          <span className="flex items-center gap-3">
+            {isQuick ? "快速收银" : "新建销售单"}
             <DraftBadge status={draft.status} />
-          </div>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            {isQuick
-              ? "一键完成销售出库 + 收款"
-              : "填写销售单信息，保存后生成草稿"}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => setIsQuick(!isQuick)}
-          className="text-xs text-muted-foreground hover:text-foreground underline"
-        >
-          {isQuick ? "切换为草稿模式" : "切换为快速收银"}
-        </button>
-      </div>
-
-      <DraftRestoreToast
-        restoredAt={draft.restoredAt}
-        onDiscard={draft.discardDraft}
+          </span>
+        }
+        subtitle={isQuick ? "一键完成销售出库 + 收款" : "填写销售单信息，保存后生成草稿"}
+        actions={
+          <Button variant="ghost" size="sm" onClick={() => setIsQuick(!isQuick)}>
+            {isQuick ? "切换为草稿模式" : "切换为快速收银"}
+          </Button>
+        }
       />
 
-      <form
-        onSubmit={isQuick ? handleQuickCheckout : handleCreateDraft}
-        className="space-y-6"
-      >
+      <DraftRestoreToast restoredAt={draft.restoredAt} onDiscard={draft.discardDraft} />
+
+      <form onSubmit={isQuick ? handleQuickCheckout : handleCreateDraft} className="space-y-6">
         {/* Header fields */}
-        <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+        <div className="space-y-4 rounded-xl border border-border bg-card p-4">
           <h2 className="text-sm font-medium text-muted-foreground">基本信息</h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div className="space-y-1">
-              <label className="text-sm font-medium">客户名称</label>
-              <input
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="sale-customer">客户名称</Label>
+              <Input
+                id="sale-customer"
                 type="text"
-                className={inputCls}
                 value={customerName}
                 placeholder="可选"
                 onChange={(e) => setCustomerName(e.target.value)}
               />
             </div>
-            <div className="space-y-1">
-              <label className="text-sm font-medium">单据日期</label>
-              <input
+            <div className="space-y-1.5">
+              <Label htmlFor="sale-date">单据日期</Label>
+              <Input
+                id="sale-date"
                 type="date"
-                className={inputCls}
                 value={billDate}
                 onChange={(e) => setBillDate(e.target.value)}
               />
             </div>
-            <div className="space-y-1 sm:col-span-2">
-              <label className="text-sm font-medium">备注</label>
-              <input
+            <div className="space-y-1.5 sm:col-span-2">
+              <Label htmlFor="sale-remark">备注</Label>
+              <Input
+                id="sale-remark"
                 type="text"
-                className={inputCls}
                 value={remark}
                 placeholder="可选"
                 onChange={(e) => setRemark(e.target.value)}
@@ -269,31 +258,31 @@ function NewSaleInner() {
             </div>
           </div>
 
-          {/* Cross-border: currency + exchange rate (cross_border profile only) */}
+          {/* Cross-border: currency + exchange rate */}
           <ProfileGate profiles={["cross_border", "hybrid"]}>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2 border-t border-border">
-              <div className="space-y-1">
-                <label className="text-sm font-medium">货币</label>
+            <div className="grid grid-cols-1 gap-4 border-t border-border pt-2 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label>货币</Label>
                 <CurrencySelector
                   value={currency}
                   onChange={(code) => {
                     setCurrency(code)
                     if (code === "CNY") setExchangeRate("1")
                   }}
-                  className={inputCls}
+                  className={CONTROL_CLASS}
                   disabled={saving}
                 />
               </div>
               {currency !== "CNY" && (
-                <div className="space-y-1">
-                  <label className="text-sm font-medium">汇率（→ CNY）</label>
+                <div className="space-y-1.5">
+                  <Label>汇率（→ CNY）</Label>
                   <RateInput
                     currency={currency}
                     value={exchangeRate}
                     onChange={setExchangeRate}
                     date={billDate}
                     disabled={saving}
-                    className={inputCls}
+                    className={CONTROL_CLASS}
                   />
                 </div>
               )}
@@ -303,19 +292,20 @@ function NewSaleInner() {
 
         {/* Line items */}
         <div className="rounded-xl border border-border bg-card p-4">
-          <h2 className="text-sm font-medium text-muted-foreground mb-3">商品明细</h2>
+          <h2 className="mb-3 text-sm font-medium text-muted-foreground">商品明细</h2>
           <SaleLineEditor items={items} onChange={setItems} />
         </div>
 
         {/* Payment section — quick checkout only */}
         {isQuick && (
-          <div className="rounded-xl border border-border bg-card p-4 space-y-4">
+          <div className="space-y-4 rounded-xl border border-border bg-card p-4">
             <h2 className="text-sm font-medium text-muted-foreground">收款信息</h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-1">
-                <label className="text-sm font-medium">支付方式</label>
+            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+              <div className="space-y-1.5">
+                <Label htmlFor="sale-paymethod">支付方式</Label>
                 <select
-                  className={inputCls}
+                  id="sale-paymethod"
+                  className={CONTROL_CLASS}
                   value={paymentMethod}
                   onChange={(e) => setPaymentMethod(e.target.value)}
                 >
@@ -326,18 +316,18 @@ function NewSaleInner() {
                   ))}
                 </select>
               </div>
-              <div className="space-y-1">
-                <label className="text-sm font-medium">
+              <div className="space-y-1.5">
+                <Label htmlFor="sale-paid">
                   实收金额
                   {totalAmount > 0 && (
-                    <span className="ml-2 text-xs text-muted-foreground font-normal">
+                    <span className="ml-2 text-xs font-normal text-muted-foreground">
                       （应收 {formatCNY(totalAmount)}）
                     </span>
                   )}
-                </label>
-                <input
+                </Label>
+                <Input
+                  id="sale-paid"
                   type="number"
-                  className={inputCls}
                   value={paidAmount}
                   placeholder={totalAmount > 0 ? totalAmount.toFixed(2) : "0.00"}
                   min="0"
@@ -349,7 +339,7 @@ function NewSaleInner() {
 
             {/* Change due */}
             {parseFloat(paidAmount) > 0 && parseFloat(paidAmount) > totalAmount && (
-              <div className="rounded-md bg-green-500/10 border border-green-500/30 px-4 py-2 text-sm text-green-700">
+              <div className="rounded-md border border-success/30 bg-success/10 px-4 py-2 text-sm text-success">
                 找零：{formatCNY(parseFloat(paidAmount) - totalAmount)}
               </div>
             )}
@@ -359,34 +349,21 @@ function NewSaleInner() {
         {error && <ErrorBanner>{error}</ErrorBanner>}
 
         <div className="flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={() => router.back()}
-            disabled={saving}
-            className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-          >
+          <Button type="button" variant="outline" onClick={() => router.back()} disabled={saving}>
             取消
-          </button>
-          <button
-            type="submit"
-            disabled={saving}
-            className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors disabled:opacity-50"
-          >
-            {saving
-              ? "处理中..."
-              : isQuick
-              ? "确认收银"
-              : "保存草稿"}
-          </button>
+          </Button>
+          <Button type="submit" disabled={saving}>
+            {saving ? "处理中..." : isQuick ? "确认收银" : "保存草稿"}
+          </Button>
         </div>
       </form>
-    </div>
+    </PageContainer>
   )
 }
 
 export default function NewSalePage() {
   return (
-    <Suspense fallback={<div className="p-6 text-muted-foreground">加载中...</div>}>
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">加载中...</div>}>
       <NewSaleInner />
     </Suspense>
   )
