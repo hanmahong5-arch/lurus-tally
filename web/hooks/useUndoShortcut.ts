@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
+import { toast } from "sonner"
 import { globalUndoStack, type UndoEntry } from "@/lib/undo/undo-stack"
 import { trackEvent } from "@/lib/telemetry"
 
@@ -35,8 +36,11 @@ export function useUndoShortcut({ onUndo, onEmptyStack }: UseUndoShortcutOptions
 
         const entry = globalUndoStack.pop()
         if (entry) {
-          // Fire-and-forget: revert action is async; errors are swallowed per spec.
-          entry.action.revert().catch(() => undefined)
+          // Revert is async. On failure surface a toast instead of swallowing —
+          // a silent failure left the user believing the undo succeeded.
+          entry.action.revert().catch((err) => {
+            toast.error("撤销失败：" + String(err))
+          })
           trackEvent("undo_used")
           onUndo(entry)
         } else {
