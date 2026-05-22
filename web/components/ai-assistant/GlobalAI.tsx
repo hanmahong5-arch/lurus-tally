@@ -15,6 +15,10 @@ const AIDrawer = dynamic(
   () => import("./Drawer").then((m) => m.AIDrawer),
   { ssr: false, loading: () => null },
 )
+const ShortcutHelp = dynamic(
+  () => import("@/components/command-palette/ShortcutHelp").then((m) => m.ShortcutHelp),
+  { ssr: false, loading: () => null },
+)
 
 /**
  * GlobalAI mounts both the CommandPalette and the AIDrawer and wires them.
@@ -37,6 +41,7 @@ export function GlobalAI() {
     <>
       <CommandPalette onAIQuery={handleAIQuery} />
       <AIDrawer />
+      <ShortcutHelp />
     </>
   )
 }

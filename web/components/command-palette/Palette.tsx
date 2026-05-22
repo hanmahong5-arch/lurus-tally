@@ -160,7 +160,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
         aria-label="命令面板"
         aria-modal="true"
         data-testid="command-palette"
-        className="fixed left-1/2 top-[20vh] z-50 w-full max-w-lg -translate-x-1/2 overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
+        className="fixed left-1/2 top-[20vh] z-50 w-full max-w-lg -translate-x-1/2 animate-fade-in overflow-hidden rounded-xl border border-border bg-background shadow-2xl"
       >
         {/* Search input */}
         <div className="flex items-center border-b border-border px-3">
@@ -185,8 +185,13 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
             aria-expanded={true}
             aria-controls="palette-listbox"
           />
-          {query.length >= AI_TRIGGER_MIN_CHARS && !aiMode && (
-            <span className="ml-2 rounded border border-border bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
+          {!aiMode && (
+            <span
+              className={`ml-2 rounded border border-border bg-muted px-1 py-0.5 text-[10px] text-muted-foreground transition-opacity ${
+                query.length >= AI_TRIGGER_MIN_CHARS ? "opacity-100" : "opacity-40"
+              }`}
+              title="输入 ≥5 字后按 Tab 进入 AI 模式"
+            >
               Tab = AI
             </span>
           )}

@@ -119,7 +119,7 @@ function NavLinks() {
           className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold transition-colors ${
             pathname === "/pos"
               ? "bg-primary text-primary-foreground"
-              : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-950 dark:text-emerald-300 dark:hover:bg-emerald-900"
+              : "bg-primary/10 text-primary hover:bg-primary/20"
           }`}
         >
           <span className="text-base" aria-hidden="true">

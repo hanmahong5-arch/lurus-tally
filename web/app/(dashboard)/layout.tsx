@@ -6,6 +6,7 @@ import { ProfileProvider, type ProfileType } from "@/lib/profile"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { AccountDrawerProvider } from "@/components/account/account-drawer-provider"
 import { AccountDrawer } from "@/components/account/account-drawer"
+import { RouteTransition } from "@/components/ui/route-transition"
 
 /**
  * Dashboard layout — wraps all routes in the (dashboard) group with a sidebar + header.
@@ -40,7 +41,7 @@ export default async function DashboardLayout({
             <DashboardSidebar />
             <main className="flex-1 overflow-y-auto">
               <MobileNav />
-              {children}
+              <RouteTransition>{children}</RouteTransition>
             </main>
             {/* AI assistant: ⌘K Command Palette + Cmd+J Drawer */}
             <GlobalAI />

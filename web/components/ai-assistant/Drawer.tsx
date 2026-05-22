@@ -1,9 +1,11 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
+import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { MessageList, type UIMessage } from "./MessageList"
 import { streamChat, type AIPlan } from "@/lib/api/ai"
 import { useGlobalShortcut } from "@/hooks/useGlobalShortcut"
+import { Button } from "@/components/ui/button"
 
 // Persisted conversation history key. Each tenant sees their own history because
 // the key is stored per-browser tab; for a full multi-session experience a
@@ -51,6 +53,7 @@ export function AIDrawer() {
   const inputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<(() => void) | null>(null)
+  const reduceMotion = useReducedMotion()
 
   // Cmd+J toggles drawer.
   useGlobalShortcut({
@@ -285,23 +288,30 @@ export function AIDrawer() {
       </button>
 
       {/* Backdrop */}
-      {open && (
-        <div
-          className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
-          onClick={handleClose}
-          aria-hidden="true"
-        />
-      )}
+      <AnimatePresence>
+        {open && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: reduceMotion ? 0 : 0.2 }}
+            className="fixed inset-0 z-40 bg-black/20 backdrop-blur-sm"
+            onClick={handleClose}
+            aria-hidden="true"
+          />
+        )}
+      </AnimatePresence>
 
-      {/* Drawer panel */}
-      <div
+      {/* Drawer panel (always mounted; slides via x) */}
+      <motion.div
         data-testid="ai-drawer"
         role="dialog"
         aria-label="AI 助手"
         aria-modal="true"
-        className={`fixed right-0 top-0 z-50 flex h-full w-full max-w-sm flex-col bg-background shadow-2xl transition-transform duration-300 ${
-          open ? "translate-x-0" : "translate-x-full"
-        }`}
+        initial={false}
+        animate={{ x: open ? 0 : "100%" }}
+        transition={reduceMotion ? { duration: 0 } : { type: "spring", stiffness: 380, damping: 40 }}
+        className="fixed right-0 top-0 z-50 flex h-full w-full max-w-sm flex-col bg-background shadow-2xl"
       >
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
@@ -353,19 +363,19 @@ export function AIDrawer() {
               placeholder="问我关于库存、销售的问题..."
               disabled={isLoading}
               data-testid="ai-input"
-              className="flex-1 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm placeholder:text-muted-foreground/60 focus:border-ring focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+              className="flex-1 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus:outline-none disabled:opacity-50"
             />
-            <button
+            <Button
               onClick={sendMessage}
               disabled={isLoading || !input.trim()}
               data-testid="ai-send-btn"
-              className="rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
+              size="lg"
             >
               发送
-            </button>
+            </Button>
           </div>
         </div>
-      </div>
+      </motion.div>
     </>
   )
 }

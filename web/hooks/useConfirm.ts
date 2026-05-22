@@ -57,6 +57,13 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
  *
  *   const confirm = useConfirm()
  *   if (await confirm({ title: "确认删除", danger: true })) { ... }
+ *
+ * Confirmation strategy (keep consistent across the app):
+ *   - Reversible actions (delete-with-restore, void-with-restore) → DO NOT
+ *     prompt. Act immediately and offer an undo toast / Cmd+Z. Adding a dialog
+ *     to an undoable delete just adds friction.
+ *   - Irreversible actions (approve a bill, revoke a session, delete an API
+ *     key) → confirm({ danger: true }) so the user can't fat-finger them.
  */
 export function useConfirm(): ConfirmFn {
   const ctx = useContext(ConfirmContext)
