@@ -13,8 +13,16 @@ import {
 import ProjectForm from "@/components/project/ProjectForm"
 import { useConfirm } from "@/hooks/useConfirm"
 import { formatCNY } from "@/lib/format"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { Pagination } from "@/components/ui/pagination"
+import { Sheet } from "@/components/ui/sheet"
+import { Badge, type BadgeTone } from "@/components/ui/badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
+import { Skeleton } from "@/components/ui/skeleton"
 
 const STATUS_OPTIONS: { value: ProjectStatus | ""; label: string }[] = [
   { value: "", label: "全部" },
@@ -24,35 +32,22 @@ const STATUS_OPTIONS: { value: ProjectStatus | ""; label: string }[] = [
   { value: "cancelled", label: "已取消" },
 ]
 
-function statusBadgeClass(status: ProjectStatus): string {
-  switch (status) {
-    case "active":
-      return "bg-green-500/10 text-green-700 dark:text-green-400"
-    case "paused":
-      return "bg-yellow-500/10 text-yellow-700 dark:text-yellow-400"
-    case "completed":
-      return "bg-gray-500/10 text-gray-600 dark:text-gray-400"
-    case "cancelled":
-      return "bg-red-500/10 text-red-600 dark:text-red-400"
-    default:
-      return "bg-muted text-muted-foreground"
-  }
+const STATUS_TONE: Record<ProjectStatus, BadgeTone> = {
+  active: "ok",
+  paused: "warn",
+  completed: "neutral",
+  cancelled: "err",
 }
 
-function statusLabel(status: ProjectStatus): string {
-  switch (status) {
-    case "active":
-      return "进行中"
-    case "paused":
-      return "已暂停"
-    case "completed":
-      return "已完工"
-    case "cancelled":
-      return "已取消"
-    default:
-      return status
-  }
+const STATUS_LABEL: Record<ProjectStatus, string> = {
+  active: "进行中",
+  paused: "已暂停",
+  completed: "已完工",
+  cancelled: "已取消",
 }
+
+const SELECT_CLASS =
+  "h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
 const PAGE_SIZE = 20
 
@@ -69,11 +64,8 @@ export default function ProjectsPage() {
   const [statusFilter, setStatusFilter] = useState<ProjectStatus | "">("")
   const [offset, setOffset] = useState(0)
 
-  // Drawer state
   const [drawerItem, setDrawerItem] = useState<ProjectItem | null>(null)
-  const [drawerMode, setDrawerMode] = useState<"view" | "edit" | "create">(
-    "view"
-  )
+  const [drawerMode, setDrawerMode] = useState<"view" | "edit" | "create">("view")
   const [showDrawer, setShowDrawer] = useState(false)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -175,45 +167,30 @@ export default function ProjectsPage() {
     }
   }
 
-  const totalPages = Math.ceil(total / PAGE_SIZE)
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
 
   return (
-    <div className="p-6">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-xl font-semibold" data-testid="page-title">
-            项目
-          </h1>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            共 {total} 个项目
-          </p>
-        </div>
-        <button
-          onClick={openCreate}
-          className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
-        >
-          + 新建项目
-        </button>
-      </div>
+    <PageContainer width="wide">
+      <PageHeader
+        title={<span data-testid="page-title">项目</span>}
+        subtitle={`共 ${total} 个项目`}
+        actions={<Button onClick={openCreate}>+ 新建项目</Button>}
+      />
 
-      {/* Search + filter bar */}
       <div className="mb-4 flex gap-2">
-        <input
+        <Input
           aria-label="搜索项目"
-          className="flex-1 rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+          className="flex-1"
           placeholder="搜索项目名称或编号..."
           value={q}
           onChange={(e) => handleSearchChange(e.target.value)}
         />
         <select
           aria-label="按状态筛选"
-          className="rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none"
+          className={SELECT_CLASS}
           value={statusFilter}
-          onChange={(e) =>
-            handleStatusChange(e.target.value as ProjectStatus | "")
-          }
+          onChange={(e) => handleStatusChange(e.target.value as ProjectStatus | "")}
         >
           {STATUS_OPTIONS.map((s) => (
             <option key={s.value} value={s.value}>
@@ -223,69 +200,59 @@ export default function ProjectsPage() {
         </select>
       </div>
 
-      {/* States */}
       {loading && (
-        <div className="py-12 text-center text-muted-foreground">加载中...</div>
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-32" />
+          ))}
+        </div>
       )}
       {error && <ErrorBanner hint="请稍后再试">{error}</ErrorBanner>}
       {!loading && !error && items.length === 0 && (
         <EmptyState
           title="暂无项目"
           description="按项目跟踪进度和成本，把苗木和工序串起来"
-          action={
-            <button
-              onClick={openCreate}
-              className="rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted transition-colors"
-            >
-              新建第一个项目
-            </button>
-          }
+          action={<Button variant="outline" onClick={openCreate}>新建第一个项目</Button>}
         />
       )}
 
-      {/* Card grid */}
       {!loading && items.length > 0 && (
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {items.map((item) => (
             <div
               key={item.id}
               data-testid="project-card"
               role="button"
               tabIndex={0}
-              className="rounded-xl border border-border bg-background p-4 shadow-sm hover:shadow-md transition-shadow cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="cursor-pointer rounded-xl border border-border bg-card p-4 shadow-sm transition-shadow hover:shadow-md focus:outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
               onClick={() => openDetail(item)}
-              onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openDetail(item) } }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault()
+                  openDetail(item)
+                }
+              }}
             >
-              {/* Name + Code */}
-              <h3 className="font-semibold text-foreground truncate">
-                {item.name}
-              </h3>
-              <p className="text-sm text-muted-foreground mb-2">{item.code}</p>
+              <h3 className="truncate font-semibold text-foreground">{item.name}</h3>
+              <p className="mb-2 text-sm text-muted-foreground">{item.code}</p>
 
-              {/* Customer badge */}
-              {/* TODO(S28.8): resolve customer name from partner */}
               {item.customerId && (
-                <span className="rounded-full bg-muted px-2 py-0.5 text-xs mr-2">
-                  {item.customerId}
-                </span>
+                <span className="mr-2 rounded-full bg-muted px-2 py-0.5 text-xs">{item.customerId}</span>
               )}
 
-              {/* Contract amount */}
               {item.contractAmount && (
-                <p className="text-lg font-bold text-foreground mt-1">
+                <p className="mt-1 text-lg font-bold tabular-nums text-foreground">
                   {formatCNY(item.contractAmount)}
                 </p>
               )}
 
-              {/* Status badge */}
-              <span
-                className={`inline-block rounded-full px-2 py-0.5 text-xs mt-2 ${statusBadgeClass(item.status)}`}
-              >
-                {statusLabel(item.status)}
-              </span>
+              <div className="mt-2">
+                <Badge tone={STATUS_TONE[item.status] ?? "neutral"}>
+                  {STATUS_LABEL[item.status] ?? item.status}
+                </Badge>
+              </div>
 
-              {/* Date range */}
-              <p className="text-xs text-muted-foreground mt-2">
+              <p className="mt-2 text-xs text-muted-foreground">
                 {item.startDate ?? "—"} – {item.endDate ?? "—"}
               </p>
             </div>
@@ -293,139 +260,101 @@ export default function ProjectsPage() {
         </div>
       )}
 
-      {/* Pagination */}
-      {total > PAGE_SIZE && (
-        <div className="mt-4 flex items-center justify-between text-sm text-muted-foreground">
-          <span>
-            第 {currentPage} / {totalPages} 页，共 {total} 条
-          </span>
-          <div className="flex gap-2">
-            <button
-              disabled={offset === 0}
-              onClick={() => setOffset(Math.max(0, offset - PAGE_SIZE))}
-              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
-            >
-              上一页
-            </button>
-            <button
-              disabled={offset + PAGE_SIZE >= total}
-              onClick={() => setOffset(offset + PAGE_SIZE)}
-              className="rounded-md border border-border px-3 py-1 hover:bg-muted disabled:opacity-50"
-            >
-              下一页
-            </button>
-          </div>
-        </div>
-      )}
+      <Pagination
+        page={currentPage}
+        totalPages={totalPages}
+        onPageChange={(p) => setOffset((p - 1) * PAGE_SIZE)}
+      />
 
-      {/* Detail / Create / Edit drawer */}
-      {showDrawer && (
-        <div className="fixed inset-0 z-50 flex">
-          {/* Backdrop */}
-          <div className="flex-1 bg-black/30" onClick={closeDrawer} />
-          {/* Sheet panel */}
-          <div
-            className="w-[480px] bg-background border-l border-border overflow-y-auto p-6 flex flex-col gap-4"
-            data-testid="project-detail-drawer"
-          >
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">
-                {drawerMode === "create"
-                  ? "新建项目"
-                  : drawerMode === "edit"
-                    ? "编辑项目"
-                    : drawerItem?.name}
-              </h2>
-              <button
-                onClick={closeDrawer}
-                className="text-muted-foreground hover:text-foreground"
+      <Sheet
+        open={showDrawer}
+        onOpenChange={(o) => {
+          if (!o) closeDrawer()
+        }}
+        title={
+          drawerMode === "create" ? "新建项目" : drawerMode === "edit" ? "编辑项目" : drawerItem?.name
+        }
+        footer={
+          drawerMode === "view" && drawerItem ? (
+            <>
+              <Button variant="outline" size="sm" onClick={() => void handleRestoreById(drawerItem.id)}>
+                恢复
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  void handleDelete(drawerItem)
+                  closeDrawer()
+                }}
               >
-                ✕
-              </button>
+                软删除
+              </Button>
+              <Button size="sm" onClick={() => setDrawerMode("edit")}>
+                编辑
+              </Button>
+            </>
+          ) : undefined
+        }
+      >
+        {drawerMode === "view" && drawerItem ? (
+          <div className="flex flex-col gap-3 text-sm" data-testid="project-detail-drawer">
+            <div>
+              <span className="text-muted-foreground">编号：</span>
+              <span>{drawerItem.code}</span>
             </div>
-
-            {drawerMode === "view" && drawerItem ? (
-              <div className="flex flex-col gap-3 text-sm">
-                <div>
-                  <span className="text-muted-foreground">编号：</span>
-                  <span>{drawerItem.code}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground">状态：</span>
-                  <span>{statusLabel(drawerItem.status)}</span>
-                </div>
-                {drawerItem.contractAmount && (
-                  <div>
-                    <span className="text-muted-foreground">合同金额：</span>
-                    <span>{formatCNY(drawerItem.contractAmount)}</span>
-                  </div>
-                )}
-                {drawerItem.customerId && (
-                  <div>
-                    <span className="text-muted-foreground">客户ID：</span>
-                    <span>{drawerItem.customerId}</span>
-                  </div>
-                )}
-                <div>
-                  <span className="text-muted-foreground">日期：</span>
-                  <span>
-                    {drawerItem.startDate ?? "—"} –{" "}
-                    {drawerItem.endDate ?? "—"}
-                  </span>
-                </div>
-                {drawerItem.address && (
-                  <div>
-                    <span className="text-muted-foreground">地址：</span>
-                    <span>{drawerItem.address}</span>
-                  </div>
-                )}
-                {drawerItem.manager && (
-                  <div>
-                    <span className="text-muted-foreground">负责人：</span>
-                    <span>{drawerItem.manager}</span>
-                  </div>
-                )}
-                {drawerItem.remark && (
-                  <div>
-                    <span className="text-muted-foreground">备注：</span>
-                    <span>{drawerItem.remark}</span>
-                  </div>
-                )}
-                <div className="flex gap-2 pt-2">
-                  <button
-                    onClick={() => setDrawerMode("edit")}
-                    className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90"
-                  >
-                    编辑
-                  </button>
-                  <button
-                    onClick={() => {
-                      void handleDelete(drawerItem)
-                      closeDrawer()
-                    }}
-                    className="rounded-lg border border-destructive px-4 py-1.5 text-sm text-destructive hover:bg-destructive/10"
-                  >
-                    软删除
-                  </button>
-                  <button
-                    onClick={() => void handleRestoreById(drawerItem.id)}
-                    className="rounded-lg border border-border px-4 py-1.5 text-sm hover:bg-muted"
-                  >
-                    恢复
-                  </button>
-                </div>
+            <div>
+              <span className="text-muted-foreground">状态：</span>
+              <Badge tone={STATUS_TONE[drawerItem.status] ?? "neutral"}>
+                {STATUS_LABEL[drawerItem.status] ?? drawerItem.status}
+              </Badge>
+            </div>
+            {drawerItem.contractAmount && (
+              <div>
+                <span className="text-muted-foreground">合同金额：</span>
+                <span className="tabular-nums">{formatCNY(drawerItem.contractAmount)}</span>
               </div>
-            ) : (
-              <ProjectForm
-                mode={drawerMode === "create" ? "create" : "edit"}
-                initialData={drawerItem ?? undefined}
-                onSuccess={handleFormSuccess}
-                onCancel={closeDrawer}
-              />
+            )}
+            {drawerItem.customerId && (
+              <div>
+                <span className="text-muted-foreground">客户ID：</span>
+                <span>{drawerItem.customerId}</span>
+              </div>
+            )}
+            <div>
+              <span className="text-muted-foreground">日期：</span>
+              <span>
+                {drawerItem.startDate ?? "—"} – {drawerItem.endDate ?? "—"}
+              </span>
+            </div>
+            {drawerItem.address && (
+              <div>
+                <span className="text-muted-foreground">地址：</span>
+                <span>{drawerItem.address}</span>
+              </div>
+            )}
+            {drawerItem.manager && (
+              <div>
+                <span className="text-muted-foreground">负责人：</span>
+                <span>{drawerItem.manager}</span>
+              </div>
+            )}
+            {drawerItem.remark && (
+              <div>
+                <span className="text-muted-foreground">备注：</span>
+                <span>{drawerItem.remark}</span>
+              </div>
             )}
           </div>
-        </div>
-      )}
-    </div>
+        ) : (
+          <ProjectForm
+            mode={drawerMode === "create" ? "create" : "edit"}
+            initialData={drawerItem ?? undefined}
+            onSuccess={handleFormSuccess}
+            onCancel={closeDrawer}
+          />
+        )}
+      </Sheet>
+    </PageContainer>
   )
 }

@@ -1,4 +1,6 @@
 import { SubscriptionPlansView } from "./plans-view"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
 
 /**
  * Tally subscription / billing page.
@@ -9,14 +11,12 @@ import { SubscriptionPlansView } from "./plans-view"
  */
 export default function SubscriptionPage() {
   return (
-    <div className="mx-auto max-w-6xl px-6 py-8">
-      <header className="mb-8">
-        <h1 className="text-2xl font-semibold text-foreground">订阅与计费</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          选择适合企业规模的套餐，钱包余额可一键开通；支付宝 / 微信支付随后跳转。
-        </p>
-      </header>
+    <PageContainer width="wide">
+      <PageHeader
+        title="订阅与计费"
+        subtitle="选择适合企业规模的套餐，钱包余额可一键开通；支付宝 / 微信支付随后跳转。"
+      />
       <SubscriptionPlansView />
-    </div>
+    </PageContainer>
   )
 }

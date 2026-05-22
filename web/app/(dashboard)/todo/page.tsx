@@ -2,6 +2,9 @@ import Link from "next/link"
 
 import { auth } from "@/auth"
 import { EmptyState } from "@/components/ui/empty-state"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
+import { Badge } from "@/components/ui/badge"
 import {
   fetchDraftPurchaseBillCount,
   fetchLowStockAlerts,
@@ -82,13 +85,11 @@ export default async function TodoPage() {
   const isEmpty = totalCount === 0
 
   return (
-    <div className="mx-auto max-w-4xl px-6 py-6">
-      <header className="mb-6">
-        <h1 className="text-xl font-semibold">待办</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          {isEmpty ? "无待处理事项 — 今日通关 🎉" : `共 ${totalCount} 项需要你看一眼`}
-        </p>
-      </header>
+    <PageContainer width="default">
+      <PageHeader
+        title="待办"
+        subtitle={isEmpty ? "无待处理事项 — 今日通关 🎉" : `共 ${totalCount} 项需要你看一眼`}
+      />
 
       {isEmpty ? (
         <EmptyState
@@ -102,7 +103,7 @@ export default async function TodoPage() {
           <DraftSaleSection items={draftSales} />
         </div>
       )}
-    </div>
+    </PageContainer>
   )
 }
 
@@ -122,11 +123,7 @@ function SectionHeader({
       <h2 className="flex items-center gap-2 text-sm font-medium">
         <span aria-hidden="true">{icon}</span>
         {title}
-        {count > 0 && (
-          <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
-            {count}
-          </span>
-        )}
+        {count > 0 && <Badge tone="accent">{count}</Badge>}
       </h2>
       <Link href={href} className="text-xs text-muted-foreground hover:text-foreground">
         全部 →
@@ -151,7 +148,7 @@ function LowStockSection({ items, totalCount }: { items: LowStockItem[]; totalCo
               <p className="truncate text-xs text-muted-foreground">{i.warehouse_name}</p>
             </div>
             <div className="text-right">
-              <p className="font-mono text-sm text-red-600">
+              <p className="font-mono text-sm tabular-nums text-destructive">
                 {Number(i.available_qty).toFixed(0)}
                 <span className="text-xs text-muted-foreground">
                   {" "}

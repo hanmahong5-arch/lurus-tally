@@ -10,6 +10,7 @@ import { useConfirm } from "@/hooks/useConfirm"
 import { EmptyState } from "@/components/ui/empty-state"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { TableSkeleton } from "@/components/ui/table-skeleton"
+import { Badge } from "@/components/ui/badge"
 import {
   fetchAccountSummary,
   type AccountSummary,
@@ -356,7 +357,7 @@ function ProfileEditRow({
             type="text"
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            className="w-full rounded-md border border-input bg-background px-2 py-1 text-sm outline-none focus:ring-1 focus:ring-ring"
+            className="w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
           />
         ) : (
           <span>{value || fallback || "—"}</span>
@@ -396,7 +397,7 @@ function WalletTab() {
         Tally 钱包由 lurus-platform 统一管理。明细流水 API 接入后将出现在下方。
       </p>
       {error && (
-        <p className="mb-4 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950 dark:text-amber-100">
+        <p className="mb-4 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
           加载失败：{error}
         </p>
       )}
@@ -535,7 +536,7 @@ function NotificationsTab() {
           </li>
         ))}
       </ul>
-      {saved && <p className="mt-3 text-xs text-emerald-600">已保存</p>}
+      {saved && <p className="mt-3 text-xs text-success">已保存</p>}
     </div>
   )
 }
@@ -642,11 +643,7 @@ function SecurityTab() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <p className="truncate text-sm font-medium">{s.user_agent || "未知设备"}</p>
-                    {s.current && (
-                      <span className="rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] uppercase text-emerald-600">
-                        当前
-                      </span>
-                    )}
+                    {s.current && <Badge tone="ok">当前</Badge>}
                   </div>
                   <p className="mt-0.5 text-xs text-muted-foreground">
                     {s.ip_addr ? `${s.ip_addr} · ` : ""}最近活动 {formatDateTime(s.last_active)}
@@ -797,15 +794,11 @@ function TeamTab() {
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">
                 {summary.identity.display_name || "—"}
-                <span className="ml-2 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] uppercase text-emerald-600">
-                  你
-                </span>
+                <span className="ml-2 inline-flex"><Badge tone="ok">你</Badge></span>
               </p>
               <p className="truncate text-xs text-muted-foreground">{summary.identity.email}</p>
             </div>
-            <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] uppercase text-muted-foreground">
-              {summary.identity.role || "owner"}
-            </span>
+            <Badge tone="neutral">{summary.identity.role || "owner"}</Badge>
           </li>
         </ul>
       )}

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { MessageList, type UIMessage } from "@/components/ai-assistant/MessageList"
 import { streamChat, type AIPlan } from "@/lib/api/ai"
+import { Button } from "@/components/ui/button"
 
 const STORAGE_KEY = "tally_ai_history"
 const MAX_STORED_MESSAGES = 50
@@ -159,13 +160,9 @@ export function AIPage() {
           </p>
         </div>
         {messages.length > 0 && (
-          <button
-            type="button"
-            onClick={clear}
-            className="rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted"
-          >
+          <Button type="button" variant="outline" size="sm" onClick={clear}>
             清空对话
-          </button>
+          </Button>
         )}
       </header>
 
@@ -204,16 +201,11 @@ export function AIPage() {
             rows={1}
             placeholder="问我关于库存、销售、客户的问题..."
             disabled={isLoading}
-            className="flex-1 resize-none rounded-lg border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground/60 focus:outline-none focus:ring-1 focus:ring-ring disabled:opacity-50"
+            className="flex-1 resize-none rounded-lg border border-input bg-transparent px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus:outline-none disabled:opacity-50"
           />
-          <button
-            type="button"
-            onClick={() => send(input)}
-            disabled={isLoading || !input.trim()}
-            className="rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-          >
+          <Button type="button" size="lg" onClick={() => send(input)} disabled={isLoading || !input.trim()}>
             {isLoading ? "..." : "发送"}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

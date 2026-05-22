@@ -2,6 +2,8 @@ import Link from "next/link"
 
 import { auth } from "@/auth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { PageContainer } from "@/components/ui/page-container"
+import { PageHeader } from "@/components/ui/page-header"
 import { formatCNY } from "@/lib/format"
 
 export const revalidate = 300
@@ -87,14 +89,13 @@ export default async function ReportsPage() {
   ).length
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 px-6 py-6">
-      <header>
-        <h1 className="text-xl font-semibold">报表</h1>
-        <p className="mt-0.5 text-sm text-muted-foreground">
-          本月经营概览 · CSV 导出 · 汇率历史。统计区间为本自然月（{start} 起）。
-        </p>
-      </header>
+    <PageContainer width="default">
+      <PageHeader
+        title="报表"
+        subtitle={`本月经营概览 · CSV 导出 · 汇率历史。统计区间为本自然月（${start} 起）。`}
+      />
 
+      <div className="space-y-6">
       <section className="grid grid-cols-2 gap-4 sm:grid-cols-4">
         <StatCard label="本月销售额" value={formatCNY(salesMTD)} hint="已审核销售单合计" />
         <StatCard label="本月采购额" value={formatCNY(purchaseMTD)} hint="已审核采购单合计" />
@@ -140,7 +141,8 @@ export default async function ReportsPage() {
           </Card>
         </Link>
       </section>
-    </div>
+      </div>
+    </PageContainer>
   )
 }
 

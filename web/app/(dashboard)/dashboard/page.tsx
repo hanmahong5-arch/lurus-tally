@@ -2,6 +2,7 @@ import Link from "next/link"
 import { auth } from "@/auth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { buttonVariants } from "@/components/ui/button"
 import { fetchLowStockAlerts, fetchDraftPurchaseBillCount } from "@/lib/api/stock"
 
 export const revalidate = 60
@@ -102,7 +103,7 @@ export default async function DashboardPage({
                         </p>
                       </div>
                       <div className="text-right flex-shrink-0">
-                        <p className="text-sm font-mono text-red-600">
+                        <p className="text-sm font-mono tabular-nums text-destructive">
                           {Number(item.available_qty).toFixed(0)}
                           <span className="text-muted-foreground text-xs"> / {Number(item.low_safe_qty).toFixed(0)}</span>
                         </p>
@@ -142,10 +143,7 @@ export default async function DashboardPage({
                     <p className="text-3xl font-bold tabular-nums">{draftPurchaseCount}</p>
                     <p className="text-sm text-muted-foreground mt-0.5">张待审采购单</p>
                   </div>
-                  <Link
-                    href="/purchases?status=draft"
-                    className="rounded-lg bg-primary px-4 py-1.5 text-sm text-primary-foreground hover:bg-primary/90 transition-colors"
-                  >
+                  <Link href="/purchases?status=draft" className={buttonVariants()}>
                     去审核
                   </Link>
                 </div>
