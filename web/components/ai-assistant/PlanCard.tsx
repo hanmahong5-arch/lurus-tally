@@ -1,8 +1,25 @@
 "use client"
 
 import { useRef, useState } from "react"
-import { type AIPlan, confirmPlan, cancelPlan } from "@/lib/api/ai"
+import Link from "next/link"
+import { type AIPlan, type ConfirmPlanResult, confirmPlan, cancelPlan } from "@/lib/api/ai"
+import { cancelPurchaseBill } from "@/lib/api/purchase"
+import { globalUndoStack } from "@/lib/undo/undo-stack"
+import { trackEvent } from "@/lib/telemetry"
 import { ErrorBanner } from "@/components/ui/error-banner"
+
+// planKind maps a backend plan type to the bounded telemetry "kind" enum used
+// by the plan_accept_rate metric (drives Kill-switch #2: AI-PO order rate).
+function planKind(type: string): "replenishment" | "movement" | "transfer" | "other" {
+  switch (type) {
+    case "create_purchase_draft":
+      return "replenishment"
+    case "bulk_stock_adjust":
+      return "movement"
+    default:
+      return "other"
+  }
+}
 
 interface PlanCardProps {
   plan: AIPlan
@@ -18,18 +35,35 @@ interface PlanCardProps {
  * that prevents accidental bulk operations.
  */
 export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
-  const [status, setStatus] = useState<"idle" | "confirming" | "cancelling" | "done">("idle")
+  const [status, setStatus] = useState<"idle" | "confirming" | "cancelling">("idle")
+  const [outcome, setOutcome] = useState<"confirmed" | "cancelled" | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [result, setResult] = useState<ConfirmPlanResult | null>(null)
   // Synchronous in-flight latch — prevents the extra-fast double click that fires
   // before React commits the "confirming" state and toggles the disabled prop.
   const inFlightRef = useRef(false)
 
-  if (plan.status !== "pending" || status === "done") {
+  const settled = outcome ?? (plan.status === "confirmed" ? "confirmed" : plan.status !== "pending" ? "cancelled" : null)
+  if (settled) {
+    if (settled === "cancelled") {
+      return (
+        <div className="my-2 rounded-lg border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
+          ✗ 操作已取消
+        </div>
+      )
+    }
     return (
-      <div className="my-2 rounded-lg border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
-        {plan.status === "confirmed" || status === "done"
-          ? "✓ 操作已确认执行"
-          : "✗ 操作已取消"}
+      <div className="my-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm" data-testid="plan-card-done">
+        <p className="text-foreground">✓ 操作已执行{result?.affected_count != null ? `（影响 ${result.affected_count} 条）` : ""}</p>
+        {result?.bill_id && (
+          <Link
+            href={`/purchases/${result.bill_id}`}
+            data-testid="plan-bill-link"
+            className="mt-1 inline-block font-medium text-emerald-600 hover:underline dark:text-emerald-400"
+          >
+            已建采购草稿 {result.bill_no ? `${result.bill_no} ` : ""}→ 查看
+          </Link>
+        )}
       </div>
     )
   }
@@ -40,8 +74,24 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
     setStatus("confirming")
     setError(null)
     try {
-      await confirmPlan(plan.id)
-      setStatus("done")
+      const res = await confirmPlan(plan.id)
+      setResult(res)
+      setOutcome("confirmed")
+      trackEvent("plan_accept_rate", { plan_id: plan.id, kind: planKind(plan.type), accepted: "1" })
+      // Make the AI write reversible: a created draft can be undone within 30s
+      // (Cmd+Z / toast) by cancelling it. Only purchase drafts are reversible
+      // from here; price/stock changes need server-side before-state capture.
+      if (res.bill_id) {
+        const billId = res.bill_id
+        globalUndoStack.push({
+          type: "ai_purchase_draft",
+          id: billId,
+          billNo: res.bill_no ?? "",
+          revert: async () => {
+            await cancelPurchaseBill(billId)
+          },
+        })
+      }
       onConfirmed?.()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err))
@@ -58,7 +108,8 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
     setError(null)
     try {
       await cancelPlan(plan.id)
-      setStatus("done")
+      setOutcome("cancelled")
+      trackEvent("plan_accept_rate", { plan_id: plan.id, kind: planKind(plan.type), accepted: "0" })
       onCancelled?.()
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : String(err))

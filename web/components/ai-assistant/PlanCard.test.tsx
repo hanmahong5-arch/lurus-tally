@@ -2,13 +2,25 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { PlanCard } from "./PlanCard"
 import type { AIPlan } from "@/lib/api/ai"
+import { globalUndoStack } from "@/lib/undo/undo-stack"
+
+// cancelPurchaseBill is only called on revert (not exercised here); stub it so the
+// real apiFetch is never hit if a test ever does revert.
+vi.mock("@/lib/api/purchase", () => ({
+  cancelPurchaseBill: vi.fn().mockResolvedValue(undefined),
+}))
+
+// Spy on telemetry so we can assert plan_accept_rate fires on confirm/cancel.
+vi.mock("@/lib/telemetry", () => ({
+  trackEvent: vi.fn(),
+}))
 
 // Mock the AI API
 vi.mock("@/lib/api/ai", async (importOriginal) => {
   const mod = await importOriginal<typeof import("@/lib/api/ai")>()
   return {
     ...mod,
-    confirmPlan: vi.fn().mockResolvedValue(undefined),
+    confirmPlan: vi.fn().mockResolvedValue({ plan_id: "plan-123", status: "confirmed", type: "price_change", affected_count: 3 }),
     cancelPlan: vi.fn().mockResolvedValue(undefined),
   }
 })
@@ -35,6 +47,7 @@ const makePlan = (overrides?: Partial<AIPlan>): AIPlan => ({
 describe("PlanCard", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    globalUndoStack.resetForTest()
   })
 
   it("TestPlanCard_PendingPlan_ShowsConfirmAndCancelButtons", () => {
@@ -92,13 +105,51 @@ describe("PlanCard", () => {
     await waitFor(() => {
       expect(onConfirmed).toHaveBeenCalled()
     })
+
+    // plan_accept_rate fires with accepted="1" (feeds Kill-switch #2).
+    const { trackEvent } = await import("@/lib/telemetry")
+    expect(trackEvent).toHaveBeenCalledWith(
+      "plan_accept_rate",
+      expect.objectContaining({ plan_id: "plan-123", accepted: "1" }),
+    )
   })
 
   it("TestPlanCard_NonPendingPlan_ShowsResolvedState", () => {
     render(<PlanCard plan={makePlan({ status: "confirmed" })} />)
 
     expect(screen.queryByTestId("plan-confirm-btn")).not.toBeInTheDocument()
-    expect(screen.getByText(/已确认/)).toBeInTheDocument()
+    expect(screen.getByText(/已执行/)).toBeInTheDocument()
+  })
+
+  it("TestPlanCard_CancelledPlan_ShowsCancelledState", () => {
+    render(<PlanCard plan={makePlan({ status: "cancelled" })} />)
+
+    expect(screen.queryByTestId("plan-confirm-btn")).not.toBeInTheDocument()
+    expect(screen.getByText(/已取消/)).toBeInTheDocument()
+  })
+
+  it("TestPlanCard_ConfirmPurchaseDraft_ShowsBillLink", async () => {
+    const { confirmPlan } = await import("@/lib/api/ai")
+    vi.mocked(confirmPlan).mockResolvedValueOnce({
+      plan_id: "plan-123",
+      status: "confirmed",
+      type: "create_purchase_draft",
+      affected_count: 2,
+      bill_id: "bill-789",
+      bill_no: "PO-20260522-0001",
+    })
+
+    render(<PlanCard plan={makePlan({ type: "create_purchase_draft" })} />)
+    fireEvent.click(screen.getByTestId("plan-confirm-btn"))
+
+    const link = await screen.findByTestId("plan-bill-link")
+    expect(link).toHaveAttribute("href", "/purchases/bill-789")
+    expect(link).toHaveTextContent("PO-20260522-0001")
+
+    // The AI write must be reversible: a matching undo entry is pushed.
+    const entry = globalUndoStack.peek()
+    expect(entry?.action.type).toBe("ai_purchase_draft")
+    expect(entry?.action.id).toBe("bill-789")
   })
 
   it("TestPlanCard_RapidDoubleClick_CallsConfirmOnce", async () => {
@@ -109,7 +160,9 @@ describe("PlanCard", () => {
     // ref latch can collapse it.
     let resolveConfirm: () => void = () => {}
     vi.mocked(confirmPlan).mockImplementation(
-      () => new Promise<void>((resolve) => { resolveConfirm = resolve })
+      () => new Promise((resolve) => {
+        resolveConfirm = () => resolve({ plan_id: "plan-123", status: "confirmed", type: "price_change" })
+      })
     )
 
     render(<PlanCard plan={makePlan()} />)

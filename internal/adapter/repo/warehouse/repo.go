@@ -193,6 +193,28 @@ func (r *Repo) Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.War
 	return r.GetByID(ctx, tenantID, id)
 }
 
+// DefaultWarehouseID returns the tenant's default warehouse, falling back to the
+// earliest-created warehouse when none is flagged default. Returns ErrNotFound
+// when the tenant has no warehouse at all.
+func (r *Repo) DefaultWarehouseID(ctx context.Context, tenantID uuid.UUID) (uuid.UUID, error) {
+	const q = `
+		SELECT id
+		FROM tally.warehouse
+		WHERE tenant_id = $1 AND deleted_at IS NULL
+		ORDER BY is_default DESC, created_at ASC
+		LIMIT 1`
+
+	var id uuid.UUID
+	err := r.db.QueryRowContext(ctx, q, tenantID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return uuid.Nil, appwarehouse.ErrNotFound
+	}
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("warehouse repo default: %w", err)
+	}
+	return id, nil
+}
+
 type rowScanner interface {
 	Scan(dest ...any) error
 }

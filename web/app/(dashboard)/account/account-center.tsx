@@ -673,6 +673,8 @@ const AUDIT_ACTION_LABEL: Record<string, string> = {
   "alert.overstock": "高库存预警",
   "stock.movement_recorded": "库存变动",
   "stock.snapshot_updated": "库存快照更新",
+  "ai.plan.executed": "AI 执行操作",
+  "ai.plan.failed": "AI 操作失败",
 }
 
 function AuditTab() {

@@ -25,14 +25,15 @@ func init() {
 // --- stubs ---
 
 type stubOrchestrator struct {
-	streamOut  *appai.ChatOutput
-	streamErr  error
-	confirmOut *domainai.Plan
-	confirmErr error
-	cancelErr  error
-	chunks     []string
-	listOut    []*domainai.Plan
-	listErr    error
+	streamOut     *appai.ChatOutput
+	streamErr     error
+	confirmOut    *domainai.Plan
+	confirmResult *appai.ExecutionResult
+	confirmErr    error
+	cancelErr     error
+	chunks        []string
+	listOut       []*domainai.Plan
+	listErr       error
 }
 
 func (s *stubOrchestrator) StreamChat(_ context.Context, _ appai.ChatInput, onChunk func(string)) (*appai.ChatOutput, error) {
@@ -42,8 +43,8 @@ func (s *stubOrchestrator) StreamChat(_ context.Context, _ appai.ChatInput, onCh
 	return s.streamOut, s.streamErr
 }
 
-func (s *stubOrchestrator) ConfirmPlan(_ context.Context, _, _ uuid.UUID) (*domainai.Plan, error) {
-	return s.confirmOut, s.confirmErr
+func (s *stubOrchestrator) ConfirmPlan(_ context.Context, _, _, _ uuid.UUID) (*domainai.Plan, *appai.ExecutionResult, error) {
+	return s.confirmOut, s.confirmResult, s.confirmErr
 }
 
 func (s *stubOrchestrator) CancelPlan(_ context.Context, _, _ uuid.UUID) error {
@@ -217,6 +218,41 @@ func TestAIHandler_ConfirmPlan_HappyPath_Returns200(t *testing.T) {
 	}
 	if !bytes.Contains(rec.Body.Bytes(), []byte("confirmed")) {
 		t.Errorf("expected 'confirmed' in body: %s", rec.Body.String())
+	}
+}
+
+// TestAIHandler_ConfirmPlan_WithResult_ReturnsBillRef verifies that a confirmed
+// purchase-draft plan surfaces bill_id/bill_no so the PlanCard can deep-link.
+func TestAIHandler_ConfirmPlan_WithResult_ReturnsBillRef(t *testing.T) {
+	planID := uuid.New()
+	tenantID := uuid.New()
+	billID := uuid.New()
+	stub := &stubOrchestrator{
+		confirmOut: &domainai.Plan{ID: planID, TenantID: tenantID, Type: domainai.PlanTypeCreatePurchase, Status: domainai.PlanStatusConfirmed},
+		confirmResult: &appai.ExecutionResult{
+			Type: domainai.PlanTypeCreatePurchase, AffectedCount: 3, BillID: &billID, BillNo: "PO-20260522-0007",
+		},
+	}
+	h := handlerai.New(stub)
+	e := newTestEngine(h, tenantID)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/ai/plans/"+planID.String()+"/confirm", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		BillID        string `json:"bill_id"`
+		BillNo        string `json:"bill_no"`
+		AffectedCount int    `json:"affected_count"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.BillID != billID.String() || resp.BillNo != "PO-20260522-0007" || resp.AffectedCount != 3 {
+		t.Errorf("unexpected response: %+v", resp)
 	}
 }
 

@@ -40,6 +40,27 @@ var (
 	outboxOldestAgeSeconds prometheus.Gauge
 )
 
+// AI / north-star counters.
+//   - wadTotal       : Weekly Active Decisions — AI-confirmed purchase drafts (the north star).
+//   - aiPlanExecuted : all confirmed AI plan executions, by type (create_purchase_draft|price_change|bulk_stock_adjust).
+// Both carry an optional tenant_id label (perTenantEnabled).
+var (
+	wadTotal       *prometheus.CounterVec
+	aiPlanExecuted *prometheus.CounterVec
+)
+
+// webTelemetry counts browser product-telemetry events received at
+// /internal/v1/telemetry/web, by event name. Always unlabelled by tenant —
+// the event-name cardinality is bounded by the allow-list; per-user DAU is
+// derived downstream from the PSI_TELEMETRY.web.* stream, not this counter.
+var webTelemetry = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "tally_web_telemetry_total",
+		Help: "Browser product-telemetry events received, by event name (palette_invocation|ai_drawer_open|plan_accept_rate|...).",
+	},
+	[]string{"event"},
+)
+
 func init() {
 	prometheus.MustRegister(idempotencySkipped)
 
@@ -90,6 +111,27 @@ func init() {
 		Help: "Age in seconds of the oldest unpublished outbox row (0 when queue is empty).",
 	})
 
+	aiLabels := []string{"type"}
+	wadLabels := []string{}
+	if perTenantEnabled {
+		aiLabels = append(aiLabels, "tenant_id")
+		wadLabels = append(wadLabels, "tenant_id")
+	}
+	aiPlanExecuted = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "tally_ai_plan_executed_total",
+			Help: "Confirmed AI plan executions, by type and optionally tenant_id.",
+		},
+		aiLabels,
+	)
+	wadTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "tally_wad_total",
+			Help: "North star — Weekly Active Decisions: AI-confirmed purchase drafts, optionally by tenant_id.",
+		},
+		wadLabels,
+	)
+
 	prometheus.MustRegister(
 		billApproved,
 		billCancelled,
@@ -97,6 +139,9 @@ func init() {
 		stockMovement,
 		outboxPendingCount,
 		outboxOldestAgeSeconds,
+		aiPlanExecuted,
+		wadTotal,
+		webTelemetry,
 	)
 }
 
@@ -145,6 +190,32 @@ func IncPaymentCreated(currency, tenantID string) {
 // direction must be "in" or "out".
 func IncStockMovement(direction, tenantID string) {
 	stockMovement.WithLabelValues(stockLabelValues(direction, tenantID)...).Inc()
+}
+
+// IncAIPlanExecuted increments tally_ai_plan_executed_total for a confirmed AI
+// plan, by plan type (create_purchase_draft|price_change|bulk_stock_adjust).
+func IncAIPlanExecuted(planType, tenantID string) {
+	if perTenantEnabled {
+		aiPlanExecuted.WithLabelValues(planType, tenantID).Inc()
+		return
+	}
+	aiPlanExecuted.WithLabelValues(planType).Inc()
+}
+
+// IncWAD increments tally_wad_total — one Weekly Active Decision per AI-confirmed
+// purchase draft. This is the product north star.
+func IncWAD(tenantID string) {
+	if perTenantEnabled {
+		wadTotal.WithLabelValues(tenantID).Inc()
+		return
+	}
+	wadTotal.WithLabelValues().Inc()
+}
+
+// IncWebTelemetry increments tally_web_telemetry_total for one accepted browser
+// telemetry event (event name must already be allow-listed by the caller).
+func IncWebTelemetry(event string) {
+	webTelemetry.WithLabelValues(event).Inc()
 }
 
 // SetOutboxPending sets tally_outbox_pending_count to the supplied count.

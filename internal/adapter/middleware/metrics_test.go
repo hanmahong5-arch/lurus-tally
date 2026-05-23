@@ -88,6 +88,59 @@ func TestIncStockMovement_IncrementsInAndOut(t *testing.T) {
 	}
 }
 
+// TestIncWAD_IncrementsNorthStar verifies the WAD counter moves on each call.
+func TestIncWAD_IncrementsNorthStar(t *testing.T) {
+	wadTotal.Reset()
+
+	tenant := "66666666-6666-6666-6666-666666666666"
+	IncWAD(tenant)
+	IncWAD(tenant)
+
+	var got float64
+	if perTenantEnabled {
+		got = testutil.ToFloat64(wadTotal.WithLabelValues(tenant))
+	} else {
+		got = testutil.ToFloat64(wadTotal.WithLabelValues())
+	}
+	if got != 2 {
+		t.Errorf("tally_wad_total = %v, want 2", got)
+	}
+}
+
+// TestIncAIPlanExecuted_IncrementsByType verifies the per-type AI execution counter.
+func TestIncAIPlanExecuted_IncrementsByType(t *testing.T) {
+	aiPlanExecuted.Reset()
+
+	tenant := "77777777-7777-7777-7777-777777777777"
+	IncAIPlanExecuted("create_purchase_draft", tenant)
+
+	var got float64
+	if perTenantEnabled {
+		got = testutil.ToFloat64(aiPlanExecuted.WithLabelValues("create_purchase_draft", tenant))
+	} else {
+		got = testutil.ToFloat64(aiPlanExecuted.WithLabelValues("create_purchase_draft"))
+	}
+	if got != 1 {
+		t.Errorf("tally_ai_plan_executed_total{create_purchase_draft} = %v, want 1", got)
+	}
+}
+
+// TestIncWebTelemetry_IncrementsByEvent verifies the web-telemetry funnel counter.
+func TestIncWebTelemetry_IncrementsByEvent(t *testing.T) {
+	webTelemetry.Reset()
+
+	IncWebTelemetry("palette_invocation")
+	IncWebTelemetry("palette_invocation")
+	IncWebTelemetry("ai_drawer_open")
+
+	if got := testutil.ToFloat64(webTelemetry.WithLabelValues("palette_invocation")); got != 2 {
+		t.Errorf("tally_web_telemetry_total{palette_invocation} = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(webTelemetry.WithLabelValues("ai_drawer_open")); got != 1 {
+		t.Errorf("tally_web_telemetry_total{ai_drawer_open} = %v, want 1", got)
+	}
+}
+
 // TestSetOutboxPending_SetsGauge verifies the outbox gauge is set to the given value.
 func TestSetOutboxPending_SetsGauge(t *testing.T) {
 	outboxPendingCount.Set(0)

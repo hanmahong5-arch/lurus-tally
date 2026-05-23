@@ -10,6 +10,8 @@
 export type UndoAction =
   | { type: "delete_product"; id: string; name: string; revert: () => Promise<void> }
   | { type: "cancel_purchase"; id: string; billNo: string; revert: () => Promise<void> }
+  // AI-created purchase draft: undo cancels the draft the assistant just built.
+  | { type: "ai_purchase_draft"; id: string; billNo: string; revert: () => Promise<void> }
 
 export interface UndoEntry {
   action: UndoAction

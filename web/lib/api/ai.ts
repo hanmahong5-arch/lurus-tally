@@ -48,6 +48,17 @@ export interface AIPlan {
   expires_at: string
 }
 
+// ConfirmPlanResult is the response of a successful plan confirm. When the plan
+// produced a purchase draft, bill_id/bill_no let the UI deep-link to it.
+export interface ConfirmPlanResult {
+  plan_id: string
+  status: string
+  type: string
+  affected_count?: number
+  bill_id?: string
+  bill_no?: string
+}
+
 // SSEEventType names the possible event types in the AI chat SSE stream.
 export type SSEEventType = "chunk" | "plan" | "done" | "error"
 
@@ -196,20 +207,20 @@ export function streamChat(
  * `silent: true` keeps the toast UX in the caller's hands — PlanCard renders
  * its own inline error.
  */
-export async function confirmPlan(planId: string): Promise<void> {
-  await callPlanAction(planId, "confirm")
+export async function confirmPlan(planId: string): Promise<ConfirmPlanResult> {
+  return callPlanAction<ConfirmPlanResult>(planId, "confirm")
 }
 
 /**
  * cancelPlan sends a cancel request for a pending plan.
  */
 export async function cancelPlan(planId: string): Promise<void> {
-  await callPlanAction(planId, "cancel")
+  await callPlanAction<unknown>(planId, "cancel")
 }
 
-async function callPlanAction(planId: string, action: "confirm" | "cancel"): Promise<void> {
+async function callPlanAction<T>(planId: string, action: "confirm" | "cancel"): Promise<T> {
   try {
-    await apiFetch<unknown>(`${BASE}/ai/plans/${planId}/${action}`, {
+    return await apiFetch<T>(`${BASE}/ai/plans/${planId}/${action}`, {
       method: "POST",
       silent: true,
     })

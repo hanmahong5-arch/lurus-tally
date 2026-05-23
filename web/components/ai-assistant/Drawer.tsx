@@ -5,6 +5,7 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { MessageList, type UIMessage } from "./MessageList"
 import { streamChat, type AIPlan } from "@/lib/api/ai"
 import { useGlobalShortcut } from "@/hooks/useGlobalShortcut"
+import { trackEvent } from "@/lib/telemetry"
 import { Button } from "@/components/ui/button"
 
 // Persisted conversation history key. Each tenant sees their own history because
@@ -53,12 +54,19 @@ export function AIDrawer() {
   const inputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<(() => void) | null>(null)
+  // Records how the drawer was last opened so the ai_drawer_open telemetry can
+  // attribute the trigger. Set by each opener before flipping `open` to true.
+  const openTriggerRef = useRef<"shortcut" | "button" | "deeplink">("button")
   const reduceMotion = useReducedMotion()
 
   // Cmd+J toggles drawer.
   useGlobalShortcut({
     key: "j",
-    onTrigger: () => setOpen((o) => !o),
+    onTrigger: () =>
+      setOpen((o) => {
+        if (!o) openTriggerRef.current = "shortcut"
+        return !o
+      }),
   })
 
   // Listen for tally:ai-query events fired by the Command Palette.
@@ -66,12 +74,23 @@ export function AIDrawer() {
     const handler = (e: Event) => {
       const query = (e as CustomEvent<{ query: string }>).detail?.query
       if (!query) return
+      openTriggerRef.current = "deeplink"
       setOpen(true)
       setPendingAutoSend(query)
     }
     window.addEventListener("tally:ai-query", handler)
     return () => window.removeEventListener("tally:ai-query", handler)
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Fire ai_drawer_open when the drawer transitions to open (H3 drawer DAU).
+  useEffect(() => {
+    if (open) {
+      trackEvent("ai_drawer_open", {
+        page_context: window.location.pathname,
+        trigger: openTriggerRef.current,
+      })
+    }
+  }, [open])
 
   // Auto-send when pendingAutoSend is set and the drawer has opened.
   useEffect(() => {
@@ -279,7 +298,10 @@ export function AIDrawer() {
     <>
       {/* Floating action button */}
       <button
-        onClick={() => setOpen(true)}
+        onClick={() => {
+          openTriggerRef.current = "button"
+          setOpen(true)
+        }}
         data-testid="ai-drawer-fab"
         aria-label="打开 AI 助手 (Cmd+J)"
         className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-all hover:scale-110 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

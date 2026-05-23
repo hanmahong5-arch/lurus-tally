@@ -304,13 +304,21 @@ func NewApp(cfg *config.Config) (*App, error) {
 			return nil, fmt.Errorf("lifecycle: cannot init LLM client: %w", lerr)
 		}
 
+		aiProductRepo := repoai.NewSQLProductRepo(db)
 		registry := appai.NewRegistry(
-			repoai.NewSQLProductRepo(db),
+			aiProductRepo,
 			repoai.NewSQLStockRepo(db),
 			repoai.NewSQLSaleRepo(db),
 			repoai.NewSQLExchangeRateRepo(db),
 		)
 		orchestrator := appai.NewOrchestrator(llmClient, registry, planStore, cfg.DefaultAIModel)
+
+		// Wire the plan executor so confirming an AI plan performs real side
+		// effects (PO draft / price change / stock adjust) instead of a no-op.
+		orchestrator.WithExecutor(buildPlanExecutor(db, billRepo, recordMovementUC, aiProductRepo))
+		// Audit every AI plan execution into the account activity log (red-line:
+		// each AI write must be auditable).
+		orchestrator.WithAudit(newAIAuditWriter(acctAuditRepo, l))
 
 		// Wire memorus memory client when both env vars are set.
 		// Returns (nil, nil) when either is empty — orchestrator degrades gracefully.

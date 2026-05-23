@@ -31,6 +31,8 @@ type Orchestrator struct {
 	llm       *llmclient.Client
 	registry  *Registry
 	planStore PlanStore
+	executor  PlanExecutor // nil → ConfirmPlan flips status only (dev / tests)
+	audit     AuditWriter  // nil → AI plan executions are not audited
 	memory    MemoryClient // nil when memorus disabled
 	model     string
 }
@@ -52,6 +54,23 @@ func NewOrchestrator(llm *llmclient.Client, registry *Registry, planStore PlanSt
 // Passing nil disables memory (same as default).
 func (o *Orchestrator) WithMemory(mc MemoryClient) *Orchestrator {
 	o.memory = mc
+	return o
+}
+
+// WithExecutor attaches a PlanExecutor so ConfirmPlan performs real side effects
+// (build PO draft / change prices / adjust stock). Passing nil leaves ConfirmPlan
+// as a status-only flip — acceptable for dev/tests where execution is not wired.
+func (o *Orchestrator) WithExecutor(ex PlanExecutor) *Orchestrator {
+	o.executor = ex
+	return o
+}
+
+// WithAudit attaches an AuditWriter so each confirmed AI plan execution leaves an
+// audit trail (red-line: every AI stock write must be auditable). Passing nil
+// disables auditing. Audit failures never block the confirm — the write already
+// happened; the adapter is responsible for logging.
+func (o *Orchestrator) WithAudit(aw AuditWriter) *Orchestrator {
+	o.audit = aw
 	return o
 }
 
@@ -244,18 +263,27 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 	return nil, fmt.Errorf("orchestrator: exceeded %d tool rounds", maxToolRounds)
 }
 
-// ConfirmPlan executes a confirmed plan. Currently a no-op stub:
-// actual execution (price writes, purchase creation, stock adjust) will be
-// wired in follow-up stories once the plan executor is implemented.
+// ConfirmPlan executes a confirmed plan's real side effects (build PO draft,
+// change prices, adjust stock) via the attached PlanExecutor and returns the
+// updated plan plus an ExecutionResult.
+//
+// Idempotency: the plan is flipped to Confirmed *before* execution, so a
+// concurrent second click sees a non-pending plan and is rejected. On execution
+// failure the plan is reverted to Pending so the user can retry — note that the
+// purchase-draft path is the only fully transactional one; bulk price/stock
+// changes are not atomic across products, so a retry after a partial failure
+// may re-apply to already-changed rows.
+//
 // Returns ErrPlanNotFound when the plan is missing, ErrPlanExpired when
 // ExpiresAt has passed, or a wrapped error for any other failure.
-func (o *Orchestrator) ConfirmPlan(ctx context.Context, tenantID, planID uuid.UUID) (*domainai.Plan, error) {
+// actorID is the acting user (for bill creator + audit attribution).
+func (o *Orchestrator) ConfirmPlan(ctx context.Context, tenantID, actorID, planID uuid.UUID) (*domainai.Plan, *ExecutionResult, error) {
 	plan, err := o.planStore.GetPlan(ctx, tenantID, planID)
 	if err != nil {
-		return nil, fmt.Errorf("confirm plan: get: %w", err)
+		return nil, nil, fmt.Errorf("confirm plan: get: %w", err)
 	}
 	if plan == nil {
-		return nil, ErrPlanNotFound
+		return nil, nil, ErrPlanNotFound
 	}
 	if !plan.ExpiresAt.IsZero() && time.Now().After(plan.ExpiresAt) {
 		// Mark expired in store so subsequent GETs see the terminal state.
@@ -265,16 +293,74 @@ func (o *Orchestrator) ConfirmPlan(ctx context.Context, tenantID, planID uuid.UU
 			plan.Status = domainai.PlanStatusExpired
 			_ = o.planStore.UpdatePlan(ctx, plan)
 		}
-		return nil, ErrPlanExpired
+		return nil, nil, ErrPlanExpired
 	}
 	if plan.Status != domainai.PlanStatusPending {
-		return nil, fmt.Errorf("confirm plan: plan is %s, cannot confirm", plan.Status)
+		return nil, nil, fmt.Errorf("confirm plan: plan is %s, cannot confirm", plan.Status)
 	}
+
+	// Flip to Confirmed first — acts as a lock against concurrent double-clicks.
 	plan.Status = domainai.PlanStatusConfirmed
 	if err := o.planStore.UpdatePlan(ctx, plan); err != nil {
-		return nil, fmt.Errorf("confirm plan: update: %w", err)
+		return nil, nil, fmt.Errorf("confirm plan: update: %w", err)
 	}
-	return plan, nil
+
+	// No executor wired (dev/tests): status flip only, no side effects.
+	if o.executor == nil {
+		return plan, nil, nil
+	}
+
+	result, execErr := o.executor.Execute(ctx, actorID, plan)
+	if execErr != nil {
+		o.recordAudit(ctx, actorID, plan, nil, execErr)
+		// Revert so the user can retry rather than seeing a confirmed-but-empty plan.
+		plan.Status = domainai.PlanStatusPending
+		if revertErr := o.planStore.UpdatePlan(ctx, plan); revertErr != nil {
+			return nil, nil, fmt.Errorf("confirm plan: execute failed (%v) and revert failed: %w", execErr, revertErr)
+		}
+		return nil, nil, fmt.Errorf("confirm plan: execute: %w", execErr)
+	}
+	o.recordAudit(ctx, actorID, plan, result, nil)
+	return plan, result, nil
+}
+
+// recordAudit writes one audit row for an AI plan execution. Best-effort: a
+// failure here is never surfaced to the user because the side effect already
+// committed — the AuditWriter implementation is responsible for logging.
+func (o *Orchestrator) recordAudit(ctx context.Context, actorID uuid.UUID, plan *domainai.Plan, result *ExecutionResult, execErr error) {
+	if o.audit == nil {
+		return
+	}
+	payload := map[string]any{
+		"plan_id":     plan.ID.String(),
+		"type":        string(plan.Type),
+		"description": plan.Preview.Description,
+		"sample_rows": plan.Preview.SampleRows, // before/after diff
+	}
+	rec := AuditRecord{
+		TenantID:   plan.TenantID,
+		ActorID:    actorID,
+		Action:     "ai.plan.executed",
+		TargetKind: "ai_plan",
+		TargetID:   plan.ID.String(),
+		Payload:    payload,
+	}
+	if execErr != nil {
+		rec.Action = "ai.plan.failed"
+		payload["error"] = execErr.Error()
+		_ = o.audit.Write(ctx, rec)
+		return
+	}
+	if result != nil {
+		payload["affected_count"] = result.AffectedCount
+		if result.BillID != nil {
+			payload["bill_id"] = result.BillID.String()
+			payload["bill_no"] = result.BillNo
+			rec.TargetKind = "bill"
+			rec.TargetID = result.BillID.String()
+		}
+	}
+	_ = o.audit.Write(ctx, rec)
 }
 
 // CancelPlan marks a plan as cancelled.

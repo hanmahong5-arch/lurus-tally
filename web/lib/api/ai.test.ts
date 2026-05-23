@@ -15,14 +15,15 @@ describe("AI API client", () => {
     global.fetch = originalFetch
   })
 
-  it("TestConfirmPlan_Success_ResolvesWithoutError", async () => {
+  it("TestConfirmPlan_Success_ResolvesWithResult", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
-      json: async () => ({ plan_id: "plan-123", status: "confirmed" }),
+      json: async () => ({ plan_id: "plan-123", status: "confirmed", type: "create_purchase_draft", bill_id: "bill-1", bill_no: "PO-1", affected_count: 2 }),
     } as Response)
 
     const { confirmPlan } = await import("./ai")
-    await expect(confirmPlan("plan-123")).resolves.toBeUndefined()
+    const res = await confirmPlan("plan-123")
+    expect(res).toMatchObject({ plan_id: "plan-123", status: "confirmed", bill_id: "bill-1", bill_no: "PO-1", affected_count: 2 })
 
     expect(global.fetch).toHaveBeenCalledWith(
       expect.stringContaining("ai/plans/plan-123/confirm"),

@@ -195,7 +195,7 @@ func TestOrchestrator_ConfirmPlan_Expired_ReturnsErrPlanExpired(t *testing.T) {
 	_ = store.SavePlan(context.Background(), plan)
 
 	o := appai.NewOrchestrator(nil, nil, store, "")
-	got, err := o.ConfirmPlan(context.Background(), tenantID, planID)
+	got, _, err := o.ConfirmPlan(context.Background(), tenantID, tenantID, planID)
 	if err != appai.ErrPlanExpired {
 		t.Fatalf("err=%v, want appai.ErrPlanExpired", err)
 	}
@@ -227,12 +227,171 @@ func TestOrchestrator_ConfirmPlan_NotExpired_Confirms(t *testing.T) {
 	_ = store.SavePlan(context.Background(), plan)
 
 	o := appai.NewOrchestrator(nil, nil, store, "")
-	confirmed, err := o.ConfirmPlan(context.Background(), tenantID, planID)
+	confirmed, _, err := o.ConfirmPlan(context.Background(), tenantID, tenantID, planID)
 	if err != nil {
 		t.Fatalf("ConfirmPlan: %v", err)
 	}
 	if confirmed.Status != domainai.PlanStatusConfirmed {
 		t.Errorf("returned status=%s, want Confirmed", confirmed.Status)
+	}
+}
+
+// --- execution-path tests (PlanExecutor wired) ---
+
+// fakeExecutor records calls and can be told to fail.
+type fakeExecutor struct {
+	calls  int
+	result *appai.ExecutionResult
+	err    error
+}
+
+func (f *fakeExecutor) Execute(_ context.Context, _ uuid.UUID, plan *domainai.Plan) (*appai.ExecutionResult, error) {
+	f.calls++
+	if f.err != nil {
+		return nil, f.err
+	}
+	if f.result != nil {
+		return f.result, nil
+	}
+	return &appai.ExecutionResult{Type: plan.Type, AffectedCount: 1}, nil
+}
+
+func pendingPlan(tenantID, planID uuid.UUID, typ domainai.PlanType) *domainai.Plan {
+	return &domainai.Plan{
+		ID:        planID,
+		TenantID:  tenantID,
+		Type:      typ,
+		Status:    domainai.PlanStatusPending,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(10 * time.Minute),
+	}
+}
+
+// TestConfirmPlan_WithExecutor_RunsAndReturnsResult verifies the executor is
+// invoked on confirm and its result is returned to the caller.
+func TestConfirmPlan_WithExecutor_RunsAndReturnsResult(t *testing.T) {
+	store := newMockPlanStore()
+	tenantID, actorID, planID := uuid.New(), uuid.New(), uuid.New()
+	billID := uuid.New()
+	_ = store.SavePlan(context.Background(), pendingPlan(tenantID, planID, domainai.PlanTypeCreatePurchase))
+
+	ex := &fakeExecutor{result: &appai.ExecutionResult{
+		Type: domainai.PlanTypeCreatePurchase, AffectedCount: 2, BillID: &billID, BillNo: "PO-20260522-0001",
+	}}
+	o := appai.NewOrchestrator(nil, nil, store, "").WithExecutor(ex)
+
+	plan, result, err := o.ConfirmPlan(context.Background(), tenantID, actorID, planID)
+	if err != nil {
+		t.Fatalf("ConfirmPlan: %v", err)
+	}
+	if ex.calls != 1 {
+		t.Errorf("executor called %d times, want 1", ex.calls)
+	}
+	if plan.Status != domainai.PlanStatusConfirmed {
+		t.Errorf("status=%s, want Confirmed", plan.Status)
+	}
+	if result == nil || result.BillNo != "PO-20260522-0001" || result.AffectedCount != 2 {
+		t.Errorf("unexpected result: %+v", result)
+	}
+}
+
+// TestConfirmPlan_ExecutorFailure_RevertsToPending verifies that a failed
+// execution leaves the plan re-confirmable rather than confirmed-but-empty.
+func TestConfirmPlan_ExecutorFailure_RevertsToPending(t *testing.T) {
+	store := newMockPlanStore()
+	tenantID, actorID, planID := uuid.New(), uuid.New(), uuid.New()
+	_ = store.SavePlan(context.Background(), pendingPlan(tenantID, planID, domainai.PlanTypeCreatePurchase))
+
+	ex := &fakeExecutor{err: errFakeExec}
+	o := appai.NewOrchestrator(nil, nil, store, "").WithExecutor(ex)
+
+	_, _, err := o.ConfirmPlan(context.Background(), tenantID, actorID, planID)
+	if err == nil {
+		t.Fatal("expected error from failed execution")
+	}
+	persisted, _ := store.GetPlan(context.Background(), tenantID, planID)
+	if persisted.Status != domainai.PlanStatusPending {
+		t.Errorf("status=%s after failure, want Pending (retryable)", persisted.Status)
+	}
+}
+
+// TestConfirmPlan_DoubleConfirm_SecondRejected verifies the idempotency guard:
+// once confirmed, a second confirm is rejected and does not re-run the executor.
+func TestConfirmPlan_DoubleConfirm_SecondRejected(t *testing.T) {
+	store := newMockPlanStore()
+	tenantID, actorID, planID := uuid.New(), uuid.New(), uuid.New()
+	_ = store.SavePlan(context.Background(), pendingPlan(tenantID, planID, domainai.PlanTypeCreatePurchase))
+
+	ex := &fakeExecutor{}
+	o := appai.NewOrchestrator(nil, nil, store, "").WithExecutor(ex)
+
+	if _, _, err := o.ConfirmPlan(context.Background(), tenantID, actorID, planID); err != nil {
+		t.Fatalf("first confirm: %v", err)
+	}
+	if _, _, err := o.ConfirmPlan(context.Background(), tenantID, actorID, planID); err == nil {
+		t.Fatal("second confirm should be rejected")
+	}
+	if ex.calls != 1 {
+		t.Errorf("executor ran %d times, want 1 (no double execution)", ex.calls)
+	}
+}
+
+var errFakeExec = errTest("boom")
+
+type errTest string
+
+func (e errTest) Error() string { return string(e) }
+
+// fakeAudit captures audit writes.
+type fakeAudit struct {
+	records []appai.AuditRecord
+}
+
+func (f *fakeAudit) Write(_ context.Context, rec appai.AuditRecord) error {
+	f.records = append(f.records, rec)
+	return nil
+}
+
+// TestConfirmPlan_WritesAuditOnSuccess verifies a successful execution leaves an
+// ai.plan.executed audit row carrying the bill reference.
+func TestConfirmPlan_WritesAuditOnSuccess(t *testing.T) {
+	store := newMockPlanStore()
+	tenantID, actorID, planID := uuid.New(), uuid.New(), uuid.New()
+	billID := uuid.New()
+	_ = store.SavePlan(context.Background(), pendingPlan(tenantID, planID, domainai.PlanTypeCreatePurchase))
+
+	ex := &fakeExecutor{result: &appai.ExecutionResult{Type: domainai.PlanTypeCreatePurchase, AffectedCount: 2, BillID: &billID, BillNo: "PO-1"}}
+	aud := &fakeAudit{}
+	o := appai.NewOrchestrator(nil, nil, store, "").WithExecutor(ex).WithAudit(aud)
+
+	if _, _, err := o.ConfirmPlan(context.Background(), tenantID, actorID, planID); err != nil {
+		t.Fatalf("ConfirmPlan: %v", err)
+	}
+	if len(aud.records) != 1 {
+		t.Fatalf("audit rows=%d, want 1", len(aud.records))
+	}
+	r := aud.records[0]
+	if r.Action != "ai.plan.executed" || r.ActorID != actorID || r.TargetID != billID.String() {
+		t.Errorf("unexpected audit record: %+v", r)
+	}
+}
+
+// TestConfirmPlan_WritesAuditOnFailure verifies a failed execution leaves an
+// ai.plan.failed audit row even though the plan is reverted to pending.
+func TestConfirmPlan_WritesAuditOnFailure(t *testing.T) {
+	store := newMockPlanStore()
+	tenantID, actorID, planID := uuid.New(), uuid.New(), uuid.New()
+	_ = store.SavePlan(context.Background(), pendingPlan(tenantID, planID, domainai.PlanTypeBulkStockAdjust))
+
+	ex := &fakeExecutor{err: errFakeExec}
+	aud := &fakeAudit{}
+	o := appai.NewOrchestrator(nil, nil, store, "").WithExecutor(ex).WithAudit(aud)
+
+	if _, _, err := o.ConfirmPlan(context.Background(), tenantID, actorID, planID); err == nil {
+		t.Fatal("expected execution error")
+	}
+	if len(aud.records) != 1 || aud.records[0].Action != "ai.plan.failed" {
+		t.Errorf("expected one ai.plan.failed audit row, got %+v", aud.records)
 	}
 }
 

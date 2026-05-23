@@ -27,7 +27,7 @@ import (
 // ChatOrchestrator is the surface the handler uses from the AI orchestrator.
 type ChatOrchestrator interface {
 	StreamChat(ctx context.Context, in appai.ChatInput, onChunk func(string)) (*appai.ChatOutput, error)
-	ConfirmPlan(ctx context.Context, tenantID, planID uuid.UUID) (*domainai.Plan, error)
+	ConfirmPlan(ctx context.Context, tenantID, actorID, planID uuid.UUID) (*domainai.Plan, *appai.ExecutionResult, error)
 	CancelPlan(ctx context.Context, tenantID, planID uuid.UUID) error
 	ListPlans(ctx context.Context, tenantID uuid.UUID, statusFilter string) ([]*domainai.Plan, error)
 }
@@ -214,7 +214,14 @@ func (h *Handler) ConfirmPlan(c *gin.Context) {
 		return
 	}
 
-	plan, err := h.orchestrator.ConfirmPlan(c.Request.Context(), tenantID, planID)
+	// Acting user for bill creator + audit attribution. Falls back to tenantID
+	// when no per-user identity is present (single-operator dev deployments).
+	actorID := resolveActorID(c)
+	if actorID == uuid.Nil {
+		actorID = tenantID
+	}
+
+	plan, result, err := h.orchestrator.ConfirmPlan(c.Request.Context(), tenantID, actorID, planID)
 	if err != nil {
 		switch err {
 		case appai.ErrPlanNotFound:
@@ -228,11 +235,42 @@ func (h *Handler) ConfirmPlan(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	resp := gin.H{
 		"plan_id": plan.ID,
 		"status":  plan.Status,
 		"type":    plan.Type,
-	})
+	}
+	// result is nil only when no executor is wired (dev/tests).
+	if result != nil {
+		resp["affected_count"] = result.AffectedCount
+		// North-star + funnel metrics: count every confirmed AI plan, and count
+		// a Weekly Active Decision whenever the plan produced a purchase draft.
+		middleware.IncAIPlanExecuted(string(result.Type), tenantID.String())
+		if result.BillID != nil {
+			resp["bill_id"] = result.BillID
+			resp["bill_no"] = result.BillNo
+			middleware.IncWAD(tenantID.String())
+		}
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+// resolveActorID extracts the acting user's UUID from the Zitadel subject or the
+// X-User-ID header. Returns uuid.Nil when neither is present.
+func resolveActorID(c *gin.Context) uuid.UUID {
+	if sub, ok := c.Get(middleware.CtxKeyZitadelSub); ok {
+		if s, ok := sub.(string); ok {
+			if id, err := uuid.Parse(s); err == nil {
+				return id
+			}
+		}
+	}
+	if raw := c.GetHeader("X-User-ID"); raw != "" {
+		if id, err := uuid.Parse(raw); err == nil {
+			return id
+		}
+	}
+	return uuid.Nil
 }
 
 // CancelPlan handles POST /api/v1/ai/plans/:plan_id/cancel.

@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
 )
 
@@ -69,6 +70,10 @@ func (h *Handler) serve(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "event not in allow-list", "event": body.Event})
 		return
 	}
+
+	// Count the event in Prometheus so the activation funnel is scrapable at
+	// /internal/v1/metrics even when NATS (the durable sink) is unavailable.
+	middleware.IncWebTelemetry(body.Event)
 
 	tenant := body.TenantID
 	if tenant == "" {

@@ -81,9 +81,15 @@ export function trackEvent<E extends TelemetryEvent>(
   // Safety: do not run during SSR.
   if (typeof window === "undefined") return
 
-  fetch("/api/otel-events", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ event, metadata }),
-  }).catch(() => undefined)
+  // Wrap in try/catch as well as .catch — a missing/broken fetch must never
+  // throw synchronously into a UI handler (telemetry is fire-and-forget).
+  try {
+    void fetch("/api/otel-events", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event, metadata }),
+    }).catch(() => undefined)
+  } catch {
+    // ignore
+  }
 }
