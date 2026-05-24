@@ -4,6 +4,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { buttonVariants } from "@/components/ui/button"
 import { fetchLowStockAlerts, fetchDraftPurchaseBillCount } from "@/lib/api/stock"
+import { fetchWeeklySummary } from "@/lib/api/digest"
+import { MondayCard } from "@/components/dashboard/monday-card"
 
 export const revalidate = 60
 
@@ -18,9 +20,10 @@ export default async function DashboardPage({
 
   // Fetch dashboard widget data server-side; degrade gracefully on failure.
   const accessToken = session?.accessToken ?? ""
-  const [lowStock, draftPurchaseCount] = await Promise.all([
+  const [lowStock, draftPurchaseCount, weeklySummary] = await Promise.all([
     accessToken ? fetchLowStockAlerts(accessToken, 5) : Promise.resolve({ items: [], count: 0 }),
     accessToken ? fetchDraftPurchaseBillCount(accessToken) : Promise.resolve(0),
+    accessToken ? fetchWeeklySummary(accessToken) : Promise.resolve(null),
   ])
 
   const cards: { href: string; title: string; description: string; emoji: string }[] = [
@@ -37,6 +40,9 @@ export default async function DashboardPage({
   return (
     <main className="flex-1 overflow-y-auto px-6 py-8">
       <div className="mx-auto max-w-5xl space-y-6">
+        {/* Weekly summary Monday card — mounts at top; hidden when no signals */}
+        <MondayCard summary={weeklySummary} />
+
         <header className="space-y-1">
           <h1 className="text-2xl font-bold tracking-tight">欢迎回到 Lurus Tally</h1>
           <p className="text-sm text-muted-foreground">
