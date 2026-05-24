@@ -134,7 +134,7 @@ export default async function ReportsPage() {
       <section className="space-y-3">
         <h2 className="text-sm font-medium">AI 分析决策</h2>
         <p className="text-xs text-muted-foreground">
-          每块均可导出 CSV，点击"→ 建议"按钮可直接唤起 AI 助手并预填查询。
+          每块均可导出 CSV，点击「→ 建议」按钮可直接唤起 AI 助手并预填查询。
         </p>
         <div className="grid gap-4 sm:grid-cols-2">
           <GrossMarginBlock />

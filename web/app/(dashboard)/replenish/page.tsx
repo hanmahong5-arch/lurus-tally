@@ -109,10 +109,10 @@ export default function ReplenishPage() {
     let successCount = 0
     const errors: string[] = []
 
-    for (const [, rows] of groups) {
+    for (const rows of Array.from(groups.values())) {
       const items: BillLineItemInput[] = rows
-        .filter((r) => parseFloat(r.suggested_qty) > 0)
-        .map((r, i) => ({
+        .filter((r: ReplenishSuggestion) => parseFloat(r.suggested_qty) > 0)
+        .map((r: ReplenishSuggestion, i: number) => ({
           product_id: r.product_id,
           line_no: i + 1,
           qty: r.suggested_qty,

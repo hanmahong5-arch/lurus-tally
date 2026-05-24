@@ -43,6 +43,7 @@ var (
 // AI / north-star counters.
 //   - wadTotal       : Weekly Active Decisions — AI-confirmed purchase drafts (the north star).
 //   - aiPlanExecuted : all confirmed AI plan executions, by type (create_purchase_draft|price_change|bulk_stock_adjust).
+//
 // Both carry an optional tenant_id label (perTenantEnabled).
 var (
 	wadTotal       *prometheus.CounterVec

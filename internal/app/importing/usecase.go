@@ -84,9 +84,9 @@ type ImportRequest struct {
 	CreatorID   uuid.UUID
 	WarehouseID uuid.UUID // destination warehouse for stock deduction
 	Platform    Platform
-	CSVData     []byte   // raw file bytes
+	CSVData     []byte    // raw file bytes
 	SKUHints    []SKUHint // optional caller-supplied mapping overrides
-	DryRun      bool     // preview mode: no bills created, only oversell check
+	DryRun      bool      // preview mode: no bills created, only oversell check
 }
 
 // ImportedOrder summarises one successfully imported order.
@@ -122,7 +122,7 @@ type UnknownSKU struct {
 type ImportResult struct {
 	Imported    []ImportedOrder
 	Skipped     []SkippedOrder
-	Oversells   []OversellRow  // non-empty only in DryRun mode
+	Oversells   []OversellRow // non-empty only in DryRun mode
 	UnknownSKUs []UnknownSKU  // platform SKUs that need mapping before re-import
 }
 
@@ -518,12 +518,12 @@ func parseAmazonCSV(data []byte) ([]OrderRow, error) {
 		return nil, fmt.Errorf("amazon csv: read header: %w", err)
 	}
 	idx, err := columnIndex(header, map[string][]string{
-		"order_id":     {"order-id", "order_id", "orderid"},
-		"sku":          {"sku", "asin", "listing-sku", "merchant-sku"},
-		"qty":          {"quantity-purchased", "quantity", "qty"},
-		"unit_price":   {"item-price", "unit-price", "price"},
-		"currency":     {"currency"},
-		"order_date":   {"purchase-date", "order-date", "date"},
+		"order_id":   {"order-id", "order_id", "orderid"},
+		"sku":        {"sku", "asin", "listing-sku", "merchant-sku"},
+		"qty":        {"quantity-purchased", "quantity", "qty"},
+		"unit_price": {"item-price", "unit-price", "price"},
+		"currency":   {"currency"},
+		"order_date": {"purchase-date", "order-date", "date"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("amazon csv: %w", err)
@@ -560,12 +560,12 @@ func parseShopifyCSV(data []byte) ([]OrderRow, error) {
 		return nil, fmt.Errorf("shopify csv: read header: %w", err)
 	}
 	idx, err := columnIndex(header, map[string][]string{
-		"order_id":     {"name", "order_name", "order-name", "order_id", "order-id"},
-		"sku":          {"lineitem sku", "lineitem_sku", "sku", "variant sku"},
-		"qty":          {"lineitem quantity", "lineitem_quantity", "quantity", "qty"},
-		"unit_price":   {"lineitem price", "lineitem_price", "price"},
-		"currency":     {"currency"},
-		"order_date":   {"created at", "created_at", "order_date"},
+		"order_id":   {"name", "order_name", "order-name", "order_id", "order-id"},
+		"sku":        {"lineitem sku", "lineitem_sku", "sku", "variant sku"},
+		"qty":        {"lineitem quantity", "lineitem_quantity", "quantity", "qty"},
+		"unit_price": {"lineitem price", "lineitem_price", "price"},
+		"currency":   {"currency"},
+		"order_date": {"created at", "created_at", "order_date"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("shopify csv: %w", err)

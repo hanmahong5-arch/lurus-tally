@@ -167,7 +167,7 @@ function UploadCard({
 }: {
   platform: Platform
   onPlatformChange: (p: Platform) => void
-  fileRef: React.RefObject<HTMLInputElement | null>
+  fileRef: React.RefObject<HTMLInputElement>
   busy: boolean
   onPreview: () => void
 }) {

@@ -33,28 +33,35 @@ func New(db DB) *SQLRepo {
 var _ appreports.Repo = (*SQLRepo)(nil)
 
 // ListRecentSaleLines returns approved sale line rows within the past N days.
-// Revenue = qty × unit_price. Margin = (unit_price − unit_cost) / unit_price.
+// Revenue = qty × unit_price. Margin = (unit_price − purchase_price) / unit_price,
+// where purchase_price is the cost snapshot stored on the sale line.
+// Real schema: bill_head (bill_type='出库' sub_type='销售' status=2 已审核, no
+// approved_at — bill_date is the business date) + bill_item (head_id, qty,
+// unit_price, purchase_price).
 func (r *SQLRepo) ListRecentSaleLines(ctx context.Context, tenantID uuid.UUID, days int) ([]appreports.SaleRow, error) {
 	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
 	const q = `
 		SELECT
-			bl.product_id,
+			bi.product_id,
 			p.name,
-			bl.quantity,
-			bl.quantity * bl.unit_price                               AS revenue,
-			CASE WHEN bl.unit_price > 0
-				THEN (bl.unit_price - COALESCE(bl.unit_cost, 0)) / bl.unit_price
+			bi.qty,
+			bi.qty * bi.unit_price                                      AS revenue,
+			CASE WHEN bi.unit_price > 0
+				THEN (bi.unit_price - COALESCE(bi.purchase_price, 0)) / bi.unit_price
 				ELSE 0
 			END                                                        AS margin,
-			b.approved_at
-		FROM tally.bill_line bl
-		JOIN tally.bill b ON b.id = bl.bill_id
-		JOIN tally.product p ON p.id = bl.product_id
-		WHERE b.tenant_id = $1
-		  AND b.bill_type  = 'sale'
-		  AND b.status     = 'approved'
-		  AND b.approved_at >= $2
-		ORDER BY b.approved_at DESC
+			bh.bill_date
+		FROM tally.bill_item bi
+		JOIN tally.bill_head bh ON bh.id = bi.head_id
+		JOIN tally.product   p  ON p.id  = bi.product_id
+		WHERE bh.tenant_id = $1
+		  AND bh.bill_type  = '出库'
+		  AND bh.sub_type   = '销售'
+		  AND bh.status     = 2
+		  AND bh.deleted_at IS NULL
+		  AND bi.deleted_at IS NULL
+		  AND bh.bill_date >= $2
+		ORDER BY bh.bill_date DESC
 		LIMIT 10000`
 
 	rows, err := r.db.QueryContext(ctx, q, tenantID, cutoff)
@@ -82,27 +89,47 @@ func (r *SQLRepo) ListRecentSaleLines(ctx context.Context, tenantID uuid.UUID, d
 // AvgDailySales is derived from the past 30 days of outbound movements.
 // LeadTimeDays defaults to 7 when not configured per-product.
 func (r *SQLRepo) ListStockSnapshots(ctx context.Context, tenantID uuid.UUID) ([]appreports.StockRow, error) {
+	// Real schema: stock_snapshot has on_hand_qty/available_qty/unit_cost (no
+	// quantity/unit_cost_avg/last_movement_at). "Last movement" is derived from
+	// MAX(stock_movement.occurred_at). Snapshots are per-warehouse, so aggregate
+	// to one row per product to avoid double-counting dead-stock value.
 	const q = `
 		SELECT
-			ss.product_id,
+			s.product_id,
 			p.name,
 			p.code,
-			COALESCE(ss.quantity, 0)                                  AS qty,
-			COALESCE(ss.unit_cost_avg, 0)                             AS unit_cost,
-			COALESCE(ss.last_movement_at, now() - interval '200 days') AS last_moved_at,
-			COALESCE(avg_sales.avg_daily, 0)                          AS avg_daily_sales
-		FROM tally.stock_snapshot ss
-		JOIN tally.product p ON p.id = ss.product_id
+			s.on_hand_qty                                             AS qty,
+			s.unit_cost                                               AS unit_cost,
+			COALESCE(lm.last_moved_at, now() - interval '200 days')   AS last_moved_at,
+			COALESCE(av.avg_daily, 0)                                 AS avg_daily_sales
+		FROM (
+			SELECT
+				product_id,
+				SUM(on_hand_qty) AS on_hand_qty,
+				CASE WHEN SUM(on_hand_qty) > 0
+					THEN SUM(unit_cost * on_hand_qty) / SUM(on_hand_qty)
+					ELSE AVG(unit_cost)
+				END AS unit_cost
+			FROM tally.stock_snapshot
+			WHERE tenant_id = $1
+			GROUP BY product_id
+		) s
+		JOIN tally.product p ON p.id = s.product_id
 		LEFT JOIN (
-			SELECT product_id, SUM(quantity) / 30.0 AS avg_daily
+			SELECT product_id, MAX(occurred_at) AS last_moved_at
+			FROM tally.stock_movement
+			WHERE tenant_id = $1
+			GROUP BY product_id
+		) lm ON lm.product_id = s.product_id
+		LEFT JOIN (
+			SELECT product_id, SUM(qty_base) / 30.0 AS avg_daily
 			FROM tally.stock_movement
 			WHERE tenant_id = $1
 			  AND direction = 'out'
-			  AND created_at >= now() - interval '30 days'
+			  AND occurred_at >= now() - interval '30 days'
 			GROUP BY product_id
-		) avg_sales ON avg_sales.product_id = ss.product_id
-		WHERE ss.tenant_id = $1
-		  AND p.deleted_at IS NULL
+		) av ON av.product_id = s.product_id
+		WHERE p.deleted_at IS NULL
 		ORDER BY p.name`
 
 	rows, err := r.db.QueryContext(ctx, q, tenantID)

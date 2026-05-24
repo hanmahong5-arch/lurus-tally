@@ -13,16 +13,16 @@ import (
 
 // SuggestionRow is a single product replenishment suggestion.
 type SuggestionRow struct {
-	ProductID    uuid.UUID
-	ProductName  string
-	ProductCode  string
-	AvailableQty decimal.Decimal
-	SafetyQty    decimal.Decimal // low_safe_qty from stock_initial; zero if not configured
+	ProductID     uuid.UUID
+	ProductName   string
+	ProductCode   string
+	AvailableQty  decimal.Decimal
+	SafetyQty     decimal.Decimal // low_safe_qty from stock_initial; zero if not configured
 	AvgDailySales decimal.Decimal
-	SuggestedQty decimal.Decimal // max(0, weeklyDemand * weeks - available)
-	EstAmountCNY decimal.Decimal // SuggestedQty × unit_cost
-	SupplierID   *uuid.UUID      // nil when no supplier is linked
-	SupplierName string          // empty when nil
+	SuggestedQty  decimal.Decimal // max(0, weeklyDemand * weeks - available)
+	EstAmountCNY  decimal.Decimal // SuggestedQty × unit_cost
+	SupplierID    *uuid.UUID      // nil when no supplier is linked
+	SupplierName  string          // empty when nil
 	// UrgencyScore is days-of-supply at current velocity; lower = more urgent.
 	// Zero velocity products are scored MaxFloat64 (not urgent in a sales sense).
 	UrgencyScore decimal.Decimal

@@ -37,7 +37,7 @@ var _ appreplenish.SuggestionRepo = (*SQLSuggestionRepo)(nil)
 //   - unit_cost     from tally.stock_snapshot (avg across warehouses weighted by available_qty)
 //   - avg_daily_sales computed from tally.stock_movement direction='out' last 30 days
 //   - supplier_id / supplier_name from the most recent approved purchase bill for the product
-//     (falls back to NULL / '' when no purchase history exists)
+//     (falls back to NULL / ” when no purchase history exists)
 const listSuggestionsQuery = `
 WITH velocity AS (
     SELECT
@@ -83,7 +83,7 @@ last_supplier AS (
       AND bh.deleted_at  IS NULL
       AND p.partner_type IN ('supplier','both')
       AND p.deleted_at   IS NULL
-    ORDER BY bi.product_id, bh.approved_at DESC
+    ORDER BY bi.product_id, bh.bill_date DESC
 )
 SELECT
     pr.id                                    AS product_id,

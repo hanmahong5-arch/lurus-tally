@@ -192,7 +192,7 @@ func (uc *UseCase) ABCClassify(ctx context.Context, tenantID uuid.UUID) (*ABCRes
 	var (
 		aCnt, bCnt, cCnt int
 		aRev, bRev, cRev decimal.Decimal
-		cumulative        = decimal.Zero
+		cumulative       = decimal.Zero
 	)
 	for _, p := range list {
 		if total.IsZero() {
@@ -244,9 +244,9 @@ type DeadStockItem struct {
 
 // DeadStockResult is the output of DeadStock.
 type DeadStockResult struct {
-	Items          []DeadStockItem `json:"items"`
-	Count          int             `json:"count"`
-	ThresholdDays  int             `json:"threshold_days"`
+	Items         []DeadStockItem `json:"items"`
+	Count         int             `json:"count"`
+	ThresholdDays int             `json:"threshold_days"`
 }
 
 // DeadStock returns stock rows with no movement in the past N days.

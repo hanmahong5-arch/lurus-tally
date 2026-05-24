@@ -23,11 +23,15 @@ import (
 	handlerexport "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/export"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
+	handlerimporting "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/importing"
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
+	handlerreplenish "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/replenish"
+	handlerreports "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/reports"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
+	handlersearch "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/search"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlersupp "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/supplier"
 	handlertelemetry "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/telemetry"
@@ -43,9 +47,13 @@ import (
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
 	repooutbox "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/event_outbox"
 	repohorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/horticulture"
+	repoimporting "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/importing"
 	repopayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/payment"
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
 	repoprojectrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/project"
+	reporepl "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/replenish"
+	reporeports "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/reports"
+	reposearch "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/search"
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
 	reposupplier "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/supplier"
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
@@ -59,9 +67,13 @@ import (
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
 	appexport "github.com/hanmahong5-arch/lurus-tally/internal/app/export"
 	apphorticulture "github.com/hanmahong5-arch/lurus-tally/internal/app/horticulture"
+	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
 	appprojectuc "github.com/hanmahong5-arch/lurus-tally/internal/app/project"
+	appreplenish "github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
+	appreports "github.com/hanmahong5-arch/lurus-tally/internal/app/reports"
+	appsearch "github.com/hanmahong5-arch/lurus-tally/internal/app/search"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	appsupp "github.com/hanmahong5-arch/lurus-tally/internal/app/supplier"
 	apptenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
@@ -518,8 +530,24 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// PLATFORM_INTERNAL_KEY is set; open when blank for dev/test.
 	metricsHandler := handlermetrics.NewMetricsHandler(cfg.PlatformInternalKey)
 
+	// Swarm batch handlers — replenishment (Req 3), reports (Req 10), entity
+	// search (Req 6), multi-platform import (Req 5).
+	replenishHandler := handlerreplenish.New(appreplenish.NewListSuggestionsUseCase(reporepl.NewSQLSuggestionRepo(db)))
+	reportsHandler := handlerreports.New(appreports.New(reporeports.New(db)))
+	searchHandler := handlersearch.New(appsearch.NewSearchEntitiesUseCase(reposearch.New(db)))
+	importUC := appimporting.NewImportOrdersUseCase(
+		repoimporting.New(db),
+		importSaleCreator{uc: appbill.NewCreateSaleUseCase(billRepo)},
+		importSaleApprover{uc: approveSaleUC},
+		importStockChecker{uc: appstock.NewGetSnapshotUseCase(stockRepo)},
+		importCurrencyRater{uc: appcurrency.NewGetRateUseCase(currencyRepo)},
+		"CNY",
+	)
+	importHandler := handlerimporting.New(importUC, uuid.Nil)
+
 	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
-		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler, exportHandler, accountHandler)
+		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler, exportHandler, accountHandler,
+		replenishHandler, reportsHandler, searchHandler, importHandler)
 
 	// POST /internal/v1/telemetry/web — browser-side product telemetry → NATS
 	// PSI_TELEMETRY.web.* (S0.Q3). Bearer-gated via the same key as metrics.

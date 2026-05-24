@@ -14,10 +14,14 @@ import (
 	handlerexport "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/export"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
+	handlerimporting "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/importing"
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
+	handlerreplenish "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/replenish"
+	handlerreports "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/reports"
+	handlersearch "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/search"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlersupp "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/supplier"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
@@ -42,7 +46,7 @@ func notImplemented(c *gin.Context) {
 // The engine mode (release/debug) is controlled by GIN_MODE or gin.SetMode.
 //
 //nolint:cyclop // router wiring is intentionally long
-func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler, suph *handlersupp.Handler, wh *handlerwarehouse.Handler, exh *handlerexport.Handler, acct *handleracct.Handler) *gin.Engine {
+func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler, suph *handlersupp.Handler, wh *handlerwarehouse.Handler, exh *handlerexport.Handler, acct *handleracct.Handler, replh *handlerreplenish.Handler, reph *handlerreports.Handler, srch *handlersearch.Handler, imph *handlerimporting.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
@@ -250,6 +254,38 @@ func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFun
 			api.PUT("/account/profile", notImplemented)
 			api.POST("/account/avatar", notImplemented)
 			api.GET("/account/avatar", notImplemented)
+		}
+
+		// Replenishment decision page (Req 3) — read-only suggestions.
+		if replh != nil {
+			replh.RegisterRoutes(api)
+		} else {
+			api.GET("/replenish/suggestions", notImplemented)
+		}
+
+		// Reports — surfaced AI analytics (Req 10).
+		if reph != nil {
+			reph.RegisterRoutes(api)
+		} else {
+			api.GET("/reports/gross-margin", notImplemented)
+			api.GET("/reports/abc", notImplemented)
+			api.GET("/reports/dead-stock", notImplemented)
+			api.GET("/reports/sales-top", notImplemented)
+		}
+
+		// ⌘K entity search (Req 6).
+		if srch != nil {
+			srch.RegisterRoutes(api)
+		} else {
+			api.GET("/search", notImplemented)
+		}
+
+		// Multi-platform order import (Req 5).
+		if imph != nil {
+			imph.RegisterRoutes(api)
+		} else {
+			api.POST("/imports/orders", notImplemented)
+			api.GET("/imports/mappings", notImplemented)
 		}
 	}
 
