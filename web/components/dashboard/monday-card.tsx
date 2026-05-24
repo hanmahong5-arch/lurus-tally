@@ -47,7 +47,7 @@ export function MondayCard({ summary }: MondayCardProps) {
           {replenish.count > 0 && (
             <li className="flex items-center justify-between py-2.5 gap-3">
               <div className="flex items-center gap-2 min-w-0">
-                <Badge variant="secondary" className="shrink-0">
+                <Badge tone="warn" className="shrink-0">
                   {replenish.count} 项
                 </Badge>
                 <span className="text-sm">
@@ -66,7 +66,7 @@ export function MondayCard({ summary }: MondayCardProps) {
           {oversell.count > 0 && (
             <li className="flex items-center justify-between py-2.5 gap-3">
               <div className="flex items-center gap-2 min-w-0">
-                <Badge variant="destructive" className="shrink-0">
+                <Badge tone="err" className="shrink-0">
                   {oversell.count} 项
                 </Badge>
                 <span className="text-sm">超卖风险 &mdash; 可用量为负</span>
@@ -83,7 +83,7 @@ export function MondayCard({ summary }: MondayCardProps) {
           {dead_stock.count > 0 && (
             <li className="flex items-center justify-between py-2.5 gap-3">
               <div className="flex items-center gap-2 min-w-0">
-                <Badge variant="secondary" className="shrink-0 text-muted-foreground">
+                <Badge tone="neutral" className="shrink-0 text-muted-foreground">
                   {dead_stock.count} 项
                 </Badge>
                 <span className="text-sm">呆滞库存 &mdash; 90 天无动销</span>

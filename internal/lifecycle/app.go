@@ -20,11 +20,13 @@ import (
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
+	handlerdigest "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/digest"
 	handlerexport "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/export"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
 	handlerimporting "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/importing"
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
+	handleronboarding "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/onboarding"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
@@ -45,9 +47,11 @@ import (
 	repoauth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/auth"
 	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
+	repodigest "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/digest"
 	repooutbox "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/event_outbox"
 	repohorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/horticulture"
 	repoimporting "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/importing"
+	repoonboarding "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/onboarding"
 	repopayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/payment"
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
 	repoprojectrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/project"
@@ -65,6 +69,7 @@ import (
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
+	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
 	appexport "github.com/hanmahong5-arch/lurus-tally/internal/app/export"
 	apphorticulture "github.com/hanmahong5-arch/lurus-tally/internal/app/horticulture"
 	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
@@ -545,9 +550,17 @@ func NewApp(cfg *config.Config) (*App, error) {
 	)
 	importHandler := handlerimporting.New(importUC, uuid.Nil)
 
+	// Wave-2 handlers — weekly digest (Req 9) + onboarding wizard (Req 7).
+	digestHandler := handlerdigest.New(appdigest.NewWeeklySummaryUseCase(repodigest.New(db)))
+	onboardingHandler := handleronboarding.New(
+		appproduct.NewCreateUseCase(productRepo),
+		recordMovementUC,
+		repoonboarding.New(db),
+	)
+
 	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
 		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler, exportHandler, accountHandler,
-		replenishHandler, reportsHandler, searchHandler, importHandler)
+		replenishHandler, reportsHandler, searchHandler, importHandler, digestHandler, onboardingHandler)
 
 	// POST /internal/v1/telemetry/web — browser-side product telemetry → NATS
 	// PSI_TELEMETRY.web.* (S0.Q3). Bearer-gated via the same key as metrics.

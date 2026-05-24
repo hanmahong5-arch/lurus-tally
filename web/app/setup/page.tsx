@@ -46,7 +46,7 @@ export default async function SetupPage({
   // Wizard steps: after profile is saved, show the seed/replenish wizard.
   // We enter this branch when redirected here after a successful chooseProfile.
   if (step === "seed" || step === "replenish") {
-    const activePersona: ProfileType = persona ?? profileType ?? "retail"
+    const activePersona: ProfileType = persona || profileType || "retail"
     return (
       <main className="flex min-h-screen flex-col bg-background px-4 py-12">
         <div className="mx-auto w-full max-w-3xl space-y-8">

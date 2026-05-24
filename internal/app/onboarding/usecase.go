@@ -23,8 +23,8 @@ import (
 type Persona string
 
 const (
-	PersonaCrossBorder Persona = "cross_border"
-	PersonaRetail      Persona = "retail"
+	PersonaCrossBorder  Persona = "cross_border"
+	PersonaRetail       Persona = "retail"
 	PersonaHorticulture Persona = "horticulture"
 )
 
@@ -87,13 +87,13 @@ type SeedResult struct {
 }
 
 type demoSKU struct {
-	code     string
-	name     string
-	brand    string
+	code      string
+	name      string
+	brand     string
 	qtyOnHand decimal.Decimal
-	unitCost decimal.Decimal
-	lowStock bool // if true, qty ≤ low_safe_qty threshold
-	attrs    map[string]string
+	unitCost  decimal.Decimal
+	lowStock  bool // if true, qty ≤ low_safe_qty threshold
+	attrs     map[string]string
 }
 
 func demoCatalogue(p Persona) []demoSKU {
@@ -180,11 +180,11 @@ func (uc *SeedDemoUseCase) Execute(ctx context.Context, in SeedInput) (*SeedResu
 		}
 
 		p, perr := uc.products.Execute(ctx, domainproduct.CreateInput{
-			TenantID:  in.TenantID,
-			Code:      sku.code,
-			Name:      sku.name,
-			Brand:     sku.brand,
-			Remark:    demoRemark,
+			TenantID:   in.TenantID,
+			Code:       sku.code,
+			Name:       sku.name,
+			Brand:      sku.brand,
+			Remark:     demoRemark,
 			Attributes: attrsRaw,
 		})
 		if perr != nil {
