@@ -96,3 +96,4 @@ last_updated: null
 | 2026-05-21 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-05-22 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-05-23 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-05-24 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
