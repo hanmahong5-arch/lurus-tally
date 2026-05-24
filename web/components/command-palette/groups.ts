@@ -3,19 +3,44 @@
  *
  * Linear/Raycast style: Pages + Actions are always shown.
  * Recent items are injected at runtime.
+ * Entity items are populated dynamically from the search API.
  */
+
+import type { EntityType } from "@/lib/api/search"
 
 export interface PaletteAction {
   id: string
   label: string
   /** Category shown as the group header in the palette. */
-  group: "pages" | "actions" | "recent"
+  group: "pages" | "actions" | "recent" | "entities"
   /** Optional icon (emoji or lucide name — caller decides). */
   icon?: string
   /** URL to navigate to, or undefined for actions. */
   href?: string
   /** Keyboard shortcut hint shown on the right. */
   shortcut?: string
+  /** Sublabel shown below the main label (entity search only). */
+  sublabel?: string
+  /** Entity type (entity search only). */
+  entityType?: EntityType
+}
+
+/** Map entity type to a navigation route. Returns undefined when no route exists. */
+export function entityHref(type: EntityType, id: string): string | undefined {
+  switch (type) {
+    case "product":
+      return `/products/${id}`
+    case "supplier":
+      return `/suppliers/${id}`
+    case "bill":
+      // bill_type is not surfaced in EntityResult; default to /purchases/:id.
+      return `/purchases/${id}`
+    case "customer":
+      // /finance exists; no customer detail route in V1.
+      return undefined
+    default:
+      return undefined
+  }
 }
 
 /** Static page navigation items. */

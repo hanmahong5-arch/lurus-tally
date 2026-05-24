@@ -13,11 +13,17 @@ import {
   PAGE_ACTIONS,
   QUICK_ACTIONS,
   AI_ASK_ACTION,
+  entityHref,
   type PaletteAction,
 } from "./groups"
+import { searchEntities, type EntityResult } from "@/lib/api/search"
+import { trackEvent } from "@/lib/telemetry"
 
 // Characters required before AI mode is offered on Tab press.
 const AI_TRIGGER_MIN_CHARS = 5
+
+// Debounce delay in ms before firing the entity search API call.
+const ENTITY_SEARCH_DEBOUNCE_MS = 150
 
 interface PaletteProps {
   /** Called when the user selects an AI query — opens the AI drawer. */
@@ -25,9 +31,9 @@ interface PaletteProps {
 }
 
 /**
- * CommandPalette implements the ⌘K three-in-one panel:
+ * CommandPalette implements the ⌘K three-column panel:
  *   Search — filter pages and actions by label
- *   Action — quick navigation
+ *   Entity — debounced fuzzy search across products / suppliers / customers / bills
  *   AI     — Tab to enter AI mode for queries longer than 5 chars
  *
  * Keyboard nav: arrow keys to move selection, Enter to activate,
@@ -38,7 +44,15 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
   const [query, setQuery] = useState("")
   const [selectedIdx, setSelectedIdx] = useState(0)
   const [aiMode, setAiMode] = useState(false)
+  const [entityResults, setEntityResults] = useState<EntityResult[]>([])
+
+  // performance.now() snapshot when the palette opens — for latency telemetry.
+  const openedAtRef = useRef<number | null>(null)
+  // true once the first entity result row has been rendered.
+  const firstRenderFiredRef = useRef(false)
+
   const inputRef = useRef<HTMLInputElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
   const router = useRouter()
 
   // Cmd+K opens palette.
@@ -49,6 +63,9 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
       setQuery("")
       setSelectedIdx(0)
       setAiMode(false)
+      setEntityResults([])
+      openedAtRef.current = performance.now()
+      firstRenderFiredRef.current = false
     },
   })
 
@@ -57,41 +74,118 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
     if (open) setTimeout(() => inputRef.current?.focus(), 30)
   }, [open])
 
-  const allItems = useMemo((): PaletteAction[] => {
+  // Debounced entity search.
+  useEffect(() => {
+    // Cancel any pending request.
+    abortRef.current?.abort()
+
+    if (!query) {
+      setEntityResults([])
+      return
+    }
+
+    const timer = setTimeout(() => {
+      const ac = new AbortController()
+      abortRef.current = ac
+
+      searchEntities(query, { limit: 5, signal: ac.signal })
+        .then((resp) => {
+          if (ac.signal.aborted) return
+          const flat: EntityResult[] = resp.groups.flatMap((g) => g.items)
+          setEntityResults(flat)
+        })
+        .catch(() => {
+          // Swallow — palette entity search is best-effort.
+        })
+    }, ENTITY_SEARCH_DEBOUNCE_MS)
+
+    return () => clearTimeout(timer)
+  }, [query])
+
+  // Convert entity results to PaletteActions for unified keyboard nav.
+  const entityActions = useMemo((): PaletteAction[] =>
+    entityResults.map((er) => ({
+      id: `entity-${er.type}-${er.id}`,
+      label: er.label,
+      sublabel: er.sublabel,
+      group: "entities" as const,
+      icon: entityIcon(er.type),
+      href: entityHref(er.type, er.id),
+      entityType: er.type,
+    })),
+    [entityResults]
+  )
+
+  const staticItems = useMemo((): PaletteAction[] => {
     const base: PaletteAction[] = [...PAGE_ACTIONS, ...QUICK_ACTIONS]
     if (!query) return base
 
     const q = query.toLowerCase()
-    const filtered = base.filter(
+    return base.filter(
       (a) =>
         a.label.toLowerCase().includes(q) ||
         a.id.toLowerCase().includes(q)
     )
-
-    // When query is long enough, prepend AI ask item at top.
-    if (query.length >= AI_TRIGGER_MIN_CHARS) {
-      return [AI_ASK_ACTION(query), ...filtered]
-    }
-
-    return filtered
   }, [query])
 
-  const close = useCallback(() => {
-    setOpen(false)
-    setQuery("")
-    setAiMode(false)
-  }, [])
+  // Ordering: AI (when long query) → entities → static pages/actions.
+  const allItems = useMemo((): PaletteAction[] => {
+    const aiItem: PaletteAction[] =
+      query.length >= AI_TRIGGER_MIN_CHARS ? [AI_ASK_ACTION(query)] : []
+    return [...aiItem, ...entityActions, ...staticItems]
+  }, [query, entityActions, staticItems])
+
+  // Fire first-render latency telemetry once entity results appear.
+  useEffect(() => {
+    if (
+      entityActions.length > 0 &&
+      !firstRenderFiredRef.current &&
+      openedAtRef.current !== null
+    ) {
+      firstRenderFiredRef.current = true
+      // latency_ms is palette-open → first entity result rendered (best-effort).
+      const latency = Math.round(performance.now() - openedAtRef.current)
+      trackEvent("palette_invocation", {
+        latency_ms: latency,
+        query_chars: query.length,
+        action_picked: "none", // will be overridden on actual pick/close
+      })
+    }
+  }, [entityActions.length, query.length])
+
+  const close = useCallback(
+    (actionPicked: "navigate" | "query" | "execute" | "none" = "none") => {
+      abortRef.current?.abort()
+      if (openedAtRef.current !== null) {
+        trackEvent("palette_invocation", {
+          latency_ms: Math.round(performance.now() - openedAtRef.current),
+          query_chars: query.length,
+          action_picked: actionPicked,
+        })
+        openedAtRef.current = null
+      }
+      setOpen(false)
+      setQuery("")
+      setAiMode(false)
+      setEntityResults([])
+    },
+    [query.length]
+  )
 
   const activate = useCallback(
     (item: PaletteAction) => {
-      close()
       if (item.id === "ai-ask") {
+        close("query")
         onAIQuery?.(query)
         return
       }
       if (item.href) {
+        close("navigate")
         router.push(item.href)
+        return
       }
+      // Entity without a detail route (e.g. customer in V1) — no navigation.
+      close("none")
     },
     [close, onAIQuery, query, router]
   )
@@ -120,12 +214,12 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
         }
         break
       case "Escape":
-        close()
+        close("none")
         break
     }
   }
 
-  // Group items for rendering.
+  // Group items for rendering — entities go between AI and pages.
   const groups = useMemo(() => {
     const g: Record<string, PaletteAction[]> = {}
     for (const item of allItems) {
@@ -138,10 +232,14 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
 
   const groupLabels: Record<string, string> = {
     ai: "AI 模式",
+    entities: "实体",
     pages: "页面",
     actions: "操作",
     recent: "最近",
   }
+
+  // Render order: AI → entities → pages → actions → recent.
+  const groupOrder = ["ai", "entities", "pages", "actions", "recent"] as const
 
   if (!open) return null
 
@@ -150,7 +248,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
       {/* Backdrop */}
       <div
         className="fixed inset-0 z-50 bg-black/30 backdrop-blur-sm"
-        onClick={close}
+        onClick={() => close("none")}
         aria-hidden="true"
       />
 
@@ -177,7 +275,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
               if (!e.target.value) setAiMode(false)
             }}
             onKeyDown={handleKeyDown}
-            placeholder={aiMode ? "Ask AI..." : "搜索页面、操作..."}
+            placeholder={aiMode ? "Ask AI..." : "搜索页面、实体、操作..."}
             data-testid="palette-input"
             className="flex-1 bg-transparent py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
             aria-autocomplete="list"
@@ -212,7 +310,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
               没有匹配的结果
             </p>
           )}
-          {(["ai", "recent", "pages", "actions"] as const).map((groupKey) => {
+          {groupOrder.map((groupKey) => {
             const items = groups[groupKey]
             if (!items || items.length === 0) return null
             return (
@@ -242,7 +340,14 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
                           {item.icon}
                         </span>
                       )}
-                      <span className="flex-1 text-left">{item.label}</span>
+                      <span className="flex flex-col flex-1 text-left">
+                        <span>{item.label}</span>
+                        {item.sublabel && (
+                          <span className="text-[11px] text-muted-foreground leading-tight">
+                            {item.sublabel}
+                          </span>
+                        )}
+                      </span>
                       {item.shortcut && (
                         <kbd className="rounded border border-border bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
                           {item.shortcut}
@@ -266,4 +371,14 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
       </div>
     </>
   )
+}
+
+function entityIcon(type: string): string {
+  switch (type) {
+    case "product":  return "📦"
+    case "supplier": return "🏭"
+    case "customer": return "👤"
+    case "bill":     return "🧾"
+    default:         return "🔍"
+  }
 }
