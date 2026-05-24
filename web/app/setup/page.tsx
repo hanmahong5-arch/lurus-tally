@@ -4,36 +4,76 @@ import { chooseProfile, getMe, TallyApiError, type ProfileType } from "@/lib/api
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import OnboardingWizard from "@/components/onboarding/OnboardingWizard"
 
 // Setup is the first-login onboarding screen. The user picks their business
 // type (cross-border vs retail) which determines the inventory method, default
 // modules, and dashboard layout.
 //
+// Flow after first login:
+//   1. No profile → show persona picker form.
+//   2. submitProfile saves the choice → redirect to /setup?step=seed&persona=<x>.
+//   3. step=seed|replenish → render OnboardingWizard so the user can seed demo
+//      data and navigate to /replenish to generate their first PO.
+//   4. Already has profile + no step param → /dashboard.
+//
 // Server-side guards:
 //   - not authenticated → /login (handled by middleware before reaching here)
-//   - already has a profile → straight to /dashboard
+//   - already has a profile + step=done or no step → /dashboard
 export default async function SetupPage({
   searchParams,
 }: {
-  searchParams?: { error?: string }
+  searchParams?: { error?: string; step?: string; persona?: string }
 }) {
   const session = await auth()
   if (!session?.accessToken) {
     redirect("/login")
   }
 
-  // Fast-path: if profile already chosen, skip the form. This handles refreshes
-  // and direct URL access after onboarding completes.
+  // Resolve current profile state.
+  let profileType: ProfileType | "" = ""
   try {
     const me = await getMe(session.accessToken)
-    if (me.profile_type) {
-      redirect("/dashboard")
-    }
+    profileType = me.profile_type as ProfileType | ""
   } catch {
-    // Backend unreachable — surface the form anyway; user can retry submit.
+    // Backend unreachable — surface the persona picker; user can retry.
   }
 
+  const step = searchParams?.step
+  const persona = searchParams?.persona as ProfileType | undefined
   const error = searchParams?.error
+
+  // Wizard steps: after profile is saved, show the seed/replenish wizard.
+  // We enter this branch when redirected here after a successful chooseProfile.
+  if (step === "seed" || step === "replenish") {
+    const activePersona: ProfileType = persona ?? profileType ?? "retail"
+    return (
+      <main className="flex min-h-screen flex-col bg-background px-4 py-12">
+        <div className="mx-auto w-full max-w-3xl space-y-8">
+          <div className="space-y-1">
+            <p className="text-sm text-muted-foreground">Lurus Tally · 快速上手</p>
+            <h1 className="text-2xl font-bold tracking-tight">
+              {activePersona === "cross_border"
+                ? "跨境贸易"
+                : activePersona === "horticulture"
+                  ? "苗木 / 园林"
+                  : "零售 / 批发"}{" "}
+              — 下面几步完成第一单
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              全程不超过 10 分钟。示例数据之后可一键清除，不影响真实业务。
+            </p>
+          </div>
+          <OnboardingWizard persona={activePersona} />
+        </div>
+      </main>
+    )
+  }
+
+  // Already has a profile but arrived without a wizard step → dashboard.
+  if (profileType) {
+    redirect("/dashboard")
+  }
 
   async function submitProfile(formData: FormData) {
     "use server"
@@ -53,10 +93,8 @@ export default async function SetupPage({
       }
       redirect("/setup?error=network")
     }
-    // Successful choice — go straight to dashboard. The next request will
-    // re-fetch /me via the jwt callback (TTL is 60s; a fresh fetch happens
-    // because isFirstTime was true on the previous fetch).
-    redirect("/dashboard")
+    // Successful choice — start the guided wizard instead of jumping to dashboard.
+    redirect(`/setup?step=seed&persona=${profileType}`)
   }
 
   return (
