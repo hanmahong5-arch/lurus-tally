@@ -2,6 +2,7 @@ package replenish_test
 
 import (
 	"context"
+	"math"
 	"testing"
 
 	"github.com/google/uuid"
@@ -24,19 +25,28 @@ func d(s string) decimal.Decimal {
 	return v
 }
 
-func TestListSuggestions_SuggestedQty_Formula(t *testing.T) {
-	// avgDailySales = 5, available = 30, weeks = 2
-	// weeklyDemand = 5 × 7 × 2 = 70; suggested = 70 - 30 = 40
-	pid := uuid.New()
+// safetyStock computes the expected safety stock for assertions.
+// z=1.65, σ=avgDaily*0.3, safetyStock = z × σ × √leadTime
+func expectedSafetyStock(avgDaily float64, leadTime int) decimal.Decimal {
+	sigma := avgDaily * 0.3
+	ss := 1.65 * sigma * math.Sqrt(float64(leadTime))
+	return decimal.NewFromFloat(ss)
+}
+
+// TestForecast_ROP verifies ROP = avgDailySales×leadTime + safetyStock.
+func TestForecast_ROP(t *testing.T) {
+	avgDaily := 5.0
+	leadTime := 7
+
 	rows := []replenish.RawRow{
 		{
-			ProductID:     pid,
-			ProductName:   "Widget A",
-			ProductCode:   "W-001",
-			AvailableQty:  d("30"),
-			SafetyQty:     d("10"),
-			UnitCost:      d("25"),
-			AvgDailySales: d("5"),
+			ProductID:     uuid.New(),
+			ProductName:   "Widget ROP",
+			ProductCode:   "R-001",
+			AvailableQty:  d("0"),
+			UnitCost:      d("10"),
+			AvgDailySales: decimal.NewFromFloat(avgDaily),
+			LeadTimeDays:  leadTime,
 		},
 	}
 	uc := replenish.NewListSuggestionsUseCase(&stubRepo{rows: rows})
@@ -44,29 +54,88 @@ func TestListSuggestions_SuggestedQty_Formula(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(out) != 1 {
-		t.Fatalf("expected 1 row, got %d", len(out))
-	}
 	r := out[0]
-	if !r.SuggestedQty.Equal(d("40")) {
-		t.Errorf("SuggestedQty = %s, want 40", r.SuggestedQty)
+
+	wantSS := expectedSafetyStock(avgDaily, leadTime)
+	wantROP := decimal.NewFromFloat(avgDaily * float64(leadTime)).Add(wantSS)
+
+	// Safety stock tolerance: within 0.01 units.
+	diff := r.SafetyStock.Sub(wantSS).Abs()
+	if diff.GreaterThan(decimal.NewFromFloat(0.01)) {
+		t.Errorf("SafetyStock = %s, want ~%s", r.SafetyStock, wantSS)
 	}
-	// estAmount = 40 × 25 = 1000
-	if !r.EstAmountCNY.Equal(d("1000")) {
-		t.Errorf("EstAmountCNY = %s, want 1000", r.EstAmountCNY)
+	diff = r.ROP.Sub(wantROP).Abs()
+	if diff.GreaterThan(decimal.NewFromFloat(0.01)) {
+		t.Errorf("ROP = %s, want ~%s", r.ROP, wantROP)
 	}
 }
 
-func TestListSuggestions_SuggestedQty_FlooredAtZero(t *testing.T) {
-	// available > weeklyDemand → suggested = 0
+// TestForecast_SuggestedQty_NetOfInTransit verifies:
+//
+//	suggested = ceil(target + safetyStock − available − inTransit)
+func TestForecast_SuggestedQty_NetOfInTransit(t *testing.T) {
+	// avgDaily=5, leadTime=7, weeks=2
+	// safetyStock = 1.65 × (5×0.3) × √7 = 1.65 × 1.5 × 2.6458 = ~6.543
+	// target = 5 × 7 × 2 = 70
+	// available = 30, inTransit = 10
+	// suggested = ceil(70 + 6.543 − 30 − 10) = ceil(36.543) = 37
+	avgDaily := 5.0
+	leadTime := 7
+
+	pid := uuid.New()
+	rows := []replenish.RawRow{
+		{
+			ProductID:     pid,
+			ProductName:   "Widget Net",
+			ProductCode:   "N-001",
+			AvailableQty:  d("30"),
+			UnitCost:      d("25"),
+			AvgDailySales: decimal.NewFromFloat(avgDaily),
+			LeadTimeDays:  leadTime,
+			InTransit:     d("10"),
+		},
+	}
+	uc := replenish.NewListSuggestionsUseCase(&stubRepo{rows: rows})
+	out, err := uc.Execute(context.Background(), uuid.New(), 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	r := out[0]
+
+	ss := expectedSafetyStock(avgDaily, leadTime)
+	target := decimal.NewFromFloat(avgDaily * 7 * 2)
+	wantRaw := target.Add(ss).Sub(d("30")).Sub(d("10"))
+	wantSuggested := wantRaw.Ceil()
+	if wantSuggested.IsNegative() {
+		wantSuggested = decimal.Zero
+	}
+
+	if !r.SuggestedQty.Equal(wantSuggested) {
+		t.Errorf("SuggestedQty = %s, want %s (target=%s ss=%s)", r.SuggestedQty, wantSuggested, target, ss)
+	}
+	// Reason must be non-empty.
+	if r.Reason == "" {
+		t.Error("Reason must be non-empty")
+	}
+	// EstAmountCNY = SuggestedQty × unitCost.
+	wantAmt := wantSuggested.Mul(d("25"))
+	if !r.EstAmountCNY.Equal(wantAmt) {
+		t.Errorf("EstAmountCNY = %s, want %s", r.EstAmountCNY, wantAmt)
+	}
+}
+
+// TestForecast_SuggestedQty_FlooredAtZero ensures no negative suggestions when stock is ample.
+func TestForecast_SuggestedQty_FlooredAtZero(t *testing.T) {
+	// available=500 >> any reasonable target; suggested must be 0.
 	rows := []replenish.RawRow{
 		{
 			ProductID:     uuid.New(),
-			ProductName:   "Widget B",
-			ProductCode:   "W-002",
+			ProductName:   "Widget Full",
+			ProductCode:   "F-001",
 			AvailableQty:  d("500"),
 			AvgDailySales: d("2"),
 			UnitCost:      d("10"),
+			LeadTimeDays:  7,
 		},
 	}
 	uc := replenish.NewListSuggestionsUseCase(&stubRepo{rows: rows})
@@ -79,16 +148,43 @@ func TestListSuggestions_SuggestedQty_FlooredAtZero(t *testing.T) {
 	}
 }
 
+// TestForecast_ZeroLeadTimeFallsBackToSeven ensures a zero lead_time_days
+// in the DB (should not happen after migration but is defensive) uses 7.
+func TestForecast_ZeroLeadTimeFallsBackToSeven(t *testing.T) {
+	rows := []replenish.RawRow{
+		{
+			ProductID:     uuid.New(),
+			ProductName:   "Widget NoLT",
+			ProductCode:   "LT-001",
+			AvailableQty:  d("0"),
+			AvgDailySales: d("5"),
+			UnitCost:      d("10"),
+			LeadTimeDays:  0, // DB returned 0; use case must default to 7
+		},
+	}
+	uc := replenish.NewListSuggestionsUseCase(&stubRepo{rows: rows})
+	out, err := uc.Execute(context.Background(), uuid.New(), 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	r := out[0]
+	if r.LeadTimeDays != 7 {
+		t.Errorf("expected LeadTimeDays=7 (fallback), got %d", r.LeadTimeDays)
+	}
+	// SafetyStock must be positive (using fallback lead time of 7).
+	if !r.SafetyStock.IsPositive() {
+		t.Errorf("expected positive SafetyStock, got %s", r.SafetyStock)
+	}
+}
+
+// TestListSuggestions_UrgencySort_AscendingDaysOfSupply checks urgency ordering is preserved.
 func TestListSuggestions_UrgencySort_AscendingDaysOfSupply(t *testing.T) {
-	// Product A: 3 days of supply (urgent)
-	// Product B: 30 days of supply (not urgent)
-	// Expected order: A first
 	pA := uuid.New()
 	pB := uuid.New()
 	rows := []replenish.RawRow{
-		// Insert B first to test sort
-		{ProductID: pB, ProductName: "B", ProductCode: "B", AvailableQty: d("30"), AvgDailySales: d("1"), UnitCost: d("1")},
-		{ProductID: pA, ProductName: "A", ProductCode: "A", AvailableQty: d("3"), AvgDailySales: d("1"), UnitCost: d("1")},
+		// Insert B first to test sort.
+		{ProductID: pB, ProductName: "B", ProductCode: "B", AvailableQty: d("30"), AvgDailySales: d("1"), UnitCost: d("1"), LeadTimeDays: 7},
+		{ProductID: pA, ProductName: "A", ProductCode: "A", AvailableQty: d("3"), AvgDailySales: d("1"), UnitCost: d("1"), LeadTimeDays: 7},
 	}
 	uc := replenish.NewListSuggestionsUseCase(&stubRepo{rows: rows})
 	out, err := uc.Execute(context.Background(), uuid.New(), 2)
@@ -100,13 +196,13 @@ func TestListSuggestions_UrgencySort_AscendingDaysOfSupply(t *testing.T) {
 	}
 }
 
+// TestListSuggestions_ZeroVelocity_ScoredLast confirms zero-sales items sort last.
 func TestListSuggestions_ZeroVelocity_ScoredLast(t *testing.T) {
-	// Zero velocity product should sort after products with any sales
 	pZero := uuid.New()
 	pActive := uuid.New()
 	rows := []replenish.RawRow{
-		{ProductID: pZero, ProductName: "Stale", ProductCode: "Z", AvailableQty: d("0"), AvgDailySales: d("0"), UnitCost: d("1")},
-		{ProductID: pActive, ProductName: "Active", ProductCode: "A", AvailableQty: d("2"), AvgDailySales: d("5"), UnitCost: d("1")},
+		{ProductID: pZero, ProductName: "Stale", ProductCode: "Z", AvailableQty: d("0"), AvgDailySales: d("0"), UnitCost: d("1"), LeadTimeDays: 7},
+		{ProductID: pActive, ProductName: "Active", ProductCode: "A", AvailableQty: d("2"), AvgDailySales: d("5"), UnitCost: d("1"), LeadTimeDays: 7},
 	}
 	uc := replenish.NewListSuggestionsUseCase(&stubRepo{rows: rows})
 	out, err := uc.Execute(context.Background(), uuid.New(), 2)
@@ -121,18 +217,39 @@ func TestListSuggestions_ZeroVelocity_ScoredLast(t *testing.T) {
 	}
 }
 
+// TestListSuggestions_DefaultWeeks_UsedWhenZero checks weeks=0 falls back to 2.
 func TestListSuggestions_DefaultWeeks_UsedWhenZero(t *testing.T) {
-	// weeks=0 → falls back to 2; check suggested qty matches 2-week calc
+	avgDaily := 1.0
+	leadTime := 7
 	rows := []replenish.RawRow{
-		{ProductID: uuid.New(), ProductName: "X", ProductCode: "X", AvailableQty: d("0"), AvgDailySales: d("1"), UnitCost: d("1")},
+		{ProductID: uuid.New(), ProductName: "X", ProductCode: "X", AvailableQty: d("0"), AvgDailySales: d("1"), UnitCost: d("1"), LeadTimeDays: leadTime},
 	}
 	uc := replenish.NewListSuggestionsUseCase(&stubRepo{rows: rows})
 	out, err := uc.Execute(context.Background(), uuid.New(), 0)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// 1 × 7 × 2 = 14 - 0 = 14
-	if !out[0].SuggestedQty.Equal(d("14")) {
-		t.Errorf("expected 14, got %s", out[0].SuggestedQty)
+	// target = 1 × 7 × 2 = 14; safetyStock = 1.65 × 0.3 × √7 ≈ 1.309
+	// suggested = ceil(14 + 1.309 − 0 − 0) = ceil(15.309) = 16
+	ss := expectedSafetyStock(avgDaily, leadTime)
+	target := decimal.NewFromFloat(avgDaily * 7 * 2)
+	wantSuggested := target.Add(ss).Ceil()
+	if !out[0].SuggestedQty.Equal(wantSuggested) {
+		t.Errorf("expected %s (target+ss=%s), got %s", wantSuggested, target.Add(ss), out[0].SuggestedQty)
+	}
+}
+
+// TestForecast_Reason_NonEmpty verifies every row carries a non-empty Reason.
+func TestForecast_Reason_NonEmpty(t *testing.T) {
+	rows := []replenish.RawRow{
+		{ProductID: uuid.New(), ProductName: "Y", ProductCode: "Y", AvailableQty: d("5"), AvgDailySales: d("3"), UnitCost: d("2"), LeadTimeDays: 14, InTransit: d("2")},
+	}
+	uc := replenish.NewListSuggestionsUseCase(&stubRepo{rows: rows})
+	out, err := uc.Execute(context.Background(), uuid.New(), 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out[0].Reason == "" {
+		t.Error("Reason must not be empty")
 	}
 }

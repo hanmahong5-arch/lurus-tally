@@ -16,6 +16,12 @@ export interface ReplenishSuggestion {
   supplier_id?: string
   supplier_name?: string
   urgency_score: string
+  // Forecast-driven fields (v2 formula).
+  lead_time_days: number
+  in_transit: string
+  rop: string
+  safety_stock: string
+  reason: string
 }
 
 export interface ListSuggestionsParams {

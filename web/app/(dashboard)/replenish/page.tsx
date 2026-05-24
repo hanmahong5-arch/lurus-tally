@@ -223,11 +223,37 @@ export default function ReplenishPage() {
       id: "suggested_qty",
       header: "建议订量",
       meta: { align: "right" },
-      cell: ({ row }) => (
-        <span className="font-semibold tabular-nums">
-          {row.original.suggested_qty}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const r = row.original
+        const hasDetail =
+          r.rop !== undefined && r.rop !== "" && r.reason !== undefined && r.reason !== ""
+        return (
+          <div className="flex flex-col items-end gap-0.5">
+            <span className="font-semibold tabular-nums">{r.suggested_qty}</span>
+            {hasDetail && (
+              <span
+                className="text-[10px] text-muted-foreground cursor-help max-w-[160px] text-right leading-tight"
+                title={r.reason}
+              >
+                ROP {parseFloat(r.rop).toFixed(1)} · 安全库存 {parseFloat(r.safety_stock ?? "0").toFixed(1)} · 在途 {r.in_transit ?? "0"}
+              </span>
+            )}
+          </div>
+        )
+      },
+    },
+    {
+      id: "lead_time",
+      header: "提前期",
+      meta: { align: "right" },
+      cell: ({ row }) => {
+        const lt = row.original.lead_time_days
+        return (
+          <span className="tabular-nums text-muted-foreground">
+            {lt != null ? `${lt}天` : "—"}
+          </span>
+        )
+      },
     },
     {
       id: "est_amount_cny",
