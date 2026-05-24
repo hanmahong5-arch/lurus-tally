@@ -5,6 +5,12 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { formatCNY } from "@/lib/format"
+import {
+  GrossMarginBlock,
+  ABCBlock,
+  DeadStockBlock,
+  SalesTopBlock,
+} from "./analytics-blocks"
 
 export const revalidate = 300
 
@@ -121,6 +127,20 @@ export default async function ReportsPage() {
             description="所有付款流水"
             href="/api/v1/exports/payments.csv"
           />
+        </div>
+      </section>
+
+      {/* ── AI Analytics — decision-oriented blocks ────────────────────── */}
+      <section className="space-y-3">
+        <h2 className="text-sm font-medium">AI 分析决策</h2>
+        <p className="text-xs text-muted-foreground">
+          每块均可导出 CSV，点击"→ 建议"按钮可直接唤起 AI 助手并预填查询。
+        </p>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <GrossMarginBlock />
+          <ABCBlock />
+          <DeadStockBlock />
+          <SalesTopBlock />
         </div>
       </section>
 
