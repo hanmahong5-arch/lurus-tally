@@ -192,6 +192,14 @@ type StockChecker interface {
 	AvailableQty(ctx context.Context, tenantID, productID, warehouseID uuid.UUID) (decimal.Decimal, error)
 }
 
+// WarehouseChecker validates that warehouseID belongs to tenantID. It is the
+// gate that prevents a caller from passing another tenant's warehouse UUID and
+// silently writing stock into that tenant. Implemented in lifecycle over the
+// warehouse repo's tenant-scoped GetByID.
+type WarehouseChecker interface {
+	BelongsToTenant(ctx context.Context, tenantID, warehouseID uuid.UUID) error
+}
+
 // CurrencyRater converts an amount from one currency to another on a given date.
 // Returns rate=1 and a warning when no rate data is available (graceful degradation).
 type CurrencyRater interface {
@@ -206,6 +214,7 @@ type ImportOrdersUseCase struct {
 	saleCreator  SaleCreator
 	saleApprover SaleApprover
 	stockChecker StockChecker
+	whChecker    WarehouseChecker
 	currencyRate CurrencyRater
 	// targetCurrency is the currency bills are denominated in (default "CNY").
 	targetCurrency string
@@ -213,11 +222,14 @@ type ImportOrdersUseCase struct {
 
 // NewImportOrdersUseCase constructs the use case.
 // targetCurrency defaults to "CNY" when empty.
+// whChecker may be nil only in tests; production callers must provide one so the
+// tenant-warehouse binding is enforced before any sale bill is created.
 func NewImportOrdersUseCase(
 	repo ImportRepo,
 	saleCreator SaleCreator,
 	saleApprover SaleApprover,
 	stockChecker StockChecker,
+	whChecker WarehouseChecker,
 	currencyRate CurrencyRater,
 	targetCurrency string,
 ) *ImportOrdersUseCase {
@@ -229,6 +241,7 @@ func NewImportOrdersUseCase(
 		saleCreator:    saleCreator,
 		saleApprover:   saleApprover,
 		stockChecker:   stockChecker,
+		whChecker:      whChecker,
 		currencyRate:   currencyRate,
 		targetCurrency: targetCurrency,
 	}
@@ -251,6 +264,14 @@ func (uc *ImportOrdersUseCase) Execute(ctx context.Context, req ImportRequest) (
 	}
 	if len(req.CSVData) == 0 {
 		return nil, fmt.Errorf("importing: csv_data is empty")
+	}
+
+	// Guard against cross-tenant warehouse_id: a malicious caller could otherwise
+	// pass another tenant's warehouse UUID and silently deduct stock there.
+	if uc.whChecker != nil {
+		if err := uc.whChecker.BelongsToTenant(ctx, req.TenantID, req.WarehouseID); err != nil {
+			return nil, fmt.Errorf("importing: warehouse not in tenant: %w", err)
+		}
 	}
 
 	// 1. Parse CSV into rows.

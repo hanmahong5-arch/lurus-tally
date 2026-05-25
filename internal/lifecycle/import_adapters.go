@@ -7,6 +7,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
 	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
@@ -73,6 +74,17 @@ func (a importStockChecker) AvailableQty(ctx context.Context, tenantID, productI
 		return decimal.Zero, nil
 	}
 	return snap.AvailableQty, nil
+}
+
+// importWarehouseChecker enforces that the warehouse_id form field belongs to
+// the caller's tenant. GetByID applies a tenant_id WHERE filter and returns
+// warehouse.ErrNotFound for any other tenant's warehouse, so any non-nil error
+// is sufficient to reject the request.
+type importWarehouseChecker struct{ repo *repowarehouse.Repo }
+
+func (a importWarehouseChecker) BelongsToTenant(ctx context.Context, tenantID, warehouseID uuid.UUID) error {
+	_, err := a.repo.GetByID(ctx, tenantID, warehouseID)
+	return err
 }
 
 // importCurrencyRater adapts currency.GetRateUseCase to importing.CurrencyRater.

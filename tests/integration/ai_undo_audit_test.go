@@ -186,28 +186,32 @@ type realStockAdjuster struct {
 	}
 }
 
-func (a *realStockAdjuster) AdjustStock(ctx context.Context, tenantID, actorID, productID uuid.UUID, delta decimal.Decimal) error {
+func (a *realStockAdjuster) AdjustStockBatch(ctx context.Context, tenantID, actorID, planID uuid.UUID, lines []appai.StockAdjustLine) (int, error) {
 	whID, err := a.whRepo.DefaultWarehouseID(ctx, tenantID)
 	if err != nil {
-		return fmt.Errorf("realStockAdjuster: resolve warehouse: %w", err)
+		return 0, fmt.Errorf("realStockAdjuster: resolve warehouse: %w", err)
 	}
-	// Generate a reference UUID for each adjust document so the NOT NULL
-	// constraint on stock_movement.reference_id is satisfied.
-	refID := uuid.New()
-	_, err = a.uc.Execute(ctx, appstock.RecordMovementRequest{
-		TenantID:      tenantID,
-		ProductID:     productID,
-		WarehouseID:   whID,
-		Direction:     domainstock.DirectionAdjust,
-		Qty:           delta,
-		ConvFactor:    "1",
-		CostStrategy:  domainstock.CostStrategyWAC,
-		ReferenceType: domainstock.RefAdjust,
-		ReferenceID:   &refID,
-		CreatedBy:     &actorID,
-		Note:          "audit integration test — stock adjust",
-	})
-	return err
+	affected := 0
+	refID := planID
+	for _, ln := range lines {
+		if _, err := a.uc.Execute(ctx, appstock.RecordMovementRequest{
+			TenantID:      tenantID,
+			ProductID:     ln.ProductID,
+			WarehouseID:   whID,
+			Direction:     domainstock.DirectionAdjust,
+			Qty:           ln.Delta,
+			ConvFactor:    "1",
+			CostStrategy:  domainstock.CostStrategyWAC,
+			ReferenceType: domainstock.RefAdjust,
+			ReferenceID:   &refID,
+			CreatedBy:     &actorID,
+			Note:          "audit integration test — stock adjust",
+		}); err != nil {
+			return affected, err
+		}
+		affected++
+	}
+	return affected, nil
 }
 
 // buildOrch constructs a fully-wired orchestrator backed by the provided store.

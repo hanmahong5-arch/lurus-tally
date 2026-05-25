@@ -66,10 +66,20 @@ type PriceChangerPort interface {
 	ApplyPriceChange(ctx context.Context, tenantID uuid.UUID, productIDs []uuid.UUID, action string) (affected int, err error)
 }
 
-// StockAdjusterPort records a single adjust movement for one product in the
-// tenant's default warehouse. Implemented in lifecycle over stock.RecordMovementUseCase.
+// StockAdjustLine is one (product, delta) pair in a batch stock adjust.
+type StockAdjustLine struct {
+	ProductID uuid.UUID
+	Delta     decimal.Decimal
+}
+
+// StockAdjusterPort records a batch of adjust movements atomically in the tenant's
+// default warehouse. Implemented in lifecycle over stock.RecordMovementUseCase + a
+// shared *sql.Tx so partial failure rolls back every line in the batch.
+//
+// planID is recorded as the stock_movement.reference_id (NOT NULL since migration
+// 000034) so the audit trail can trace any movement back to the AI plan that caused it.
 type StockAdjusterPort interface {
-	AdjustStock(ctx context.Context, tenantID, actorID, productID uuid.UUID, delta decimal.Decimal) error
+	AdjustStockBatch(ctx context.Context, tenantID, actorID, planID uuid.UUID, lines []StockAdjustLine) (affected int, err error)
 }
 
 // DefaultPlanExecutor is the production PlanExecutor. It resolves product
@@ -180,15 +190,15 @@ func (e *DefaultPlanExecutor) execStockAdjust(ctx context.Context, actorID uuid.
 	}
 
 	delta := decimal.NewFromFloat(payload.Delta)
-	affected := 0
+	lines := make([]StockAdjustLine, 0, len(ids))
 	for _, id := range ids {
-		if err := e.stock.AdjustStock(ctx, plan.TenantID, actorID, id, delta); err != nil {
-			// Fail fast: bulk adjusts are not atomic across products, so report how
-			// many succeeded before the failure rather than claiming full success.
-			return &ExecutionResult{Type: plan.Type, AffectedCount: affected},
-				fmt.Errorf("plan executor: adjust stock for product %s (after %d succeeded): %w", id, affected, err)
-		}
-		affected++
+		lines = append(lines, StockAdjustLine{ProductID: id, Delta: delta})
+	}
+	// Single atomic batch: mid-batch failure rolls back every prior line so the
+	// caller can retry without double-applying succeeded rows.
+	affected, err := e.stock.AdjustStockBatch(ctx, plan.TenantID, actorID, plan.ID, lines)
+	if err != nil {
+		return nil, fmt.Errorf("plan executor: adjust stock batch (%d planned): %w", len(lines), err)
 	}
 	return &ExecutionResult{Type: plan.Type, AffectedCount: affected}, nil
 }

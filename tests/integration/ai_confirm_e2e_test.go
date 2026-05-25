@@ -221,28 +221,32 @@ type testStockAdjuster struct {
 	whRepo *repowarehouse.Repo
 }
 
-func (a *testStockAdjuster) AdjustStock(ctx context.Context, tenantID, actorID, productID uuid.UUID, delta decimal.Decimal) error {
+func (a *testStockAdjuster) AdjustStockBatch(ctx context.Context, tenantID, actorID, planID uuid.UUID, lines []appai.StockAdjustLine) (int, error) {
 	whID, err := a.whRepo.DefaultWarehouseID(ctx, tenantID)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	// migration 000034 made reference_id NOT NULL; use a self-referencing UUID
-	// as the adjust reference (the movement ID itself, generated once here).
-	refID := uuid.New()
-	_, err = a.uc.Execute(ctx, appstock.RecordMovementRequest{
-		TenantID:      tenantID,
-		ProductID:     productID,
-		WarehouseID:   whID,
-		Direction:     domainstock.DirectionAdjust,
-		Qty:           delta,
-		ConvFactor:    "1",
-		CostStrategy:  domainstock.CostStrategyWAC,
-		ReferenceType: domainstock.RefAdjust,
-		ReferenceID:   &refID,
-		CreatedBy:     &actorID,
-		Note:          "test AI adjust",
-	})
-	return err
+	affected := 0
+	refID := planID
+	for _, ln := range lines {
+		if _, err := a.uc.Execute(ctx, appstock.RecordMovementRequest{
+			TenantID:      tenantID,
+			ProductID:     ln.ProductID,
+			WarehouseID:   whID,
+			Direction:     domainstock.DirectionAdjust,
+			Qty:           ln.Delta,
+			ConvFactor:    "1",
+			CostStrategy:  domainstock.CostStrategyWAC,
+			ReferenceType: domainstock.RefAdjust,
+			ReferenceID:   &refID,
+			CreatedBy:     &actorID,
+			Note:          "test AI adjust",
+		}); err != nil {
+			return affected, err
+		}
+		affected++
+	}
+	return affected, nil
 }
 
 // ---- seed helpers ----

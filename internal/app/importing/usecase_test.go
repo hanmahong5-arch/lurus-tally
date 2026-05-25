@@ -135,7 +135,9 @@ func (r *mockRater) GetRate(_ context.Context, _ uuid.UUID, from, to string, _ t
 // ----- helpers ----------------------------------------------------------
 
 func buildUseCase(repo *mockRepo, creator *mockCreator, approver *mockApprover, checker *mockStockChecker, rater *mockRater) *appimporting.ImportOrdersUseCase {
-	return appimporting.NewImportOrdersUseCase(repo, creator, approver, checker, rater, "CNY")
+	// whChecker nil: existing tests do not exercise cross-tenant warehouse rejection.
+	// See usecase_warehouse_check_test.go for the dedicated coverage.
+	return appimporting.NewImportOrdersUseCase(repo, creator, approver, checker, nil, rater, "CNY")
 }
 
 func mustUUID(t *testing.T) uuid.UUID {

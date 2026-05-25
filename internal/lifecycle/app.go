@@ -545,6 +545,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		importSaleCreator{uc: appbill.NewCreateSaleUseCase(billRepo)},
 		importSaleApprover{uc: approveSaleUC},
 		importStockChecker{uc: appstock.NewGetSnapshotUseCase(stockRepo)},
+		importWarehouseChecker{repo: whRepo},
 		importCurrencyRater{uc: appcurrency.NewGetRateUseCase(currencyRepo)},
 		"CNY",
 	)

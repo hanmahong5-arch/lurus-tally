@@ -34,7 +34,7 @@ func buildPlanExecutor(
 		products,
 		&aiDraftCreator{uc: appbill.NewCreatePurchaseDraftUseCase(billRepo), skuRepo: skuRepo},
 		&aiPriceChanger{uc: appsku.NewUpdatePriceUseCase(skuRepo)},
-		&aiStockAdjuster{uc: recordMovementUC, whRepo: whRepo},
+		&aiStockAdjuster{db: db, uc: recordMovementUC, whRepo: whRepo},
 	)
 }
 
@@ -121,28 +121,58 @@ func (a *aiPriceChanger) ApplyPriceChange(ctx context.Context, tenantID uuid.UUI
 	return a.uc.Execute(ctx, tenantID, productIDs, action)
 }
 
-// aiStockAdjuster records a single adjust movement in the tenant's default warehouse.
+// aiStockAdjuster records a batch of adjust movements atomically in the tenant's
+// default warehouse. Every movement carries the plan ID as reference_id (NOT NULL
+// since migration 000034) and the whole batch shares one DB transaction so a
+// mid-batch failure rolls back every prior line — callers can safely retry.
 type aiStockAdjuster struct {
+	db     *sql.DB
 	uc     *appstock.RecordMovementUseCase
 	whRepo *repowarehouse.Repo
 }
 
-func (a *aiStockAdjuster) AdjustStock(ctx context.Context, tenantID, actorID, productID uuid.UUID, delta decimal.Decimal) error {
+func (a *aiStockAdjuster) AdjustStockBatch(
+	ctx context.Context,
+	tenantID, actorID, planID uuid.UUID,
+	lines []appai.StockAdjustLine,
+) (int, error) {
+	if len(lines) == 0 {
+		return 0, nil
+	}
 	warehouseID, err := a.whRepo.DefaultWarehouseID(ctx, tenantID)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	_, err = a.uc.Execute(ctx, appstock.RecordMovementRequest{
-		TenantID:      tenantID,
-		ProductID:     productID,
-		WarehouseID:   warehouseID,
-		Direction:     domainstock.DirectionAdjust,
-		Qty:           delta,
-		ConvFactor:    "1",
-		CostStrategy:  domainstock.CostStrategyWAC,
-		ReferenceType: domainstock.RefAdjust,
-		CreatedBy:     &actorID,
-		Note:          "AI assistant — bulk stock adjust",
-	})
-	return err
+
+	tx, err := a.db.BeginTx(ctx, nil)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	affected := 0
+	refID := planID
+	for _, ln := range lines {
+		if _, err := a.uc.ExecuteInTx(ctx, tx, appstock.RecordMovementRequest{
+			TenantID:      tenantID,
+			ProductID:     ln.ProductID,
+			WarehouseID:   warehouseID,
+			Direction:     domainstock.DirectionAdjust,
+			Qty:           ln.Delta,
+			ConvFactor:    "1",
+			CostStrategy:  domainstock.CostStrategyWAC,
+			ReferenceType: domainstock.RefAdjust,
+			ReferenceID:   &refID,
+			CreatedBy:     &actorID,
+			Note:          "AI assistant — bulk stock adjust",
+		}); err != nil {
+			return 0, err
+		}
+		affected++
+	}
+
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return affected, nil
 }

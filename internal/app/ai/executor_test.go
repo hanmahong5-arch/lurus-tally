@@ -41,13 +41,20 @@ func (f *fakePriceChanger) ApplyPriceChange(_ context.Context, _ uuid.UUID, ids 
 }
 
 type fakeStockAdjuster struct {
-	calls int
-	err   error
+	calls    int
+	gotPlan  uuid.UUID
+	gotLines []appai.StockAdjustLine
+	err      error
 }
 
-func (f *fakeStockAdjuster) AdjustStock(_ context.Context, _, _, _ uuid.UUID, _ decimal.Decimal) error {
+func (f *fakeStockAdjuster) AdjustStockBatch(_ context.Context, _, _, planID uuid.UUID, lines []appai.StockAdjustLine) (int, error) {
 	f.calls++
-	return f.err
+	f.gotPlan = planID
+	f.gotLines = lines
+	if f.err != nil {
+		return 0, f.err
+	}
+	return len(lines), nil
 }
 
 func newExecutor(rows []appai.ProductRow, d *fakeDraftCreator, p *fakePriceChanger, s *fakeStockAdjuster) *appai.DefaultPlanExecutor {
@@ -124,16 +131,20 @@ func TestExecutor_StockAdjust_AppliesPerProduct(t *testing.T) {
 	rows := []appai.ProductRow{{ID: uuid.New(), Name: "A"}, {ID: uuid.New(), Name: "B"}}
 	ex := newExecutor(rows, &fakeDraftCreator{}, &fakePriceChanger{}, s)
 
+	planID := uuid.New()
 	plan := &domainai.Plan{
-		ID: uuid.New(), TenantID: uuid.New(), Type: domainai.PlanTypeBulkStockAdjust,
+		ID: planID, TenantID: uuid.New(), Type: domainai.PlanTypeBulkStockAdjust,
 		Payload: map[string]interface{}{"filter": "all", "delta": -2.0},
 	}
 	res, err := ex.Execute(context.Background(), uuid.New(), plan)
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if res.AffectedCount != 2 || s.calls != 2 {
-		t.Errorf("affected=%d calls=%d, want 2/2", res.AffectedCount, s.calls)
+	if res.AffectedCount != 2 || s.calls != 1 || len(s.gotLines) != 2 {
+		t.Errorf("affected=%d calls=%d lines=%d, want 2/1/2", res.AffectedCount, s.calls, len(s.gotLines))
+	}
+	if s.gotPlan != planID {
+		t.Errorf("planID propagated wrong: got %s want %s", s.gotPlan, planID)
 	}
 }
 
