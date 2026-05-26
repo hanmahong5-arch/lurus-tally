@@ -14,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+	"golang.org/x/sync/errgroup"
 )
 
 // ReplenishRow is one candidate product returned by the repo.
@@ -64,52 +65,50 @@ func NewWeeklySummaryUseCase(repo DigestRepo) *WeeklySummaryUseCase {
 }
 
 // Execute runs all three aggregate queries concurrently and assembles the summary.
+// Uses errgroup.WithContext so the first failure cancels the other in-flight
+// queries — without this, a slow DB on one query keeps holding a connection
+// even when the caller has already received a failure from another (UAT-3 F05).
 func (uc *WeeklySummaryUseCase) Execute(ctx context.Context, tenantID uuid.UUID) (Summary, error) {
-	// Run the three queries in parallel using goroutines + a simple error
-	// aggregation pattern. All three reads are idempotent; failures on one
-	// should not suppress the others.
-	type replenishResult struct {
-		rows []ReplenishRow
-		err  error
-	}
-	type intResult struct {
-		n   int
-		err error
-	}
+	g, gctx := errgroup.WithContext(ctx)
 
-	replCh := make(chan replenishResult, 1)
-	oversellCh := make(chan intResult, 1)
-	deadCh := make(chan intResult, 1)
+	var (
+		replRows    []ReplenishRow
+		oversellN   int
+		deadStockN  int
+	)
 
-	go func() {
-		rows, err := uc.repo.ListReplenishCandidates(ctx, tenantID)
-		replCh <- replenishResult{rows, err}
-	}()
-	go func() {
-		n, err := uc.repo.CountOversell(ctx, tenantID)
-		oversellCh <- intResult{n, err}
-	}()
-	go func() {
-		n, err := uc.repo.CountDeadStock(ctx, tenantID)
-		deadCh <- intResult{n, err}
-	}()
+	g.Go(func() error {
+		rows, err := uc.repo.ListReplenishCandidates(gctx, tenantID)
+		if err != nil {
+			return err
+		}
+		replRows = rows
+		return nil
+	})
+	g.Go(func() error {
+		n, err := uc.repo.CountOversell(gctx, tenantID)
+		if err != nil {
+			return err
+		}
+		oversellN = n
+		return nil
+	})
+	g.Go(func() error {
+		n, err := uc.repo.CountDeadStock(gctx, tenantID)
+		if err != nil {
+			return err
+		}
+		deadStockN = n
+		return nil
+	})
 
-	replRes := <-replCh
-	if replRes.err != nil {
-		return Summary{}, replRes.err
-	}
-	oversellRes := <-oversellCh
-	if oversellRes.err != nil {
-		return Summary{}, oversellRes.err
-	}
-	deadRes := <-deadCh
-	if deadRes.err != nil {
-		return Summary{}, deadRes.err
+	if err := g.Wait(); err != nil {
+		return Summary{}, err
 	}
 
 	coverage := decimal.NewFromInt(int64(uc.coverageDays))
 	totalAmount := decimal.Zero
-	for _, r := range replRes.rows {
+	for _, r := range replRows {
 		// suggestedQty = avgDailySales × coverageDays − available (floor 0)
 		suggested := r.AvgDailySales.Mul(coverage).Sub(r.AvailableQty)
 		if suggested.IsNegative() {
@@ -119,10 +118,10 @@ func (uc *WeeklySummaryUseCase) Execute(ctx context.Context, tenantID uuid.UUID)
 	}
 
 	return Summary{
-		ReplenishCount:     len(replRes.rows),
+		ReplenishCount:     len(replRows),
 		ReplenishAmountCNY: totalAmount,
-		OversellCount:      oversellRes.n,
-		DeadStockCount:     deadRes.n,
+		OversellCount:      oversellN,
+		DeadStockCount:     deadStockN,
 		GeneratedAt:        time.Now().UTC(),
 	}, nil
 }

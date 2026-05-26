@@ -9,7 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
-	"github.com/shopspring/decimal"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // DB is the narrow interface the repo needs; *sql.DB satisfies it.
@@ -90,10 +90,18 @@ func (r *SQLDigestRepo) ListReplenishCandidates(ctx context.Context, tenantID uu
 		if err := rows.Scan(&row.ProductID, &availStr, &safetyStr, &avgStr, &costStr); err != nil {
 			return nil, fmt.Errorf("digest replenish scan: %w", err)
 		}
-		row.AvailableQty, _ = decimal.NewFromString(availStr)
-		row.SafetyQty, _ = decimal.NewFromString(safetyStr)
-		row.AvgDailySales, _ = decimal.NewFromString(avgStr)
-		row.UnitCost, _ = decimal.NewFromString(costStr)
+		if row.AvailableQty, err = decimalutil.Parse(availStr, "available_qty"); err != nil {
+			return nil, err
+		}
+		if row.SafetyQty, err = decimalutil.Parse(safetyStr, "safety_qty"); err != nil {
+			return nil, err
+		}
+		if row.AvgDailySales, err = decimalutil.Parse(avgStr, "avg_daily_sales"); err != nil {
+			return nil, err
+		}
+		if row.UnitCost, err = decimalutil.Parse(costStr, "unit_cost"); err != nil {
+			return nil, err
+		}
 		out = append(out, row)
 	}
 	return out, rows.Err()

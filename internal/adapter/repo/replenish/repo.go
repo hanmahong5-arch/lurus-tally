@@ -10,7 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	appreplenish "github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
-	"github.com/shopspring/decimal"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // DB is the narrow database interface the repo requires.
@@ -125,6 +125,7 @@ WHERE pr.tenant_id  = $1
   AND pr.deleted_at IS NULL
   AND pr.enabled    = true
 ORDER BY pr.name
+LIMIT 10000
 `
 
 // ListSuggestions implements appreplenish.SuggestionRepo.
@@ -157,11 +158,21 @@ func (r *SQLSuggestionRepo) ListSuggestions(ctx context.Context, tenantID uuid.U
 			return nil, fmt.Errorf("replenish scan row: %w", err)
 		}
 
-		row.AvailableQty, _ = decimal.NewFromString(availStr)
-		row.SafetyQty, _ = decimal.NewFromString(safetyStr)
-		row.UnitCost, _ = decimal.NewFromString(costStr)
-		row.AvgDailySales, _ = decimal.NewFromString(avgStr)
-		row.InTransit, _ = decimal.NewFromString(inTransitStr)
+		if row.AvailableQty, err = decimalutil.Parse(availStr, "available_qty"); err != nil {
+			return nil, err
+		}
+		if row.SafetyQty, err = decimalutil.Parse(safetyStr, "safety_qty"); err != nil {
+			return nil, err
+		}
+		if row.UnitCost, err = decimalutil.Parse(costStr, "unit_cost"); err != nil {
+			return nil, err
+		}
+		if row.AvgDailySales, err = decimalutil.Parse(avgStr, "avg_daily_sales"); err != nil {
+			return nil, err
+		}
+		if row.InTransit, err = decimalutil.Parse(inTransitStr, "in_transit"); err != nil {
+			return nil, err
+		}
 
 		if supplierID.Valid {
 			id, err := uuid.Parse(supplierID.String)

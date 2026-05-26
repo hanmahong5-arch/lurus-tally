@@ -11,7 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	appreports "github.com/hanmahong5-arch/lurus-tally/internal/app/reports"
-	"github.com/shopspring/decimal"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // DB is the minimal interface over *sql.DB that the reports repo needs.
@@ -77,9 +77,15 @@ func (r *SQLRepo) ListRecentSaleLines(ctx context.Context, tenantID uuid.UUID, d
 		if err := rows.Scan(&s.ProductID, &s.ProductName, &qtyStr, &revStr, &marginStr, &s.SoldAt); err != nil {
 			return nil, fmt.Errorf("reports sale scan: %w", err)
 		}
-		s.Qty, _ = decimal.NewFromString(qtyStr)
-		s.Revenue, _ = decimal.NewFromString(revStr)
-		s.Margin, _ = decimal.NewFromString(marginStr)
+		if s.Qty, err = decimalutil.Parse(qtyStr, "qty"); err != nil {
+			return nil, err
+		}
+		if s.Revenue, err = decimalutil.Parse(revStr, "revenue"); err != nil {
+			return nil, err
+		}
+		if s.Margin, err = decimalutil.Parse(marginStr, "margin"); err != nil {
+			return nil, err
+		}
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -130,7 +136,8 @@ func (r *SQLRepo) ListStockSnapshots(ctx context.Context, tenantID uuid.UUID) ([
 			GROUP BY product_id
 		) av ON av.product_id = s.product_id
 		WHERE p.deleted_at IS NULL
-		ORDER BY p.name`
+		ORDER BY p.name
+		LIMIT 10000`
 
 	rows, err := r.db.QueryContext(ctx, q, tenantID)
 	if err != nil {
@@ -148,9 +155,15 @@ func (r *SQLRepo) ListStockSnapshots(ctx context.Context, tenantID uuid.UUID) ([
 		); err != nil {
 			return nil, fmt.Errorf("reports stock scan: %w", err)
 		}
-		s.Qty, _ = decimal.NewFromString(qtyStr)
-		s.UnitCost, _ = decimal.NewFromString(costStr)
-		s.AvgDailySales, _ = decimal.NewFromString(avgStr)
+		if s.Qty, err = decimalutil.Parse(qtyStr, "qty"); err != nil {
+			return nil, err
+		}
+		if s.UnitCost, err = decimalutil.Parse(costStr, "unit_cost"); err != nil {
+			return nil, err
+		}
+		if s.AvgDailySales, err = decimalutil.Parse(avgStr, "avg_daily_sales"); err != nil {
+			return nil, err
+		}
 		s.LeadTimeDays = 7 // default; per-product config deferred
 		out = append(out, s)
 	}
