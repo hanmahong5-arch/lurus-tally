@@ -37,6 +37,7 @@ const SECTIONS: NavSection[] = [
     items: [
       { href: "/products", label: "商品", icon: "📦" },
       { href: "/stock", label: "库存", icon: "🏬" },
+      { href: "/replenish", label: "补货", icon: "📋" },
       { href: "/purchases", label: "采购", icon: "🛒" },
       { href: "/sales", label: "销售", icon: "📊" },
       { href: "/payments", label: "付款", icon: "💳", badge: "NEW" },

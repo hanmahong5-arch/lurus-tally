@@ -1,8 +1,9 @@
-// Package replenish implements the HTTP handler for weekly replenishment suggestions.
+// Package replenish implements the HTTP handlers for replenishment endpoints.
 //
-// Endpoint:
+// Endpoints:
 //
-//	GET /api/v1/replenish/suggestions?weeks=2
+//	GET  /api/v1/replenish/suggestions?weeks=2
+//	POST /api/v1/replenish/draft-batch
 package replenish
 
 import (
@@ -12,28 +13,42 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/shopspring/decimal"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appreplenish "github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
 )
 
-// ListSuggestionsUseCase is the surface the handler calls.
+// ListSuggestionsUseCase is the surface the handler calls for GET suggestions.
 type ListSuggestionsUseCase interface {
 	Execute(ctx context.Context, tenantID uuid.UUID, weeks int) ([]appreplenish.SuggestionRow, error)
 }
 
-// Handler groups replenishment HTTP endpoints.
-type Handler struct {
-	uc ListSuggestionsUseCase
+// CreateDraftBatchUseCase is the surface the handler calls for POST draft-batch.
+type CreateDraftBatchUseCase interface {
+	Execute(ctx context.Context, req appreplenish.DraftBatchRequest) (*appreplenish.DraftBatchOutput, error)
 }
 
-// New constructs a Handler.
+// Handler groups replenishment HTTP endpoints.
+type Handler struct {
+	uc    ListSuggestionsUseCase
+	batch CreateDraftBatchUseCase // nil when not wired (returns 501)
+}
+
+// New constructs a Handler with only the suggestions use case.
+// Use NewWithBatch to also wire the draft-batch endpoint.
 func New(uc ListSuggestionsUseCase) *Handler {
 	return &Handler{uc: uc}
+}
+
+// NewWithBatch constructs a Handler with both use cases.
+func NewWithBatch(uc ListSuggestionsUseCase, batch CreateDraftBatchUseCase) *Handler {
+	return &Handler{uc: uc, batch: batch}
 }
 
 // RegisterRoutes mounts replenishment endpoints onto the given router group.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/replenish/suggestions", h.GetSuggestions)
+	rg.POST("/replenish/draft-batch", h.PostDraftBatch)
 }
 
 // suggestionResp is the JSON shape of a single suggestion row.
@@ -101,4 +116,135 @@ func (h *Handler) GetSuggestions(c *gin.Context) {
 		"count": len(items),
 		"weeks": weeks,
 	})
+}
+
+// ----- Draft-batch -----
+
+// draftBatchLineInput is one line in the POST /replenish/draft-batch request body.
+type draftBatchLineInput struct {
+	ProductID  string  `json:"product_id"  binding:"required,uuid"`
+	SupplierID *string `json:"supplier_id,omitempty"`
+	Qty        string  `json:"qty"         binding:"required"`
+}
+
+// draftBatchReq is the request body for POST /replenish/draft-batch.
+type draftBatchReq struct {
+	Lines []draftBatchLineInput `json:"lines" binding:"required,min=1,max=200,dive"`
+}
+
+// draftResultResp is one created draft in the response.
+type draftResultResp struct {
+	BillID       string  `json:"bill_id"`
+	BillNo       string  `json:"bill_no"`
+	SupplierID   *string `json:"supplier_id,omitempty"`
+	SupplierName string  `json:"supplier_name,omitempty"`
+	LineCount    int     `json:"line_count"`
+}
+
+// PostDraftBatch handles POST /api/v1/replenish/draft-batch.
+//
+// Groups selected replenishment lines by supplier and creates one purchase
+// draft per group. Accepts an Idempotency-Key header; when Redis is available
+// the middleware deduplicates identical keys transparently.
+func (h *Handler) PostDraftBatch(c *gin.Context) {
+	if h.batch == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "not_implemented", "detail": "batch drafting not configured"})
+		return
+	}
+
+	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "tenant_id required"})
+		return
+	}
+
+	var req draftBatchReq
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": err.Error()})
+		return
+	}
+
+	lines := make([]appreplenish.DraftBatchLine, 0, len(req.Lines))
+	for _, l := range req.Lines {
+		pid, err := uuid.Parse(l.ProductID)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "invalid product_id: " + l.ProductID})
+			return
+		}
+		qty, err := decimal.NewFromString(l.Qty)
+		if err != nil || qty.IsZero() || qty.IsNegative() {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "qty must be a positive number"})
+			return
+		}
+
+		var supplierID *uuid.UUID
+		if l.SupplierID != nil && *l.SupplierID != "" {
+			sid, err := uuid.Parse(*l.SupplierID)
+			if err != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "invalid supplier_id: " + *l.SupplierID})
+				return
+			}
+			supplierID = &sid
+		}
+
+		lines = append(lines, appreplenish.DraftBatchLine{
+			ProductID:  pid,
+			SupplierID: supplierID,
+			Qty:        qty,
+		})
+	}
+
+	// Best-effort creator ID from JWT sub or X-User-ID header.
+	creatorID := resolveCreatorID(c)
+
+	out, err := h.batch.Execute(c.Request.Context(), appreplenish.DraftBatchRequest{
+		TenantID:  tenantID,
+		CreatorID: creatorID,
+		Lines:     lines,
+		Remark:    "补货建议批量草稿",
+	})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		return
+	}
+
+	results := make([]draftResultResp, 0, len(out.Drafts))
+	for _, d := range out.Drafts {
+		r := draftResultResp{
+			BillID:       d.BillID.String(),
+			BillNo:       d.BillNo,
+			SupplierName: d.SupplierName,
+			LineCount:    d.LineCount,
+		}
+		if d.SupplierID != nil {
+			s := d.SupplierID.String()
+			r.SupplierID = &s
+		}
+		results = append(results, r)
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"drafts": results,
+		"count":  len(results),
+	})
+}
+
+// resolveCreatorID reads the creator UUID from JWT sub claim or X-User-ID header.
+// Returns uuid.Nil when neither is present (draft is still created; CreatorID=nil
+// is allowed by CreatePurchaseDraftUseCase when zero — however the use case
+// validates non-nil, so we keep uuid.Nil and let the use case reject gracefully).
+func resolveCreatorID(c *gin.Context) uuid.UUID {
+	if sub, exists := c.Get(middleware.CtxKeyZitadelSub); exists {
+		if s, ok := sub.(string); ok {
+			if id, err := uuid.Parse(s); err == nil {
+				return id
+			}
+		}
+	}
+	if raw := c.GetHeader("X-User-ID"); raw != "" {
+		if parsed, err := uuid.Parse(raw); err == nil {
+			return parsed
+		}
+	}
+	return uuid.Nil
 }

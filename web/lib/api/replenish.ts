@@ -37,3 +37,34 @@ export async function listReplenishSuggestions(
   const usp = new URLSearchParams({ weeks: String(weeks) })
   return apiFetch(`/replenish/suggestions?${usp.toString()}`, { tenantId, signal })
 }
+
+// ----- Draft-batch -----
+
+export interface DraftBatchLine {
+  product_id: string
+  supplier_id?: string
+  qty: string
+}
+
+export interface DraftBatchRequest {
+  lines: DraftBatchLine[]
+}
+
+export interface DraftBatchResult {
+  bill_id: string
+  bill_no: string
+  supplier_id?: string
+  supplier_name?: string
+  line_count: number
+}
+
+export async function draftBatch(
+  body: DraftBatchRequest,
+  tenantId?: string
+): Promise<{ drafts: DraftBatchResult[]; count: number }> {
+  return apiFetch("/replenish/draft-batch", {
+    method: "POST",
+    body: JSON.stringify(body),
+    tenantId,
+  })
+}

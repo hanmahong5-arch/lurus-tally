@@ -6,10 +6,11 @@ import type { ColumnDef } from "@tanstack/react-table"
 
 import {
   listReplenishSuggestions,
+  draftBatch,
   type ReplenishSuggestion,
 } from "@/lib/api/replenish"
-import { createPurchaseBill, type BillLineItemInput } from "@/lib/api/purchase"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { trackEvent } from "@/lib/telemetry"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable, currencyCell } from "@/components/ui/data-table"
@@ -33,19 +34,6 @@ function urgencyLabel(score: string): string {
   const days = parseFloat(score)
   if (isNaN(days) || days > 9999) return "无销量"
   return `${Math.floor(days)}天`
-}
-
-// Group selected rows by supplier_id (null/empty supplier gets its own group).
-function groupBySupplier(
-  rows: ReplenishSuggestion[]
-): Map<string, ReplenishSuggestion[]> {
-  const map = new Map<string, ReplenishSuggestion[]>()
-  for (const row of rows) {
-    const key = row.supplier_id ?? "__no_supplier__"
-    if (!map.has(key)) map.set(key, [])
-    map.get(key)!.push(row)
-  }
-  return map
 }
 
 export default function ReplenishPage() {
@@ -104,47 +92,36 @@ export default function ReplenishPage() {
       return
     }
 
+    const validLines = chosenRows
+      .filter((r: ReplenishSuggestion) => parseFloat(r.suggested_qty) > 0)
+      .map((r: ReplenishSuggestion) => ({
+        product_id: r.product_id,
+        supplier_id: r.supplier_id,
+        qty: r.suggested_qty,
+      }))
+
+    if (validLines.length === 0) {
+      toast.error("所有选中商品建议订量为 0，无需下单")
+      return
+    }
+
     setSubmitting(true)
-    const groups = groupBySupplier(chosenRows)
-    let successCount = 0
-    const errors: string[] = []
+    try {
+      const result = await draftBatch({ lines: validLines }, devTenantId)
+      const draftCount = result.drafts.length
+      const totalLines = result.drafts.reduce((s, d) => s + d.line_count, 0)
 
-    for (const rows of Array.from(groups.values())) {
-      const items: BillLineItemInput[] = rows
-        .filter((r: ReplenishSuggestion) => parseFloat(r.suggested_qty) > 0)
-        .map((r: ReplenishSuggestion, i: number) => ({
-          product_id: r.product_id,
-          line_no: i + 1,
-          qty: r.suggested_qty,
-          unit_price: "0", // draft — supplier price filled in manually
-        }))
+      // North Star WAD telemetry — each batch-create counts once per draft.
+      trackEvent("wad_increment", { draft_count: draftCount, line_count: totalLines })
 
-      if (items.length === 0) continue
-
-      const partnerId = rows[0].supplier_id
-      try {
-        await createPurchaseBill(
-          {
-            partner_id: partnerId,
-            items,
-            remark: "补货建议自动生成草稿",
-          },
-          devTenantId
-        )
-        successCount++
-      } catch (e) {
-        errors.push(String(e))
-      }
-    }
-
-    setSubmitting(false)
-
-    if (errors.length > 0) {
-      toast.error(`部分草稿生成失败：${errors[0]}`)
-    }
-    if (successCount > 0) {
-      toast.success(`已生成 ${successCount} 份采购草稿，请前往"采购单管理"确认`)
+      toast.success(
+        `已生成 ${draftCount} 张采购草稿（按供应商拆单，共 ${totalLines} 行）→ 请前往"采购单管理"确认`
+      )
       setSelected(new Set())
+    } catch (e) {
+      toast.error(`草稿生成失败：${String(e)}`)
+    } finally {
+      setSubmitting(false)
     }
   }
 

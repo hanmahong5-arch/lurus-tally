@@ -18,6 +18,7 @@ export type TelemetryEvent =
   | "plan_accept_rate"
   | "onboarding_first_po_exported"
   | "cmd_z_used"
+  | "wad_increment"
 
 /**
  * TelemetryMetadata maps each event to the shape of its `metadata` argument.
@@ -67,6 +68,18 @@ export interface TelemetryMetadata {
   cmd_z_used: {
     entity_type: string
     undo_latency_ms: number
+  }
+
+  /**
+   * WAD (Weekly Active Decision) increment — one purchase draft generated
+   * from the replenishment suggestion panel.
+   * North Star metric: accumulate ≥ 80 WAD in 90 days.
+   */
+  wad_increment: {
+    /** Number of purchase drafts created in this batch (one per supplier group). */
+    draft_count: number
+    /** Number of product lines included across all drafts. */
+    line_count: number
   }
 }
 

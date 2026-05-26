@@ -258,11 +258,12 @@ func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFun
 			api.GET("/account/avatar", notImplemented)
 		}
 
-		// Replenishment decision page (Req 3) — read-only suggestions.
+		// Replenishment decision page (Req 3) — weekly suggestions + batch draft creation.
 		if replh != nil {
 			replh.RegisterRoutes(api)
 		} else {
 			api.GET("/replenish/suggestions", notImplemented)
+			api.POST("/replenish/draft-batch", notImplemented)
 		}
 
 		// Reports — surfaced AI analytics (Req 10).
