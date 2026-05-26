@@ -194,7 +194,7 @@ func (h *Handler) PostDraftBatch(c *gin.Context) {
 		})
 	}
 
-	// Best-effort creator ID from JWT sub or X-User-ID header.
+	// Creator ID from JWT sub (middleware-injected).
 	creatorID := resolveCreatorID(c)
 
 	out, err := h.batch.Execute(c.Request.Context(), appreplenish.DraftBatchRequest{
@@ -229,22 +229,23 @@ func (h *Handler) PostDraftBatch(c *gin.Context) {
 	})
 }
 
-// resolveCreatorID reads the creator UUID from JWT sub claim or X-User-ID header.
-// Returns uuid.Nil when neither is present (draft is still created; CreatorID=nil
-// is allowed by CreatePurchaseDraftUseCase when zero — however the use case
-// validates non-nil, so we keep uuid.Nil and let the use case reject gracefully).
+// resolveCreatorID reads the creator UUID from the Zitadel sub injected by
+// AuthMiddleware. The X-User-ID header fallback was removed (UAT-3 Bug 2)
+// because clients could spoof bill_head.creator_id by setting it. Returns
+// uuid.Nil when no sub is present — the use case validates non-nil and
+// rejects gracefully.
 func resolveCreatorID(c *gin.Context) uuid.UUID {
-	if sub, exists := c.Get(middleware.CtxKeyZitadelSub); exists {
-		if s, ok := sub.(string); ok {
-			if id, err := uuid.Parse(s); err == nil {
-				return id
-			}
-		}
+	sub, exists := c.Get(middleware.CtxKeyZitadelSub)
+	if !exists {
+		return uuid.Nil
 	}
-	if raw := c.GetHeader("X-User-ID"); raw != "" {
-		if parsed, err := uuid.Parse(raw); err == nil {
-			return parsed
-		}
+	s, ok := sub.(string)
+	if !ok {
+		return uuid.Nil
 	}
-	return uuid.Nil
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return uuid.Nil
+	}
+	return id
 }

@@ -2,6 +2,7 @@ package importing_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ type mockRepo struct {
 	seen     map[string]uuid.UUID                // key: platform+":"+orderNo → billID
 	upserted []appimporting.SKUMapping
 	marked   []string // orderNos marked seen
+	markErr  error    // when set, MarkOrderSeen returns this error
 }
 
 func newMockRepo() *mockRepo {
@@ -67,6 +69,9 @@ func (m *mockRepo) IsOrderSeen(_ context.Context, _ uuid.UUID, platform, orderNo
 }
 
 func (m *mockRepo) MarkOrderSeen(_ context.Context, _ uuid.UUID, platform, orderNo string, billID uuid.UUID) error {
+	if m.markErr != nil {
+		return m.markErr
+	}
 	m.seen[platform+":"+orderNo] = billID
 	m.marked = append(m.marked, orderNo)
 	return nil
@@ -414,6 +419,48 @@ func TestImportOrdersUseCase_FXConversion(t *testing.T) {
 	expected := decimal.NewFromFloat(72.5)
 	if !items[0].UnitPrice.Equal(expected) {
 		t.Errorf("unit_price after FX: got %s, want %s", items[0].UnitPrice, expected)
+	}
+}
+
+// UAT-3 Bug 1: when MarkOrderSeen fails after the bill committed, the use case
+// must NOT halt the batch and NOT roll back. The bill is reported as Imported
+// with MarkSeenError set, so the next import attempt's stage-2 fallback in
+// Repo.IsOrderSeen can self-heal the dedup row.
+func TestImportOrdersUseCase_MarkOrderSeenFailure_StillReportsImported(t *testing.T) {
+	repo := newMockRepo()
+	repo.markErr = errors.New("transient DB error")
+	creator := &mockCreator{}
+	approver := &mockApprover{}
+	checker := newMockStockChecker()
+	rater := newMockRater()
+
+	productID := mustUUID(t)
+	repo.addMapping("amazon", "SKU-001", productID)
+
+	uc := buildUseCase(repo, creator, approver, checker, rater)
+	csv := amazonCSV("ORD-001,SKU-001,1,50.00,CNY,2026-01-15")
+
+	result, err := uc.Execute(context.Background(), appimporting.ImportRequest{
+		TenantID:    mustUUID(t),
+		CreatorID:   mustUUID(t),
+		WarehouseID: mustUUID(t),
+		Platform:    appimporting.PlatformAmazon,
+		CSVData:     csv,
+	})
+	if err != nil {
+		t.Fatalf("Execute should not return error when only MarkOrderSeen fails: %v", err)
+	}
+	if len(result.Imported) != 1 {
+		t.Fatalf("expected 1 imported (bill committed), got %d", len(result.Imported))
+	}
+	if result.Imported[0].MarkSeenError == "" {
+		t.Error("expected MarkSeenError to be set on the imported order")
+	}
+	if len(creator.created) != 1 {
+		t.Errorf("bill should have been created, got %d", len(creator.created))
+	}
+	if len(approver.approved) != 1 {
+		t.Errorf("bill should have been approved, got %d", len(approver.approved))
 	}
 }
 

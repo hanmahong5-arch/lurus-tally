@@ -94,6 +94,10 @@ type ImportedOrder struct {
 	PlatformOrderNo string
 	BillID          uuid.UUID
 	BillNo          string
+	// MarkSeenError is set when the bill committed but the dedup row failed to
+	// persist. Repo.IsOrderSeen's stage-2 fallback will self-heal on the next
+	// import attempt, so this is informational, not blocking.
+	MarkSeenError string `json:",omitempty"`
 }
 
 // SkippedOrder records an order that was not imported and the reason.
@@ -443,10 +447,18 @@ func (uc *ImportOrdersUseCase) Execute(ctx context.Context, req ImportRequest) (
 		}
 
 		// 6. Mark order seen — idempotent on concurrent re-import.
+		// On failure we DON'T halt the batch and DON'T roll back the bill: the
+		// bill is already committed, and Repo.IsOrderSeen's stage-2 fallback
+		// (bill_head remark lookup + self-heal) recovers the dedup row on the
+		// next import attempt, preventing duplicate bills.
 		if err := uc.repo.MarkOrderSeen(ctx, req.TenantID, string(req.Platform), orderNo, out.BillID); err != nil {
-			// Non-fatal: bill was created. Log the anomaly via error return is safest;
-			// supervisor should surface this but not roll back the bill.
-			return nil, fmt.Errorf("importing: mark order seen for %s (bill %s): %w", orderNo, out.BillID, err)
+			result.Imported = append(result.Imported, ImportedOrder{
+				PlatformOrderNo: orderNo,
+				BillID:          out.BillID,
+				BillNo:          out.BillNo,
+				MarkSeenError:   err.Error(),
+			})
+			continue
 		}
 
 		// Persist any new mappings learned from hints that were used for this order.

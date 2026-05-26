@@ -143,20 +143,23 @@ func resolveTenantID(c *gin.Context) uuid.UUID {
 	return middleware.GetTenantID(c)
 }
 
+// resolveCreatorID reads the creator UUID from the Zitadel sub injected by
+// AuthMiddleware. The X-User-ID header fallback was removed (UAT-3 Bug 2)
+// because clients could spoof payment.creator_id by setting it.
 func resolveCreatorID(c *gin.Context) uuid.UUID {
-	if sub, exists := c.Get(middleware.CtxKeyZitadelSub); exists {
-		if s, ok := sub.(string); ok {
-			if id, err := uuid.Parse(s); err == nil {
-				return id
-			}
-		}
+	sub, exists := c.Get(middleware.CtxKeyZitadelSub)
+	if !exists {
+		return uuid.Nil
 	}
-	if raw := c.GetHeader("X-User-ID"); raw != "" {
-		if parsed, err := uuid.Parse(raw); err == nil {
-			return parsed
-		}
+	s, ok := sub.(string)
+	if !ok {
+		return uuid.Nil
 	}
-	return uuid.Nil
+	id, err := uuid.Parse(s)
+	if err != nil {
+		return uuid.Nil
+	}
+	return id
 }
 
 // errorsIs placeholder to satisfy the import.

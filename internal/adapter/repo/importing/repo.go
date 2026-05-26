@@ -115,19 +115,46 @@ func (r *Repo) ListMappings(ctx context.Context, tenantID uuid.UUID, platform st
 
 // IsOrderSeen returns true when (tenant, platform, platform_order_no) has already
 // been imported. Returns the existing bill_id when true.
+//
+// Two-stage detection prevents duplicate bills when MarkOrderSeen previously
+// failed but bill creation had already committed:
+//  1. Canonical dedup via tally.import_order_seen.
+//  2. Fallback via tally.bill_head WHERE remark = 'import:{platform}:{orderNo}'.
+//     A hit triggers a best-effort self-heal MarkOrderSeen so the next call
+//     short-circuits on stage 1.
 func (r *Repo) IsOrderSeen(ctx context.Context, tenantID uuid.UUID, platform, orderNo string) (bool, uuid.UUID, error) {
-	const q = `
+	const seenQuery = `
 		SELECT bill_id FROM tally.import_order_seen
 		WHERE tenant_id = $1 AND platform = $2 AND platform_order_no = $3`
 
 	var billID uuid.UUID
-	err := r.db.QueryRowContext(ctx, q, tenantID, platform, orderNo).Scan(&billID)
+	err := r.db.QueryRowContext(ctx, seenQuery, tenantID, platform, orderNo).Scan(&billID)
+	if err == nil {
+		return true, billID, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return false, uuid.Nil, fmt.Errorf("import repo: is order seen: %w", err)
+	}
+
+	// Stage 2: orphan recovery. The seen-table row is missing — check bill_head
+	// for an import-marked bill that already exists for this order.
+	const remarkQuery = `
+		SELECT id FROM tally.bill_head
+		WHERE tenant_id = $1 AND remark = $2 AND deleted_at IS NULL
+		ORDER BY created_at DESC LIMIT 1`
+	remark := fmt.Sprintf("import:%s:%s", platform, orderNo)
+	err = r.db.QueryRowContext(ctx, remarkQuery, tenantID, remark).Scan(&billID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, uuid.Nil, nil
 	}
 	if err != nil {
-		return false, uuid.Nil, fmt.Errorf("import repo: is order seen: %w", err)
+		return false, uuid.Nil, fmt.Errorf("import repo: orphan bill lookup: %w", err)
 	}
+
+	// Self-heal: insert the missing import_order_seen row so future lookups
+	// short-circuit on stage 1. Failure is non-fatal because the caller already
+	// has the correct seen=true answer.
+	_ = r.MarkOrderSeen(ctx, tenantID, platform, orderNo, billID)
 	return true, billID, nil
 }
 
