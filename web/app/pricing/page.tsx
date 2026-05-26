@@ -8,7 +8,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
+import { buttonVariants } from "@/components/ui/button"
 import { TALLY_PLANS, formatCycle, formatPriceCNY } from "@/lib/billing/plans"
 import { cn } from "@/lib/utils"
 
@@ -96,11 +96,15 @@ export default function PricingPage() {
                 </div>
               </CardContent>
               <CardFooter>
-                <Button asChild variant={plan.highlight ? "default" : "outline"} className="w-full">
-                  <Link href={LOGIN_HREF}>
-                    {plan.code === "free" ? "免费开始" : "登录后订阅"}
-                  </Link>
-                </Button>
+                <Link
+                  href={LOGIN_HREF}
+                  className={cn(
+                    buttonVariants({ variant: plan.highlight ? "default" : "outline" }),
+                    "w-full"
+                  )}
+                >
+                  {plan.code === "free" ? "免费开始" : "登录后订阅"}
+                </Link>
               </CardFooter>
             </Card>
           ))}
