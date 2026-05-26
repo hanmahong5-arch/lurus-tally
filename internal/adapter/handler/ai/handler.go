@@ -32,9 +32,15 @@ type ChatOrchestrator interface {
 	ListPlans(ctx context.Context, tenantID uuid.UUID, statusFilter string) ([]*domainai.Plan, error)
 }
 
+// PlanReverter is the surface the handler uses for server-side plan revert (undo).
+type PlanReverter interface {
+	RevertPlan(ctx context.Context, tenantID, actorID, planID uuid.UUID) (*appai.RevertResult, error)
+}
+
 // Handler groups the AI HTTP endpoints.
 type Handler struct {
 	orchestrator ChatOrchestrator
+	reverter     PlanReverter        // nil → revert endpoint returns 501
 	limiter      *llmgateway.RateLimiter // nil → no rate limiting (dev / tests)
 }
 
@@ -50,6 +56,13 @@ func NewWithLimiter(orchestrator ChatOrchestrator, limiter *llmgateway.RateLimit
 	return &Handler{orchestrator: orchestrator, limiter: limiter}
 }
 
+// WithReverter attaches the plan reverter so the undo endpoint performs real side effects.
+// When nil (dev / tests without Redis), POST plans/:id/revert returns 501.
+func (h *Handler) WithReverter(r PlanReverter) *Handler {
+	h.reverter = r
+	return h
+}
+
 // RegisterRoutes mounts AI endpoints onto the given router group.
 // The group must already be guarded by AuthMiddleware so tenant_id is present.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
@@ -59,6 +72,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		ai.GET("/plans", h.ListPlans)
 		ai.POST("/plans/:plan_id/confirm", h.ConfirmPlan)
 		ai.POST("/plans/:plan_id/cancel", h.CancelPlan)
+		ai.POST("/plans/:plan_id/revert", h.RevertPlan)
 	}
 }
 
@@ -271,6 +285,54 @@ func resolveActorID(c *gin.Context) uuid.UUID {
 		}
 	}
 	return uuid.Nil
+}
+
+// RevertPlan handles POST /api/v1/ai/plans/:plan_id/revert.
+//
+// Reverses the side effects of a confirmed bulk_stock_adjust or price_change plan
+// within the 30-second undo window. Idempotent: a second call after the plan
+// status has been flipped to cancelled returns 409 ErrAlreadyReverted.
+func (h *Handler) RevertPlan(c *gin.Context) {
+	if h.reverter == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "not_implemented", "detail": "plan revert not enabled"})
+		return
+	}
+
+	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		return
+	}
+
+	planID, err := uuid.Parse(c.Param("plan_id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "invalid plan_id"})
+		return
+	}
+
+	actorID := resolveActorID(c)
+	if actorID == uuid.Nil {
+		actorID = tenantID
+	}
+
+	result, err := h.reverter.RevertPlan(c.Request.Context(), tenantID, actorID, planID)
+	if err != nil {
+		switch err {
+		case appai.ErrPlanNotFound:
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "plan not found"})
+		case appai.ErrAlreadyReverted:
+			c.JSON(http.StatusConflict, gin.H{"error": "already_reverted", "detail": "plan already reverted"})
+		case appai.ErrRevertWindowClosed:
+			c.JSON(http.StatusConflict, gin.H{"error": "revert_window_closed", "detail": "undo window has closed (>30 s since execution)"})
+		case appai.ErrPlanNotRevertible:
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "not_revertible", "detail": "plan type does not support undo"})
+		default:
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		}
+		return
+	}
+
+	c.JSON(http.StatusOK, result)
 }
 
 // CancelPlan handles POST /api/v1/ai/plans/:plan_id/cancel.

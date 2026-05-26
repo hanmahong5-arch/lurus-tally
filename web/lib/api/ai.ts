@@ -218,7 +218,23 @@ export async function cancelPlan(planId: string): Promise<void> {
   await callPlanAction<unknown>(planId, "cancel")
 }
 
-async function callPlanAction<T>(planId: string, action: "confirm" | "cancel"): Promise<T> {
+// RevertPlanResult is the response of a successful plan revert.
+export interface RevertPlanResult {
+  plan_id: string
+  reverted_type: string
+  affected_count: number
+}
+
+/**
+ * revertPlan asks the server to undo the side effects of a confirmed plan.
+ * Only bulk_stock_adjust and price_change types are supported server-side.
+ * Must be called within 30 seconds of confirmation.
+ */
+export async function revertPlan(planId: string): Promise<RevertPlanResult> {
+  return callPlanAction<RevertPlanResult>(planId, "revert")
+}
+
+async function callPlanAction<T>(planId: string, action: "confirm" | "cancel" | "revert"): Promise<T> {
   try {
     return await apiFetch<T>(`${BASE}/ai/plans/${planId}/${action}`, {
       method: "POST",

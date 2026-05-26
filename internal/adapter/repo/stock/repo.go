@@ -281,6 +281,48 @@ func (r *Repo) ListMovements(ctx context.Context, f appstock.MovementFilter) ([]
 	return mvs, nil
 }
 
+// ListMovementsByReference returns all movements for a tenant where reference_id matches.
+// Used by the AI revert path to find the movements written by a specific plan so they
+// can be reversed with compensating movements.
+func (r *Repo) ListMovementsByReference(ctx context.Context, tenantID, referenceID uuid.UUID) ([]domain.Movement, error) {
+	const q = `
+		SELECT id, tenant_id, product_id, warehouse_id, direction, qty_base,
+			   unit_cost, total_cost, reference_type, reference_id, occurred_at, created_by, note, created_at
+		FROM tally.stock_movement
+		WHERE tenant_id = $1 AND reference_id = $2
+		ORDER BY created_at ASC`
+
+	rows, err := r.db.QueryContext(ctx, q, tenantID, referenceID)
+	if err != nil {
+		return nil, fmt.Errorf("stock repo: list by reference: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var mvs []domain.Movement
+	for rows.Next() {
+		var m domain.Movement
+		var qtyBase, unitCost, totalCost string
+		var dir, refType string
+		if err := rows.Scan(
+			&m.ID, &m.TenantID, &m.ProductID, &m.WarehouseID,
+			&dir, &qtyBase, &unitCost, &totalCost,
+			&refType, &m.ReferenceID, &m.OccurredAt, &m.CreatedBy, &m.Note, &m.CreatedAt,
+		); err != nil {
+			return nil, fmt.Errorf("stock repo: list by reference scan: %w", err)
+		}
+		m.Direction = domain.Direction(dir)
+		m.ReferenceType = domain.ReferenceType(refType)
+		m.QtyBase, _ = decimal.NewFromString(qtyBase)
+		m.UnitCost, _ = decimal.NewFromString(unitCost)
+		m.TotalCost, _ = decimal.NewFromString(totalCost)
+		mvs = append(mvs, m)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("stock repo: list by reference rows: %w", err)
+	}
+	return mvs, nil
+}
+
 // ----- Lots (FIFO) -----
 
 // InsertLot creates a new FIFO lot within the transaction.

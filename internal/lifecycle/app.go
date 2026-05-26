@@ -332,7 +332,10 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 		// Wire the plan executor so confirming an AI plan performs real side
 		// effects (PO draft / price change / stock adjust) instead of a no-op.
-		orchestrator.WithExecutor(buildPlanExecutor(db, billRepo, recordMovementUC, aiProductRepo))
+		executor := buildPlanExecutor(db, billRepo, recordMovementUC, aiProductRepo)
+		// Attach price-before snapshot so price_change plans can be undone within 30 s.
+		executor.WithPriceSnapshot(buildPriceCapturerAdapter(db), newAIPriceSnapshotStore(rdb))
+		orchestrator.WithExecutor(executor)
 		// Audit every AI plan execution into the account activity log (red-line:
 		// each AI write must be auditable).
 		orchestrator.WithAudit(newAIAuditWriter(acctAuditRepo, l))
@@ -369,7 +372,8 @@ func NewApp(cfg *config.Config) (*App, error) {
 			llmgateway.DefaultRateLimit,
 			llmgateway.DefaultRateWindow,
 		)
-		aiHandler = handlerai.NewWithLimiter(orchestrator, limiter)
+		reverter := buildReverter(db, repostock.New(db), recordMovementUC, planStore, rdb)
+		aiHandler = handlerai.NewWithLimiter(orchestrator, limiter).WithReverter(reverter)
 		l.Info("AI assistant enabled",
 			slog.String("model", cfg.DefaultAIModel),
 			slog.String("newapi_url", cfg.NewAPIBaseURL),

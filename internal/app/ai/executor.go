@@ -77,7 +77,8 @@ type StockAdjustLine struct {
 // shared *sql.Tx so partial failure rolls back every line in the batch.
 //
 // planID is recorded as the stock_movement.reference_id (NOT NULL since migration
-// 000034) so the audit trail can trace any movement back to the AI plan that caused it.
+// 000034) so the revert path can query all movements for a given plan and write
+// compensating entries.
 type StockAdjusterPort interface {
 	AdjustStockBatch(ctx context.Context, tenantID, actorID, planID uuid.UUID, lines []StockAdjustLine) (affected int, err error)
 }
@@ -85,15 +86,26 @@ type StockAdjusterPort interface {
 // DefaultPlanExecutor is the production PlanExecutor. It resolves product
 // names/filters via the AI ProductRepo and dispatches to the three ports.
 type DefaultPlanExecutor struct {
-	products ProductRepo
-	draft    DraftCreatorPort
-	price    PriceChangerPort
-	stock    StockAdjusterPort
+	products      ProductRepo
+	draft         DraftCreatorPort
+	price         PriceChangerPort
+	stock         StockAdjusterPort
+	priceCapturer PriceCapturerPort  // nil → price snapshot skipped (no undo for price)
+	snapshotStore PriceSnapshotStore // nil → price snapshot skipped
 }
 
 // NewPlanExecutor constructs a DefaultPlanExecutor.
 func NewPlanExecutor(products ProductRepo, draft DraftCreatorPort, price PriceChangerPort, stock StockAdjusterPort) *DefaultPlanExecutor {
 	return &DefaultPlanExecutor{products: products, draft: draft, price: price, stock: stock}
+}
+
+// WithPriceSnapshot attaches the before-price capturer and snapshot store to the executor.
+// When both are set, price_change plans capture retail prices before execution so the
+// revert path can restore them. Pass nil to skip (dev / tests without Redis).
+func (e *DefaultPlanExecutor) WithPriceSnapshot(capturer PriceCapturerPort, store PriceSnapshotStore) *DefaultPlanExecutor {
+	e.priceCapturer = capturer
+	e.snapshotStore = store
+	return e
 }
 
 var _ PlanExecutor = (*DefaultPlanExecutor)(nil)
@@ -166,6 +178,15 @@ func (e *DefaultPlanExecutor) execPriceChange(ctx context.Context, plan *domaina
 	ids, err := e.resolveByFilter(ctx, plan.TenantID, payload.Filter)
 	if err != nil {
 		return nil, fmt.Errorf("plan executor: resolve filter %q: %w", payload.Filter, err)
+	}
+
+	// Capture before-prices so the revert path can restore them within the undo window.
+	// Best-effort: a snapshot failure must not block the user's confirmed action — the
+	// price change proceeds, but the undo button will not appear on the FE.
+	if e.priceCapturer != nil && e.snapshotStore != nil && len(ids) > 0 {
+		if entries, snapErr := e.priceCapturer.CaptureBeforePrices(ctx, plan.TenantID, ids); snapErr == nil {
+			_ = e.snapshotStore.SaveSnapshot(ctx, plan.TenantID, plan.ID, entries)
+		}
 	}
 
 	affected, err := e.price.ApplyPriceChange(ctx, plan.TenantID, ids, payload.Action)

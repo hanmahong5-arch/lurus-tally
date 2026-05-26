@@ -36,10 +36,22 @@ export function UndoToastProvider({ children }: { children: React.ReactNode }) {
   }
 
   const handleUndo = useCallback((entry: UndoEntry) => {
-    const label =
-      entry.action.type === "delete_product"
-        ? `「${entry.action.name}」已撤销`
-        : `「${entry.action.billNo}」已撤销`
+    let label: string
+    switch (entry.action.type) {
+      case "delete_product":
+        label = `「${entry.action.name}」已撤销`
+        break
+      case "ai_stock_adjust":
+        label = `库存调整已撤销（${entry.action.affectedCount} 条）`
+        break
+      case "ai_price_change":
+        label = `价格变更已撤销（${entry.action.affectedCount} 条）`
+        break
+      default:
+        // cancel_purchase, ai_purchase_draft — both have billNo
+        label = `「${"billNo" in entry.action ? entry.action.billNo : ""}」已撤销`
+        break
+    }
     showToast(label, UNDO_DISMISS_MS)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

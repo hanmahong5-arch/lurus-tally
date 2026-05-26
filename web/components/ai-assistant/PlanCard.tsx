@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react"
 import Link from "next/link"
-import { type AIPlan, type ConfirmPlanResult, confirmPlan, cancelPlan } from "@/lib/api/ai"
+import { type AIPlan, type ConfirmPlanResult, confirmPlan, cancelPlan, revertPlan } from "@/lib/api/ai"
 import { cancelPurchaseBill } from "@/lib/api/purchase"
 import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { trackEvent } from "@/lib/telemetry"
@@ -78,9 +78,11 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
       setResult(res)
       setOutcome("confirmed")
       trackEvent("plan_accept_rate", { plan_id: plan.id, kind: planKind(plan.type), accepted: "1" })
-      // Make the AI write reversible: a created draft can be undone within 30s
-      // (Cmd+Z / toast) by cancelling it. Only purchase drafts are reversible
-      // from here; price/stock changes need server-side before-state capture.
+      // Make the AI write reversible within 30 s (Cmd+Z / toast).
+      // Each plan type has its own undo path:
+      //   purchase draft  → cancel the bill client-side (no server undo needed)
+      //   stock adjust    → POST /plans/:id/revert (server reverses movements)
+      //   price change    → POST /plans/:id/revert (server restores from snapshot)
       if (res.bill_id) {
         const billId = res.bill_id
         globalUndoStack.push({
@@ -89,6 +91,26 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
           billNo: res.bill_no ?? "",
           revert: async () => {
             await cancelPurchaseBill(billId)
+          },
+        })
+      } else if (plan.type === "bulk_stock_adjust") {
+        const planId = plan.id
+        globalUndoStack.push({
+          type: "ai_stock_adjust",
+          planId,
+          affectedCount: res.affected_count ?? 0,
+          revert: async () => {
+            await revertPlan(planId)
+          },
+        })
+      } else if (plan.type === "price_change") {
+        const planId = plan.id
+        globalUndoStack.push({
+          type: "ai_price_change",
+          planId,
+          affectedCount: res.affected_count ?? 0,
+          revert: async () => {
+            await revertPlan(planId)
           },
         })
       }

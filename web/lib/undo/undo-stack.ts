@@ -12,6 +12,10 @@ export type UndoAction =
   | { type: "cancel_purchase"; id: string; billNo: string; revert: () => Promise<void> }
   // AI-created purchase draft: undo cancels the draft the assistant just built.
   | { type: "ai_purchase_draft"; id: string; billNo: string; revert: () => Promise<void> }
+  // AI bulk stock adjust: undo calls server-side revert within the 30 s window.
+  | { type: "ai_stock_adjust"; planId: string; affectedCount: number; revert: () => Promise<void> }
+  // AI price change: undo calls server-side revert using the before-state snapshot.
+  | { type: "ai_price_change"; planId: string; affectedCount: number; revert: () => Promise<void> }
 
 export interface UndoEntry {
   action: UndoAction

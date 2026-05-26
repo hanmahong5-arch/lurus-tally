@@ -363,3 +363,98 @@ func TestAIHandler_ListPlans_NilSlice_ReturnsEmpty(t *testing.T) {
 		t.Errorf("expected items: [] in body, got: %s", body)
 	}
 }
+
+// --- revert handler tests ---
+
+type stubReverter struct {
+	result *appai.RevertResult
+	err    error
+}
+
+func (s *stubReverter) RevertPlan(_ context.Context, _, _, _ uuid.UUID) (*appai.RevertResult, error) {
+	return s.result, s.err
+}
+
+// TestAIHandler_RevertPlan_NoReverterWired_Returns501 verifies that when the reverter
+// is not wired (nil), the endpoint returns 501 Not Implemented.
+func TestAIHandler_RevertPlan_NoReverterWired_Returns501(t *testing.T) {
+	h := handlerai.New(&stubOrchestrator{})
+	e := newTestEngine(h, uuid.New())
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/ai/plans/"+uuid.New().String()+"/revert", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Errorf("expected 501, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAIHandler_RevertPlan_HappyPath_Returns200 verifies successful revert.
+func TestAIHandler_RevertPlan_HappyPath_Returns200(t *testing.T) {
+	planID := uuid.New()
+	tenantID := uuid.New()
+	sr := &stubReverter{result: &appai.RevertResult{PlanID: planID, RevertedType: "bulk_stock_adjust", AffectedCount: 2}}
+	h := handlerai.New(&stubOrchestrator{}).WithReverter(sr)
+	e := newTestEngine(h, tenantID)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/ai/plans/"+planID.String()+"/revert", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp appai.RevertResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.AffectedCount != 2 || resp.RevertedType != "bulk_stock_adjust" {
+		t.Errorf("unexpected result: %+v", resp)
+	}
+}
+
+// TestAIHandler_RevertPlan_AlreadyReverted_Returns409 verifies idempotency error response.
+func TestAIHandler_RevertPlan_AlreadyReverted_Returns409(t *testing.T) {
+	sr := &stubReverter{err: appai.ErrAlreadyReverted}
+	h := handlerai.New(&stubOrchestrator{}).WithReverter(sr)
+	e := newTestEngine(h, uuid.New())
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/ai/plans/"+uuid.New().String()+"/revert", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAIHandler_RevertPlan_WindowClosed_Returns409 verifies undo window error response.
+func TestAIHandler_RevertPlan_WindowClosed_Returns409(t *testing.T) {
+	sr := &stubReverter{err: appai.ErrRevertWindowClosed}
+	h := handlerai.New(&stubOrchestrator{}).WithReverter(sr)
+	e := newTestEngine(h, uuid.New())
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/ai/plans/"+uuid.New().String()+"/revert", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("expected 409, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAIHandler_RevertPlan_NoTenantID_Returns401 verifies auth guard on revert.
+func TestAIHandler_RevertPlan_NoTenantID_Returns401(t *testing.T) {
+	sr := &stubReverter{}
+	h := handlerai.New(&stubOrchestrator{}).WithReverter(sr)
+	e := newTestEngine(h, uuid.Nil)
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/ai/plans/"+uuid.New().String()+"/revert", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
