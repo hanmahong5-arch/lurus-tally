@@ -179,6 +179,16 @@ func (sp *otelSpan) End(output string, tok TokenCount, err error) {
 	sp.s.End()
 }
 
+// TraceID returns the 32-hex OTel trace ID. Empty string when the span is
+// invalid (e.g. recording disabled or no provider).
+func (sp *otelSpan) TraceID() string {
+	sc := sp.s.SpanContext()
+	if !sc.IsValid() {
+		return ""
+	}
+	return sc.TraceID().String()
+}
+
 // AttachToolCall creates a synchronous child span under the LLM span that
 // records one tool dispatch (name, arguments, result).
 func (sp *otelSpan) AttachToolCall(name, argsJSON, resultJSON string) {

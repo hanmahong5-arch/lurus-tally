@@ -196,7 +196,7 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
       )}
 
       {/* Actions */}
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
         <button
           onClick={handleConfirm}
           disabled={status !== "idle"}
@@ -213,7 +213,26 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
         >
           {status === "cancelling" ? "取消中..." : "取消"}
         </button>
+        <TraceLink traceId={plan.trace_id} />
       </div>
     </div>
+  )
+}
+
+// TraceLink renders a deep link to the LLM trace in the observability backend
+// when both the trace_id and the public host are available. Hidden otherwise.
+function TraceLink({ traceId }: { traceId?: string }) {
+  const host = process.env.NEXT_PUBLIC_LANGFUSE_HOST
+  if (!traceId || !host) return null
+  return (
+    <a
+      href={`${host.replace(/\/$/, "")}/trace/${traceId}`}
+      target="_blank"
+      rel="noopener noreferrer"
+      data-testid="plan-trace-link"
+      className="ml-auto text-xs text-muted-foreground underline-offset-2 hover:underline"
+    >
+      查看推理过程 →
+    </a>
   )
 }

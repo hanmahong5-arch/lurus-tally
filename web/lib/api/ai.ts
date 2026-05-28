@@ -46,6 +46,10 @@ export interface AIPlan {
   preview: PlanPreview
   created_at: string
   expires_at: string
+  // trace_id is the 32-hex LLM trace identifier; present only when the
+  // observability backend is configured. PlanCard renders it as a deep link to
+  // <NEXT_PUBLIC_LANGFUSE_HOST>/trace/<trace_id>.
+  trace_id?: string
 }
 
 // ConfirmPlanResult is the response of a successful plan confirm. When the plan

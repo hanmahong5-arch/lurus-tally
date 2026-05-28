@@ -105,3 +105,13 @@ func TestTokenCount_ZeroValue_IsAccepted(t *testing.T) {
 	var tok llm.TokenCount // zero value
 	span.End("", tok, nil)
 }
+
+// TestNoop_Span_TraceID_ReturnsEmpty verifies the no-op span emits an empty
+// trace ID so callers can branch on "".
+func TestNoop_Span_TraceID_ReturnsEmpty(t *testing.T) {
+	tr := llm.Noop()
+	span, _ := tr.StartLLMSpan(context.Background(), "chat", "m", "p")
+	if got := span.TraceID(); got != "" {
+		t.Errorf("noop TraceID = %q, want \"\"", got)
+	}
+}

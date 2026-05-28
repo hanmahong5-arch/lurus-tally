@@ -201,6 +201,9 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 
 			// Persist plan if this was a destructive tool.
 			if result.Plan != nil {
+				if span != nil {
+					result.Plan.TraceID = span.TraceID()
+				}
 				if err := o.planStore.SavePlan(ctx, result.Plan); err != nil {
 					// Non-fatal: log and continue; plan won't be confirmable.
 					toolCalls[len(toolCalls)-1].Error = err

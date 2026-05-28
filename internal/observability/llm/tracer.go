@@ -32,6 +32,11 @@ type Span interface {
 	// the tool function name, argsJSON is the raw JSON argument payload, and
 	// resultJSON is the tool result returned to the LLM.
 	AttachToolCall(name, argsJSON, resultJSON string)
+
+	// TraceID returns the 32-hex trace identifier so callers can persist a
+	// pointer to the Langfuse UI (deep link). Empty string when no real tracer
+	// is attached.
+	TraceID() string
 }
 
 // TokenCount carries the token usage from one inference response.

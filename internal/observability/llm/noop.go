@@ -17,5 +17,6 @@ func (noopTracer) StartLLMSpan(ctx context.Context, _, _, _ string) (Span, conte
 // noopSpan silently absorbs all calls.
 type noopSpan struct{}
 
-func (noopSpan) End(string, TokenCount, error)    {}
+func (noopSpan) End(string, TokenCount, error)         {}
 func (noopSpan) AttachToolCall(string, string, string) {}
+func (noopSpan) TraceID() string                       { return "" }

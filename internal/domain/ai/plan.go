@@ -39,6 +39,10 @@ type Plan struct {
 	Preview   PlanPreview `json:"preview"`
 	CreatedAt time.Time   `json:"created_at"`
 	ExpiresAt time.Time   `json:"expires_at"`
+	// TraceID is the 32-hex OTel trace identifier captured when the destructive
+	// tool produced this plan. Empty when LLM observability is disabled. FE
+	// deep-links to <LangfuseHost>/trace/<TraceID> from the PlanCard.
+	TraceID string `json:"trace_id,omitempty"`
 }
 
 // PlanPreview is the data needed to render the confirmation card in the UI.
