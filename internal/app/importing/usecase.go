@@ -490,6 +490,181 @@ func (uc *ImportOrdersUseCase) ListMappings(ctx context.Context, tenantID uuid.U
 	return uc.repo.ListMappings(ctx, tenantID, platform)
 }
 
+// ----- single-order ingestion (webhook path) --------------------------------
+
+// SingleOrderRequest is the input to IngestSingleOrder for webhook-delivered orders.
+// Unlike ImportRequest it carries a single already-parsed order (no CSV), so the
+// caller (webhook handler) owns the parsing step and supplies normalized lines.
+type SingleOrderRequest struct {
+	TenantID        uuid.UUID
+	CreatorID       uuid.UUID
+	WarehouseID     uuid.UUID
+	Platform        Platform
+	PlatformOrderNo string
+	Lines           []OrderRow // Currency and OrderDate must be set on each row
+}
+
+// IngestSingleOrder ingests one webhook-delivered order through the same
+// dedup → SKU-resolve → FX-convert → create-bill → approve → mark-seen
+// pipeline used by the CSV batch path.
+//
+// Returns (ImportedOrder, nil, nil) on success, (zero, *SkippedOrder, nil) when
+// the order is a duplicate or has unknown SKUs, and (zero, nil, error) on hard
+// infrastructure failures (the caller should return 5xx so Shopify retries).
+func (uc *ImportOrdersUseCase) IngestSingleOrder(ctx context.Context, req SingleOrderRequest) (ImportedOrder, *SkippedOrder, error) {
+	if req.TenantID == uuid.Nil {
+		return ImportedOrder{}, nil, fmt.Errorf("importing: tenant_id is required")
+	}
+	if req.CreatorID == uuid.Nil {
+		return ImportedOrder{}, nil, fmt.Errorf("importing: creator_id is required")
+	}
+	if req.WarehouseID == uuid.Nil {
+		return ImportedOrder{}, nil, fmt.Errorf("importing: warehouse_id is required")
+	}
+	if err := req.Platform.Validate(); err != nil {
+		return ImportedOrder{}, nil, err
+	}
+	if req.PlatformOrderNo == "" {
+		return ImportedOrder{}, nil, fmt.Errorf("importing: platform_order_no is required")
+	}
+	if len(req.Lines) == 0 {
+		return ImportedOrder{}, nil, fmt.Errorf("importing: at least one order line is required")
+	}
+
+	imported, skipped, err := uc.ingestOneOrder(ctx, req.TenantID, req.CreatorID, req.WarehouseID,
+		req.Platform, req.PlatformOrderNo, req.Lines)
+	return imported, skipped, err
+}
+
+// ingestOneOrder is the shared core: dedup → SKU resolve → FX → bill → approve → mark seen.
+// It is called by both the CSV batch loop (Execute) and IngestSingleOrder.
+//
+// Parameters:
+//   - tenantID, creatorID, warehouseID: identity/routing context
+//   - platform: source platform string
+//   - orderNo: dedup key
+//   - lines: pre-parsed rows; Currency and OrderDate must be non-zero
+//
+// Returns (ImportedOrder, nil, nil) on success, (zero, *SkippedOrder, nil) for
+// soft skips (duplicate/unknown-sku/approve-failed), and (zero, nil, error) for
+// hard infrastructure errors that should abort the caller.
+func (uc *ImportOrdersUseCase) ingestOneOrder(
+	ctx context.Context,
+	tenantID, creatorID, warehouseID uuid.UUID,
+	platform Platform,
+	orderNo string,
+	lines []OrderRow,
+) (ImportedOrder, *SkippedOrder, error) {
+	// 1. Dedup check.
+	seen, existingBillID, err := uc.repo.IsOrderSeen(ctx, tenantID, string(platform), orderNo)
+	if err != nil {
+		return ImportedOrder{}, nil, fmt.Errorf("importing: dedup check for order %s: %w", orderNo, err)
+	}
+	if seen {
+		return ImportedOrder{}, &SkippedOrder{
+			PlatformOrderNo: orderNo,
+			Reason:          fmt.Sprintf("duplicate:bill_id=%s", existingBillID),
+		}, nil
+	}
+
+	// 2. Resolve SKUs → product_ids.
+	type resolvedLine struct {
+		row       OrderRow
+		productID uuid.UUID
+	}
+	var resolved []resolvedLine
+	// No caller-supplied hints in the webhook path — rely on persisted mappings only.
+	emptyHints := map[string]uuid.UUID{}
+	for _, row := range lines {
+		productID, unknown, resolveErr := uc.resolveSKU(ctx, tenantID, string(platform), row.PlatformSKU, emptyHints)
+		if resolveErr != nil {
+			return ImportedOrder{}, nil, fmt.Errorf("importing: resolve sku %s: %w", row.PlatformSKU, resolveErr)
+		}
+		if unknown {
+			return ImportedOrder{}, &SkippedOrder{
+				PlatformOrderNo: orderNo,
+				Reason:          fmt.Sprintf("unknown_sku:%s", row.PlatformSKU),
+			}, nil
+		}
+		resolved = append(resolved, resolvedLine{row: row, productID: productID})
+	}
+
+	// 3. FX conversion.
+	type lineWithPrice struct {
+		productID uuid.UUID
+		qty       decimal.Decimal
+		unitPrice decimal.Decimal
+	}
+	var convertedLines []lineWithPrice
+	for _, rl := range resolved {
+		price := rl.row.UnitPrice
+		srcCur := strings.ToUpper(rl.row.Currency)
+		if srcCur != "" && srcCur != uc.targetCurrency {
+			rate, fxErr := uc.currencyRate.GetRate(ctx, tenantID, srcCur, uc.targetCurrency, rl.row.OrderDate)
+			if fxErr != nil {
+				return ImportedOrder{}, nil, fmt.Errorf("importing: fx for order %s: %w", orderNo, fxErr)
+			}
+			price = price.Mul(rate).Round(4)
+		}
+		convertedLines = append(convertedLines, lineWithPrice{
+			productID: rl.productID,
+			qty:       rl.row.Qty,
+			unitPrice: price,
+		})
+	}
+
+	// 4. Create sale bill draft.
+	orderDate := lines[0].OrderDate
+	items := make([]SaleLineItem, len(convertedLines))
+	for i, cl := range convertedLines {
+		items[i] = SaleLineItem{
+			ProductID: cl.productID,
+			LineNo:    i + 1,
+			Qty:       cl.qty,
+			UnitPrice: cl.unitPrice,
+		}
+	}
+	out, err := uc.saleCreator.Create(ctx, SaleCreatorInput{
+		TenantID:    tenantID,
+		CreatorID:   creatorID,
+		WarehouseID: &warehouseID,
+		BillDate:    orderDate,
+		Remark:      fmt.Sprintf("import:%s:%s", platform, orderNo),
+		Items:       items,
+	})
+	if err != nil {
+		return ImportedOrder{}, nil, fmt.Errorf("importing: create sale bill for order %s: %w", orderNo, err)
+	}
+
+	// 5. Approve the bill (deducts stock).
+	if err := uc.saleApprover.Approve(ctx, SaleApproverInput{
+		TenantID:  tenantID,
+		BillID:    out.BillID,
+		CreatorID: creatorID,
+	}); err != nil {
+		return ImportedOrder{}, &SkippedOrder{
+			PlatformOrderNo: orderNo,
+			Reason:          fmt.Sprintf("approve_failed:%s", err.Error()),
+		}, nil
+	}
+
+	// 6. Mark order seen — soft failure per established pattern.
+	if err := uc.repo.MarkOrderSeen(ctx, tenantID, string(platform), orderNo, out.BillID); err != nil {
+		return ImportedOrder{
+			PlatformOrderNo: orderNo,
+			BillID:          out.BillID,
+			BillNo:          out.BillNo,
+			MarkSeenError:   err.Error(),
+		}, nil, nil
+	}
+
+	return ImportedOrder{
+		PlatformOrderNo: orderNo,
+		BillID:          out.BillID,
+		BillNo:          out.BillNo,
+	}, nil, nil
+}
+
 // ----- helpers --------------------------------------------------------------
 
 // resolveSKU resolves a platformSKU to a product_id using (in order):
