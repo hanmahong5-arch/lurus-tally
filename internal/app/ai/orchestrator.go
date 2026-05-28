@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
+	llmobs "github.com/hanmahong5-arch/lurus-tally/internal/observability/llm"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmgateway"
 )
@@ -31,9 +32,10 @@ type Orchestrator struct {
 	llm       *llmclient.Client
 	registry  *Registry
 	planStore PlanStore
-	executor  PlanExecutor // nil → ConfirmPlan flips status only (dev / tests)
-	audit     AuditWriter  // nil → AI plan executions are not audited
-	memory    MemoryClient // nil when memorus disabled
+	executor  PlanExecutor  // nil → ConfirmPlan flips status only (dev / tests)
+	audit     AuditWriter   // nil → AI plan executions are not audited
+	memory    MemoryClient  // nil when memorus disabled
+	tracer    llmobs.Tracer // nil → spans silently skipped
 	model     string
 }
 
@@ -72,6 +74,25 @@ func (o *Orchestrator) WithExecutor(ex PlanExecutor) *Orchestrator {
 func (o *Orchestrator) WithAudit(aw AuditWriter) *Orchestrator {
 	o.audit = aw
 	return o
+}
+
+// WithTracer attaches an LLM observability Tracer so every inference call
+// produces a structured span (input/output/model/latency/tokens). Passing nil
+// silently disables tracing — callers should pass llmobs.Noop() when they want
+// an explicit no-op rather than relying on nil-guard skips.
+func (o *Orchestrator) WithTracer(t llmobs.Tracer) *Orchestrator {
+	o.tracer = t
+	return o
+}
+
+// startSpan opens an LLM span when a tracer is attached; otherwise returns
+// a nil span and the original context. Callers must check span != nil before
+// calling End / AttachToolCall.
+func (o *Orchestrator) startSpan(ctx context.Context, op, model, prompt string) (llmobs.Span, context.Context) {
+	if o.tracer == nil {
+		return nil, ctx
+	}
+	return o.tracer.StartLLMSpan(ctx, op, model, prompt)
 }
 
 // systemPrompt is the static inventory assistant persona.
@@ -124,11 +145,20 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 	var toolCalls []domainai.ToolCallRecord
 
 	for round := 0; round < maxToolRounds; round++ {
-		resp, err := o.llm.Chat(ctx, o.model, messages, tools)
+		// Open an LLM span for this inference call. span is nil when no tracer
+		// is attached; all span.* calls are guarded by the nil check below.
+		span, spanCtx := o.startSpan(ctx, "chat", o.model, in.UserMessage)
+		resp, err := o.llm.Chat(spanCtx, o.model, messages, tools)
 		if err != nil {
+			if span != nil {
+				span.End("", llmobs.TokenCount{}, err)
+			}
 			return nil, fmt.Errorf("orchestrator: llm chat: %w", err)
 		}
 		if len(resp.Choices) == 0 {
+			if span != nil {
+				span.End("", llmobs.TokenCount{}, fmt.Errorf("no choices in response"))
+			}
 			return nil, fmt.Errorf("orchestrator: no choices in response")
 		}
 
@@ -137,6 +167,13 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 		// If no tool calls, we have the final answer.
 		if len(choice.Message.ToolCalls) == 0 {
 			content, _ := extractContent(choice.Message.Content)
+			if span != nil {
+				span.End(content, llmobs.TokenCount{
+					Prompt:     resp.Usage.PromptTokens,
+					Completion: resp.Usage.CompletionTokens,
+					Total:      resp.Usage.TotalTokens,
+				}, nil)
+			}
 			// Async write-back: summarise this turn to memorus (non-blocking).
 			summary := BuildMemorySummary(in.TenantID, in.UserMessage, content)
 			AsyncWriteMemory(o.memory, userID, summary, map[string]any{"source": "tally-ai"})
@@ -153,6 +190,9 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 		// Dispatch each tool call.
 		for _, tc := range choice.Message.ToolCalls {
 			result := o.registry.Dispatch(ctx, in.TenantID, tc)
+			if span != nil {
+				span.AttachToolCall(tc.Function.Name, tc.Function.Arguments, result.Content)
+			}
 			toolCalls = append(toolCalls, domainai.ToolCallRecord{
 				ToolName:   tc.Function.Name,
 				ArgsJSON:   tc.Function.Arguments,
@@ -177,6 +217,14 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 				Name:       tc.Function.Name,
 			})
 		}
+		// Close the span for this round before the next tool-call round starts.
+		if span != nil {
+			span.End("", llmobs.TokenCount{
+				Prompt:     resp.Usage.PromptTokens,
+				Completion: resp.Usage.CompletionTokens,
+				Total:      resp.Usage.TotalTokens,
+			}, nil)
+		}
 	}
 
 	return nil, fmt.Errorf("orchestrator: exceeded %d tool rounds without final answer", maxToolRounds)
@@ -200,11 +248,18 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 
 	// First do any tool-call rounds (non-streaming).
 	for round := 0; round < maxToolRounds; round++ {
-		resp, err := o.llm.Chat(ctx, o.model, messages, tools)
+		span, spanCtx := o.startSpan(ctx, "stream", o.model, in.UserMessage)
+		resp, err := o.llm.Chat(spanCtx, o.model, messages, tools)
 		if err != nil {
+			if span != nil {
+				span.End("", llmobs.TokenCount{}, err)
+			}
 			return nil, fmt.Errorf("orchestrator: stream pre-tool chat: %w", err)
 		}
 		if len(resp.Choices) == 0 {
+			if span != nil {
+				span.End("", llmobs.TokenCount{}, fmt.Errorf("no choices"))
+			}
 			return nil, fmt.Errorf("orchestrator: no choices")
 		}
 		choice := resp.Choices[0]
@@ -216,12 +271,23 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 
 			// Re-request with stream=true using the accumulated messages.
 			var finalText string
-			streamErr := o.llm.Stream(ctx, o.model, messages, nil, func(d llmclient.StreamDelta) {
+			streamErr := o.llm.Stream(spanCtx, o.model, messages, nil, func(d llmclient.StreamDelta) {
 				if d.Content != "" {
 					onChunk(d.Content)
 					finalText += d.Content
 				}
 			})
+			if span != nil {
+				if streamErr != nil {
+					span.End("", llmobs.TokenCount{}, streamErr)
+				} else {
+					span.End(finalText, llmobs.TokenCount{
+						Prompt:     resp.Usage.PromptTokens,
+						Completion: resp.Usage.CompletionTokens,
+						Total:      resp.Usage.TotalTokens,
+					}, nil)
+				}
+			}
 			if streamErr != nil {
 				return nil, fmt.Errorf("orchestrator: stream final: %w", streamErr)
 			}
@@ -239,6 +305,9 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 		messages = append(messages, choice.Message)
 		for _, tc := range choice.Message.ToolCalls {
 			result := o.registry.Dispatch(ctx, in.TenantID, tc)
+			if span != nil {
+				span.AttachToolCall(tc.Function.Name, tc.Function.Arguments, result.Content)
+			}
 			toolCalls = append(toolCalls, domainai.ToolCallRecord{
 				ToolName:   tc.Function.Name,
 				ArgsJSON:   tc.Function.Arguments,
@@ -257,6 +326,13 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 				ToolCallID: tc.ID,
 				Name:       tc.Function.Name,
 			})
+		}
+		if span != nil {
+			span.End("", llmobs.TokenCount{
+				Prompt:     resp.Usage.PromptTokens,
+				Completion: resp.Usage.CompletionTokens,
+				Total:      resp.Usage.TotalTokens,
+			}, nil)
 		}
 	}
 

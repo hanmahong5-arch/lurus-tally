@@ -1,0 +1,102 @@
+# Langfuse self-hosted — OTel ingestion for LLM observability.
+# All persistent volumes are mounted under /data/langfuse/ per the R6 disk
+# policy (root disk 30 G; all writes go to /data, 295 G SSD).
+#
+# Start: docker compose -f deploy/langfuse/docker-compose.yml up -d
+# Stop:  docker compose -f deploy/langfuse/docker-compose.yml down
+
+version: "3.9"
+
+services:
+  langfuse-postgres:
+    image: postgres:16-alpine
+    container_name: langfuse-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: langfuse
+      POSTGRES_USER: langfuse
+      POSTGRES_PASSWORD: ${LANGFUSE_PG_PASSWORD}
+    volumes:
+      - /data/langfuse/pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U langfuse -d langfuse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - langfuse-internal
+
+  langfuse-redis:
+    image: redis:7-alpine
+    container_name: langfuse-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--dir", "/data"]
+    volumes:
+      - /data/langfuse/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - langfuse-internal
+
+  langfuse-web:
+    image: langfuse/langfuse:3
+    container_name: langfuse-web
+    restart: unless-stopped
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_PG_PASSWORD}@langfuse-postgres:5432/langfuse
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET}
+      SALT: ${LANGFUSE_SALT}
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
+      # Telemetry opt-out for self-hosted; data stays on R6.
+      TELEMETRY_ENABLED: "false"
+      LANGFUSE_ENABLE_EXPERIMENTAL_FEATURES: "false"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/public/health | grep -q ok || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    networks:
+      - langfuse-internal
+      - langfuse-external
+
+  langfuse-worker:
+    image: langfuse/langfuse-worker:3
+    container_name: langfuse-worker
+    restart: unless-stopped
+    depends_on:
+      langfuse-postgres:
+        condition: service_healthy
+      langfuse-redis:
+        condition: service_healthy
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://langfuse:${LANGFUSE_PG_PASSWORD}@langfuse-postgres:5432/langfuse
+      REDIS_HOST: langfuse-redis
+      REDIS_PORT: "6379"
+      ENCRYPTION_KEY: ${LANGFUSE_ENCRYPTION_KEY}
+      SALT: ${LANGFUSE_SALT}
+      TELEMETRY_ENABLED: "false"
+    networks:
+      - langfuse-internal
+
+networks:
+  langfuse-internal:
+    driver: bridge
+    internal: true
+  langfuse-external:
+    driver: bridge
