@@ -53,6 +53,11 @@ type Config struct {
 	// When either is empty: log "memorus: disabled", AI still works without recall.
 	MemoryBaseURL string // MEMORUS_BASE_URL: e.g. http://memorus.lurus-system.svc:8880
 	MemoryAPIKey  string // MEMORUS_API_KEY: X-API-Key header value
+
+	// Shopify webhook — HMAC-SHA256 secret for verifying inbound order pushes.
+	// When empty the /webhooks/shopify/orders route still mounts but rejects
+	// every request as misconfigured (handler logs once at startup).
+	ShopifyWebhookSecret string // SHOPIFY_WEBHOOK_SECRET: raw secret from Shopify Partner Dashboard
 }
 
 // required reads an environment variable and returns a descriptive error when absent.
@@ -123,5 +128,6 @@ func Load() (*Config, error) {
 		AIPlanTTLSeconds: aiPlanTTL,
 		MemoryBaseURL:    optional("MEMORUS_BASE_URL", "http://memorus.lurus-system.svc:8880"),
 		MemoryAPIKey:     optional("MEMORUS_API_KEY", ""),
+		ShopifyWebhookSecret: optional("SHOPIFY_WEBHOOK_SECRET", ""),
 	}, nil
 }

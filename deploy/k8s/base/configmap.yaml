@@ -17,3 +17,8 @@ data:
   NEWAPI_BASE_URL: "https://newapi.lurus.cn/v1"
   DEFAULT_AI_MODEL: "deepseek-v4-flash"
   AI_PLAN_TTL_SECONDS: "1800"
+  # LLM observability — self-hosted Langfuse on R6 /data partition.
+  # Set HOST + the 2 keys via Secret; missing any → tracer falls back to no-op.
+  LANGFUSE_HOST: ""
+  # Shopify webhook secret — set via Secret; empty → handler rejects every push.
+  # SHOPIFY_WEBHOOK_SECRET lives in secret.yaml

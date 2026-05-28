@@ -374,6 +374,8 @@ func NewApp(cfg *config.Config) (*App, error) {
 		)
 		reverter := buildReverter(db, repostock.New(db), recordMovementUC, planStore, rdb)
 		aiHandler = handlerai.NewWithLimiter(orchestrator, limiter).WithReverter(reverter)
+		// Attach LLM span tracer (env LANGFUSE_* → OTLP exporter; missing → no-op).
+		WireTracer(orchestrator, BuildTracer(cfg))
 		l.Info("AI assistant enabled",
 			slog.String("model", cfg.DefaultAIModel),
 			slog.String("newapi_url", cfg.NewAPIBaseURL),
@@ -581,6 +583,11 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// PSI_TELEMETRY.web.* (S0.Q3). Bearer-gated via the same key as metrics.
 	telemetryHandler := handlertelemetry.New(natsPub, cfg.PlatformInternalKey, "anonymous")
 	telemetryHandler.Register(r)
+
+	// POST /webhooks/shopify/orders — public (HMAC-verified) e-commerce ingest.
+	// Mounted on the root engine so it bypasses the /api/v1 auth middleware.
+	shopifyHandler := BuildShopifyHandler(db, importUC, cfg.ShopifyWebhookSecret, l)
+	shopifyHandler.RegisterRoutes(r)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,

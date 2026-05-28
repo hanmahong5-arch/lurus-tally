@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+
+	llmobs "github.com/hanmahong5-arch/lurus-tally/internal/observability/llm"
 )
 
 // Stop drains in-flight requests, stops background workers, and closes the HTTP server.
@@ -26,5 +28,10 @@ func (a *App) Stop(ctx context.Context) error {
 		return fmt.Errorf("server shutdown: %w", err)
 	}
 	a.log.Info("server stopped", slog.String("addr", a.srv.Addr))
+
+	// Flush any buffered LLM trace spans (no-op when tracer is no-op).
+	if err := llmobs.ShutdownOTelProvider(ctx); err != nil {
+		a.log.Warn("llm tracer shutdown failed", slog.String("error", err.Error()))
+	}
 	return nil
 }
