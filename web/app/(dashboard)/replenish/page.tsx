@@ -10,6 +10,7 @@ import {
   type ReplenishSuggestion,
 } from "@/lib/api/replenish"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { trackEvent } from "@/lib/telemetry"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
@@ -18,8 +19,6 @@ import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
 import { formatCNY } from "@/lib/format"
-
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
 // urgency thresholds: < 3 days = err, < 7 = warn, else neutral
 function urgencyTone(score: string): BadgeTone {
@@ -42,12 +41,13 @@ export default function ReplenishPage() {
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [submitting, setSubmitting] = useState(false)
+  const tenantId = useTenantId()
 
   const load = useCallback(
     (signal?: AbortSignal, isCancelled?: () => boolean) => {
       setLoading(true)
       setError(null)
-      listReplenishSuggestions({ weeks: 2, tenantId: devTenantId, signal })
+      listReplenishSuggestions({ weeks: 2, tenantId, signal })
         .then((res) => {
           if (isCancelled?.()) return
           setSuggestions(res.items ?? [])
@@ -61,7 +61,7 @@ export default function ReplenishPage() {
           setLoading(false)
         })
     },
-    []
+    [tenantId]
   )
 
   useAbortableEffect((signal, isCancelled) => {
@@ -107,7 +107,7 @@ export default function ReplenishPage() {
 
     setSubmitting(true)
     try {
-      const result = await draftBatch({ lines: validLines }, devTenantId)
+      const result = await draftBatch({ lines: validLines }, tenantId)
       const draftCount = result.drafts.length
       const totalLines = result.drafts.reduce((s, d) => s + d.line_count, 0)
 

@@ -4,6 +4,7 @@ import { useCallback, useState } from "react"
 import type { ColumnDef } from "@tanstack/react-table"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useConfirm } from "@/hooks/useConfirm"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable } from "@/components/ui/data-table"
@@ -14,8 +15,6 @@ import { Label } from "@/components/ui/label"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
 import { type PAT, type CreatedPAT, createPAT, listPATs, revokePAT } from "@/lib/api/pats"
-
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return "—"
@@ -42,12 +41,13 @@ export default function ApiKeysPage() {
   const [copied, setCopied] = useState(false)
 
   const confirm = useConfirm()
+  const tenantId = useTenantId()
 
   const load = useCallback(
     (signal?: AbortSignal, isCancelled?: () => boolean) => {
       setLoading(true)
       setError(null)
-      listPATs(devTenantId, signal)
+      listPATs(tenantId, signal)
         .then((res) => {
           if (isCancelled?.()) return
           setItems(res)
@@ -61,7 +61,7 @@ export default function ApiKeysPage() {
           setLoading(false)
         })
     },
-    [],
+    [tenantId],
   )
 
   useAbortableEffect((signal, isCancelled) => {
@@ -83,7 +83,7 @@ export default function ApiKeysPage() {
           name: trimmed,
           expires_at: expiresAt ? new Date(expiresAt).toISOString() : undefined,
         },
-        devTenantId,
+        tenantId,
       )
       setNewToken(created)
       setShowCreate(false)
@@ -107,7 +107,7 @@ export default function ApiKeysPage() {
     })
     if (!ok) return
     try {
-      await revokePAT(p.id, devTenantId)
+      await revokePAT(p.id, tenantId)
       load()
     } catch (err) {
       setError(String(err))

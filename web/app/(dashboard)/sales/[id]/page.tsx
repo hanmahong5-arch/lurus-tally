@@ -16,6 +16,7 @@ import { BILL_STATUS_TONE, BILL_STATUS_LABEL } from "@/lib/status"
 import { SaleLineEditor, type SaleLineItem } from "@/components/sale-line-editor"
 import { PaymentForm } from "@/components/payment-form"
 import { useConfirm } from "@/hooks/useConfirm"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { formatCNY, formatDate, formatDateTime } from "@/lib/format"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
@@ -26,8 +27,6 @@ import { Label } from "@/components/ui/label"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { cn } from "@/lib/utils"
-
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
 const SELECT_CLASS =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
@@ -48,11 +47,12 @@ export default function SaleDetailPage() {
   const [payMethod, setPayMethod] = useState("cash")
 
   const confirm = useConfirm()
+  const tenantId = useTenantId()
 
   const load = useCallback((signal?: AbortSignal, isCancelled?: () => boolean) => {
     setLoading(true)
     setError(null)
-    getSaleBill(id, devTenantId, signal)
+    getSaleBill(id, tenantId, signal)
       .then((data) => {
         if (isCancelled?.()) return
         setDetail(data)
@@ -65,7 +65,7 @@ export default function SaleDetailPage() {
         if (isCancelled?.()) return
         setLoading(false)
       })
-  }, [id])
+  }, [id, tenantId])
 
   useAbortableEffect((signal, isCancelled) => {
     load(signal, isCancelled)
@@ -78,7 +78,7 @@ export default function SaleDetailPage() {
       await approveSaleBill(
         id,
         { paid_amount: paidAmount || undefined, payment_method: payMethod },
-        devTenantId
+        tenantId
       )
       setShowApproveForm(false)
       load()
@@ -95,7 +95,7 @@ export default function SaleDetailPage() {
     setActing(true)
     setActionError(null)
     try {
-      await cancelSaleBill(id, devTenantId)
+      await cancelSaleBill(id, tenantId)
       load()
     } catch (e) {
       setActionError(String(e))
@@ -277,7 +277,7 @@ export default function SaleDetailPage() {
               billId={id}
               receivableAmount={head.receivable_amount}
               payments={payments}
-              tenantId={devTenantId}
+              tenantId={tenantId}
               onSuccess={handlePaymentRecorded}
             />
           </div>

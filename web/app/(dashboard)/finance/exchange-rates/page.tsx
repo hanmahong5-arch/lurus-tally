@@ -12,6 +12,7 @@ import {
 } from "@/lib/api/currency"
 import { CurrencySelector } from "@/components/cross-border/currency-selector"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { Modal } from "@/components/ui/modal"
@@ -20,7 +21,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Badge } from "@/components/ui/badge"
 
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 const MAJOR_PAIRS = ["USD", "EUR", "GBP", "JPY", "HKD"]
 
 const SELECT_CLASS =
@@ -82,6 +82,7 @@ function RateLineChart({ rates }: { rates: ExchangeRate[] }) {
 export default function ExchangeRatesPage() {
   const { profileType } = useProfile()
   const router = useRouter()
+  const tenantId = useTenantId()
 
   // Route guard: only cross_border and hybrid profiles can access this page.
   useEffect(() => {
@@ -160,7 +161,7 @@ export default function ExchangeRatesPage() {
         rate: modalRate,
         effective_at: new Date(modalDate).toISOString(),
       }
-      await createRate(body, devTenantId)
+      await createRate(body, tenantId)
       setShowModal(false)
       setModalRate("")
       // Refresh current rates

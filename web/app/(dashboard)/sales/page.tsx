@@ -14,6 +14,7 @@ import {
 } from "@/lib/api/sale"
 import { BILL_STATUS_TONE, BILL_STATUS_LABEL } from "@/lib/status"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable, currencyCell, statusCell } from "@/components/ui/data-table"
@@ -22,8 +23,6 @@ import { Pagination } from "@/components/ui/pagination"
 import { buttonVariants } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
 import { formatCNY, formatDate } from "@/lib/format"
-
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
 const PAGE_SIZE = 20
 
@@ -42,6 +41,7 @@ export default function SalesPage() {
   const [status, setStatus] = useState<BillStatus | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const tenantId = useTenantId()
 
   const load = useCallback((
     p: number,
@@ -51,7 +51,7 @@ export default function SalesPage() {
   ) => {
     setLoading(true)
     setError(null)
-    listSaleBills({ page: p, size: PAGE_SIZE, status: s, tenantId: devTenantId, signal, retry: 2 })
+    listSaleBills({ page: p, size: PAGE_SIZE, status: s, tenantId, signal, retry: 2 })
       .then((res) => {
         if (isCancelled?.()) return
         setBills(res.items ?? [])
@@ -65,7 +65,7 @@ export default function SalesPage() {
         if (isCancelled?.()) return
         setLoading(false)
       })
-  }, [])
+  }, [tenantId])
 
   useAbortableEffect((signal, isCancelled) => {
     load(1, undefined, signal, isCancelled)
@@ -84,7 +84,7 @@ export default function SalesPage() {
 
   async function handleCancel(bill: SaleBillHead) {
     try {
-      await cancelSaleBill(bill.id, devTenantId)
+      await cancelSaleBill(bill.id, tenantId)
       load(page, status)
 
       toast(`已取消销售单 ${bill.bill_no}`, {
@@ -101,7 +101,7 @@ export default function SalesPage() {
 
   async function handleRestore(bill: SaleBillHead) {
     try {
-      await restoreSaleBill(bill.id, devTenantId)
+      await restoreSaleBill(bill.id, tenantId)
       load(page, status)
       router.refresh()
     } catch (e) {

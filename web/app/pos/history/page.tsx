@@ -7,9 +7,7 @@ import { listTodaySaleBills, type SaleBillSummary } from "@/lib/api/pos"
 import { formatCNY } from "@/lib/format"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
-
-// Story 2.1 TODO: replace with session tenantId once auth wired
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
+import { useTenantId } from "@/hooks/use-tenant-id"
 
 const PAYMENT_METHOD_LABELS: Record<string, { label: string; className: string }> = {
   cash: { label: "现金", className: "bg-emerald-100 text-emerald-700" },
@@ -36,10 +34,11 @@ export default function PosHistoryPage() {
   const [bills, setBills] = useState<SaleBillSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const tenantId = useTenantId()
 
   useAbortableEffect((signal, isCancelled) => {
     setLoading(true)
-    listTodaySaleBills(devTenantId, signal)
+    listTodaySaleBills(tenantId, signal)
       .then((data) => {
         if (isCancelled()) return
         setBills(data)
@@ -52,7 +51,7 @@ export default function PosHistoryPage() {
         if (isCancelled()) return
         setLoading(false)
       })
-  }, [])
+  }, [tenantId])
 
   // Compute summary stats
   const totalCount = bills.length

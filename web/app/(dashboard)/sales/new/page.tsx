@@ -12,6 +12,7 @@ import { ProfileGate, useProfile } from "@/lib/profile"
 import { CurrencySelector } from "@/components/cross-border/currency-selector"
 import { RateInput } from "@/components/cross-border/rate-input"
 import { useDraft } from "@/hooks/useDraft"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { DraftBadge } from "@/components/draft/DraftBadge"
 import { DraftRestoreToast } from "@/components/draft/DraftRestoreToast"
 import { PageContainer } from "@/components/ui/page-container"
@@ -21,8 +22,6 @@ import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { formatCNY } from "@/lib/format"
-
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
 const CONTROL_CLASS =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
@@ -52,6 +51,7 @@ function NewSaleInner() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { profileType } = useProfile()
+  const tenantId = useTenantId()
 
   // retail profile defaults to quick checkout; explicit ?mode=quick also triggers it
   const defaultQuick = profileType === "retail" || searchParams.get("mode") === "quick"
@@ -160,7 +160,7 @@ function NewSaleInner() {
           paid_amount: String(paid),
           remark: remark || undefined,
         },
-        devTenantId
+        tenantId
       )
       await draft.markSubmitted()
       router.push(`/sales/${res.bill_id}`)
@@ -193,7 +193,7 @@ function NewSaleInner() {
           exchange_rate: currency !== "CNY" ? exchangeRate : undefined,
           items: buildLineItems(),
         },
-        devTenantId
+        tenantId
       )
       await draft.markSubmitted()
       router.push(`/sales/${res.bill_id}`)

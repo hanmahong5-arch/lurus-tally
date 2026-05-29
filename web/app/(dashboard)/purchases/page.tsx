@@ -15,6 +15,7 @@ import {
 } from "@/lib/api/purchase"
 import { BILL_STATUS_TONE } from "@/lib/status"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable, currencyCell, statusCell } from "@/components/ui/data-table"
@@ -23,8 +24,6 @@ import { Pagination } from "@/components/ui/pagination"
 import { buttonVariants } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
 import { formatDate } from "@/lib/format"
-
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
 const PAGE_SIZE = 20
 
@@ -43,6 +42,7 @@ export default function PurchasesPage() {
   const [status, setStatus] = useState<BillStatus | undefined>(undefined)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const tenantId = useTenantId()
 
   const load = useCallback(
     (
@@ -53,7 +53,7 @@ export default function PurchasesPage() {
     ) => {
       setLoading(true)
       setError(null)
-      listPurchaseBills({ page: p, size: PAGE_SIZE, status: s, tenantId: devTenantId, signal, retry: 2 })
+      listPurchaseBills({ page: p, size: PAGE_SIZE, status: s, tenantId, signal, retry: 2 })
         .then((res) => {
           if (isCancelled?.()) return
           setBills(res.items ?? [])
@@ -68,7 +68,7 @@ export default function PurchasesPage() {
           setLoading(false)
         })
     },
-    [],
+    [tenantId],
   )
 
   useAbortableEffect((signal, isCancelled) => {
@@ -88,7 +88,7 @@ export default function PurchasesPage() {
 
   async function handleCancel(bill: BillHead) {
     try {
-      await cancelPurchaseBill(bill.id, devTenantId)
+      await cancelPurchaseBill(bill.id, tenantId)
       load(page, status)
 
       toast(`已取消采购单 ${bill.bill_no}`, {
@@ -105,7 +105,7 @@ export default function PurchasesPage() {
 
   async function handleRestore(bill: BillHead) {
     try {
-      await restorePurchaseBill(bill.id, devTenantId)
+      await restorePurchaseBill(bill.id, tenantId)
       load(page, status)
       router.refresh()
     } catch (e) {

@@ -12,14 +12,13 @@ import {
 } from "@/lib/api/stock"
 import { getProduct, type Product } from "@/lib/api/products"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { formatCNY } from "@/lib/format"
 import { PageContainer } from "@/components/ui/page-container"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Skeleton } from "@/components/ui/skeleton"
-
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
 const DIRECTION_LABEL: Record<Direction, string> = {
   in: "入库",
@@ -69,15 +68,16 @@ export default function StockDetailPage() {
   const [movements, setMovements] = useState<StockMovement[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const tenantId = useTenantId()
 
   useAbortableEffect((signal, isCancelled) => {
     if (!productId) return
     setLoading(true)
     setError(null)
     Promise.all([
-      getProduct(productId, devTenantId, signal).catch(() => null),
-      getProductStock(productId, devTenantId, signal),
-      listStockMovements({ product_id: productId, limit: 50, tenantId: devTenantId, signal }),
+      getProduct(productId, tenantId, signal).catch(() => null),
+      getProductStock(productId, tenantId, signal),
+      listStockMovements({ product_id: productId, limit: 50, tenantId, signal }),
     ])
       .then(([p, snaps, mvs]) => {
         if (isCancelled()) return
@@ -93,7 +93,7 @@ export default function StockDetailPage() {
         if (isCancelled()) return
         setLoading(false)
       })
-  }, [productId])
+  }, [productId, tenantId])
 
   const totalOnHand = snapshots.reduce((acc, s) => acc + (Number(s.on_hand_qty ?? "0") || 0), 0)
   const totalAvailable = snapshots.reduce((acc, s) => acc + (Number(s.available_qty ?? "0") || 0), 0)

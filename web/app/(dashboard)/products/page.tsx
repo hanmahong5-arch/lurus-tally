@@ -7,6 +7,7 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { listProducts, deleteProduct, restoreProduct, type Product } from "@/lib/api/products"
 import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable } from "@/components/ui/data-table"
@@ -17,12 +18,7 @@ import { EmptyState } from "@/components/ui/empty-state"
 
 /**
  * Products list page — GET /api/v1/products
- *
- * Story 2.1 TODO: remove the hardcoded devTenantId once session auth is wired.
- * Replace with tenantId from the NextAuth session.
  */
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
-
 const STRATEGY_LABELS: Record<string, string> = {
   individual: "标准件",
   weight: "按重量",
@@ -38,11 +34,12 @@ export default function ProductsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [q, setQ] = useState("")
+  const tenantId = useTenantId()
 
   const load = useCallback((query?: string, signal?: AbortSignal, isCancelled?: () => boolean) => {
     setLoading(true)
     setError(null)
-    listProducts({ q: query, tenantId: devTenantId, signal, retry: 2 })
+    listProducts({ q: query, tenantId, signal, retry: 2 })
       .then((res) => {
         if (isCancelled?.()) return
         setProducts(res.items ?? [])
@@ -56,7 +53,7 @@ export default function ProductsPage() {
         if (isCancelled?.()) return
         setLoading(false)
       })
-  }, [])
+  }, [tenantId])
 
   useAbortableEffect((signal, isCancelled) => {
     load(undefined, signal, isCancelled)
@@ -69,13 +66,13 @@ export default function ProductsPage() {
       id: p.id,
       name: p.name,
       revert: async () => {
-        await restoreProduct(p.id, devTenantId)
+        await restoreProduct(p.id, tenantId)
         load(q || undefined)
       },
     })
 
     try {
-      await deleteProduct(p.id, devTenantId)
+      await deleteProduct(p.id, tenantId)
       load(q || undefined)
     } catch (e) {
       // Delete failed — remove the entry we just pushed so undo doesn't fire.

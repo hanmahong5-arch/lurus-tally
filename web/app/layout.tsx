@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next"
 import { ThemeProvider } from "next-themes"
+import { SessionProvider } from "next-auth/react"
 import { ToastProvider } from "@/components/providers/toast-provider"
 import { ConfirmProvider } from "@/hooks/useConfirm"
 import "@/app/globals.css"
@@ -29,9 +30,13 @@ export default function RootLayout({
           enableSystem={false}
           disableTransitionOnChange
         >
-          <ToastProvider>
-            <ConfirmProvider>{children}</ConfirmProvider>
-          </ToastProvider>
+          {/* SessionProvider exposes the NextAuth session to client hooks
+              (useTenantId). Without it useSession() is unusable app-wide. */}
+          <SessionProvider>
+            <ToastProvider>
+              <ConfirmProvider>{children}</ConfirmProvider>
+            </ToastProvider>
+          </SessionProvider>
         </ThemeProvider>
       </body>
     </html>

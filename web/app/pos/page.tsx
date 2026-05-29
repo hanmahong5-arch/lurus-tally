@@ -16,6 +16,7 @@ import { Cart } from "@/components/pos/cart"
 import { PaymentModal, type PaymentMode } from "@/components/pos/payment-modal"
 import { CheckoutSuccess } from "@/components/pos/checkout-success"
 import { useConfirm } from "@/hooks/useConfirm"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { ApiError } from "@/lib/api/errors"
 
@@ -23,8 +24,6 @@ const ProductGrid = lazy(() =>
   import("@/components/pos/product-grid").then((m) => ({ default: m.ProductGrid }))
 )
 
-// Story 2.1 TODO: replace with session tenantId once auth wired
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 // MVP: use a configured default warehouse, or prompt user if absent
 const defaultWarehouseId = process.env.NEXT_PUBLIC_DEFAULT_WAREHOUSE_ID ?? ""
 
@@ -65,16 +64,18 @@ export default function PosPage() {
   const searchRef = useRef<HTMLInputElement>(null)
   const lastQtyRef = useRef<HTMLInputElement>(null)
 
-  // Load product list for the grid on mount
+  const tenantId = useTenantId()
+
+  // Load product list for the grid on mount (re-runs once the session tenant resolves)
   useEffect(() => {
     import("@/lib/api/products").then(({ listProducts }) => {
-      listProducts({ tenantId: devTenantId, limit: 100 })
+      listProducts({ tenantId, limit: 100 })
         .then((res) => setAllProducts(res.items ?? []))
         .catch(() => {
           // Non-fatal: grid may be empty, user can still search
         })
     })
-  }, [])
+  }, [tenantId])
 
   const openPaymentModal = useCallback((method: PaymentMethod) => {
     if (cartState.items.length === 0) return
@@ -139,7 +140,7 @@ export default function PosPage() {
             paid_amount: args.paidAmount.toFixed(2),
             customer_name: args.customerName,
           },
-          devTenantId
+          tenantId
         )
 
         setPaymentMode(null)
@@ -159,7 +160,7 @@ export default function PosPage() {
         setCheckoutLoading(false)
       }
     },
-    [cartState, allProducts]
+    [cartState, allProducts, tenantId]
   )
 
   const handleSuccessDismiss = useCallback(() => {
@@ -201,7 +202,7 @@ export default function PosPage() {
           <ProductSearch
             ref={searchRef}
             onSelect={addToCart}
-            tenantId={devTenantId}
+            tenantId={tenantId}
           />
           <Suspense fallback={<div className="text-sm text-muted-foreground">加载商品...</div>}>
             <ProductGrid products={allProducts} onAdd={addToCart} />
