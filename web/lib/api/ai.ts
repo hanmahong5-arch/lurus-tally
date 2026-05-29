@@ -12,7 +12,6 @@
  */
 
 import { apiFetch } from "./client"
-import { ApiError, NetworkError } from "./errors"
 
 const BASE = "/api/proxy"
 
@@ -41,7 +40,7 @@ export interface AIPlan {
   id: string
   tenant_id: string
   type: string
-  status: "pending" | "confirmed" | "cancelled" | "expired"
+  status: "pending" | "confirmed" | "cancelled" | "expired" | "failed"
   payload: Record<string, unknown>
   preview: PlanPreview
   created_at: string
@@ -239,15 +238,10 @@ export async function revertPlan(planId: string): Promise<RevertPlanResult> {
 }
 
 async function callPlanAction<T>(planId: string, action: "confirm" | "cancel" | "revert"): Promise<T> {
-  try {
-    return await apiFetch<T>(`${BASE}/ai/plans/${planId}/${action}`, {
-      method: "POST",
-      silent: true,
-    })
-  } catch (err: unknown) {
-    if (err instanceof ApiError || err instanceof NetworkError) {
-      throw new Error(err.message)
-    }
-    throw err
-  }
+  // Re-throw ApiError directly so callers (e.g. PlanCard) can inspect .status
+  // and .code for fine-grained UX (e.g. 422 execution_failed → failed visual).
+  return apiFetch<T>(`${BASE}/ai/plans/${planId}/${action}`, {
+    method: "POST",
+    silent: true,
+  })
 }

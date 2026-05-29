@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, fireEvent, waitFor } from "@testing-library/react"
 import { PlanCard } from "./PlanCard"
 import type { AIPlan } from "@/lib/api/ai"
+import { ApiError } from "@/lib/api/errors"
 import { globalUndoStack } from "@/lib/undo/undo-stack"
 
 // cancelPurchaseBill is only called on revert (not exercised here); stub it so the
@@ -196,5 +197,41 @@ describe("PlanCard", () => {
     })
 
     resolveCancel()
+  })
+
+  it("TestPlanCard_FailedStatus_ShowsFailedCard", () => {
+    render(<PlanCard plan={makePlan({ status: "failed" })} />)
+
+    expect(screen.getByTestId("plan-card-failed")).toBeInTheDocument()
+    expect(screen.getByText(/执行失败/)).toBeInTheDocument()
+    expect(screen.queryByTestId("plan-confirm-btn")).not.toBeInTheDocument()
+    // Cancel/关闭 button is present
+    expect(screen.getByTestId("plan-cancel-btn")).toBeInTheDocument()
+  })
+
+  it("TestPlanCard_FailedStatus_NoConfirmButton", () => {
+    render(<PlanCard plan={makePlan({ status: "failed" })} />)
+
+    // confirm button must not appear in failed terminal state
+    expect(screen.queryByTestId("plan-confirm-btn")).not.toBeInTheDocument()
+  })
+
+  it("TestPlanCard_ConfirmReturns422ExecutionFailed_TransitionsToFailedVisual", async () => {
+    const { confirmPlan } = await import("@/lib/api/ai")
+    vi.mocked(confirmPlan).mockRejectedValueOnce(
+      new ApiError(422, "execution_failed", "库存写入失败，请稍后重试")
+    )
+
+    render(<PlanCard plan={makePlan()} />)
+    fireEvent.click(screen.getByTestId("plan-confirm-btn"))
+
+    await waitFor(() => {
+      expect(screen.getByTestId("plan-card-failed")).toBeInTheDocument()
+    })
+
+    expect(screen.getByText(/执行失败/)).toBeInTheDocument()
+    expect(screen.getByText(/库存写入失败/)).toBeInTheDocument()
+    // Confirm button disappears after transition to failed state
+    expect(screen.queryByTestId("plan-confirm-btn")).not.toBeInTheDocument()
   })
 })

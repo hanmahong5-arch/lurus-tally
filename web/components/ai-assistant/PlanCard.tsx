@@ -3,6 +3,7 @@
 import { useRef, useState } from "react"
 import Link from "next/link"
 import { type AIPlan, type ConfirmPlanResult, confirmPlan, cancelPlan, revertPlan } from "@/lib/api/ai"
+import { ApiError } from "@/lib/api/errors"
 import { cancelPurchaseBill } from "@/lib/api/purchase"
 import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { trackEvent } from "@/lib/telemetry"
@@ -36,15 +37,57 @@ interface PlanCardProps {
  */
 export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
   const [status, setStatus] = useState<"idle" | "confirming" | "cancelling">("idle")
-  const [outcome, setOutcome] = useState<"confirmed" | "cancelled" | null>(null)
+  const [outcome, setOutcome] = useState<"confirmed" | "cancelled" | "failed" | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<ConfirmPlanResult | null>(null)
   // Synchronous in-flight latch — prevents the extra-fast double click that fires
   // before React commits the "confirming" state and toggles the disabled prop.
   const inFlightRef = useRef(false)
 
-  const settled = outcome ?? (plan.status === "confirmed" ? "confirmed" : plan.status !== "pending" ? "cancelled" : null)
+  // handleDismissFailed is used in the failed terminal branch to call cancelPlan
+  // and remove the plan from the list (same semantics as handleCancel, but
+  // defined before the early-return so it closes over state correctly).
+  const handleDismissFailed = async () => {
+    if (inFlightRef.current) return
+    inFlightRef.current = true
+    try {
+      await cancelPlan(plan.id)
+      onCancelled?.()
+    } catch {
+      // Best-effort dismiss: the plan is already in a terminal state, so a
+      // cancel failure only affects list cleanup, not data integrity.
+    } finally {
+      inFlightRef.current = false
+    }
+  }
+
+  const settled = outcome
+    ?? (plan.status === "confirmed" ? "confirmed"
+      : plan.status === "failed" ? "failed"
+      : plan.status !== "pending" ? "cancelled"
+      : null)
   if (settled) {
+    if (settled === "failed") {
+      return (
+        <div
+          className="my-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm"
+          data-testid="plan-card-failed"
+        >
+          <p className="font-medium text-amber-700 dark:text-amber-400">✗ 执行失败</p>
+          {error && <p className="mt-1 text-muted-foreground">{error}</p>}
+          <p className="mt-1 text-xs text-muted-foreground">建议联系运营或重新发起新的建议</p>
+          <div className="mt-2">
+            <button
+              onClick={handleDismissFailed}
+              data-testid="plan-cancel-btn"
+              className="rounded border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-muted"
+            >
+              关闭
+            </button>
+          </div>
+        </div>
+      )
+    }
     if (settled === "cancelled") {
       return (
         <div className="my-2 rounded-lg border border-border bg-muted/50 p-3 text-sm text-muted-foreground">
@@ -116,7 +159,14 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
       }
       onConfirmed?.()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err))
+      // 422 execution_failed → transition to failed terminal state so users can
+      // clearly distinguish "system error during execution" from "user cancelled".
+      if (err instanceof ApiError && err.status === 422 && err.code === "execution_failed") {
+        setOutcome("failed")
+        setError(err.message)
+      } else {
+        setError(err instanceof Error ? err.message : String(err))
+      }
       setStatus("idle")
     } finally {
       inFlightRef.current = false
