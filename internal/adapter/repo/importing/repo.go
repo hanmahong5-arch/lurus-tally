@@ -175,6 +175,78 @@ func (r *Repo) MarkOrderSeen(ctx context.Context, tenantID uuid.UUID, platform, 
 	return nil
 }
 
+// IsCancelSeen returns (true, originalBillID, reversalBillID) when the
+// cancellation has already been processed; (false, Nil, Nil, nil) otherwise.
+func (r *Repo) IsCancelSeen(ctx context.Context, tenantID uuid.UUID, platform, orderNo string) (bool, uuid.UUID, uuid.UUID, error) {
+	const q = `
+		SELECT original_bill_id, reversal_bill_id
+		FROM tally.import_order_cancel_seen
+		WHERE tenant_id = $1 AND platform = $2 AND platform_order_no = $3`
+
+	var origBillID, revBillID uuid.UUID
+	err := r.db.QueryRowContext(ctx, q, tenantID, platform, orderNo).Scan(&origBillID, &revBillID)
+	if err == nil {
+		return true, origBillID, revBillID, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, uuid.Nil, uuid.Nil, nil
+	}
+	return false, uuid.Nil, uuid.Nil, fmt.Errorf("import repo: is cancel seen: %w", err)
+}
+
+// MarkCancelSeen records a processed order cancellation.
+// Duplicate inserts are silently ignored (idempotent).
+func (r *Repo) MarkCancelSeen(ctx context.Context, tenantID uuid.UUID, platform, orderNo string, originalBillID, reversalBillID uuid.UUID) error {
+	const q = `
+		INSERT INTO tally.import_order_cancel_seen
+			(id, tenant_id, platform, platform_order_no, original_bill_id, reversal_bill_id, cancelled_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (tenant_id, platform, platform_order_no) DO NOTHING`
+
+	_, err := r.db.ExecContext(ctx, q,
+		uuid.New(), tenantID, platform, orderNo, originalBillID, reversalBillID, time.Now().UTC(),
+	)
+	if err != nil && !isPgUniqueViolation(err) {
+		return fmt.Errorf("import repo: mark cancel seen: %w", err)
+	}
+	return nil
+}
+
+// IsRefundSeen returns (true, billID) when the refund has already been processed.
+func (r *Repo) IsRefundSeen(ctx context.Context, tenantID uuid.UUID, platform, platformRefundID string) (bool, uuid.UUID, error) {
+	const q = `
+		SELECT bill_id FROM tally.import_refund_seen
+		WHERE tenant_id = $1 AND platform = $2 AND platform_refund_id = $3`
+
+	var billID uuid.UUID
+	err := r.db.QueryRowContext(ctx, q, tenantID, platform, platformRefundID).Scan(&billID)
+	if err == nil {
+		return true, billID, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, uuid.Nil, nil
+	}
+	return false, uuid.Nil, fmt.Errorf("import repo: is refund seen: %w", err)
+}
+
+// MarkRefundSeen records that a refund has been processed.
+// Duplicate inserts are silently ignored (idempotent).
+func (r *Repo) MarkRefundSeen(ctx context.Context, tenantID uuid.UUID, platform, orderNo, platformRefundID string, billID uuid.UUID) error {
+	const q = `
+		INSERT INTO tally.import_refund_seen
+			(id, tenant_id, platform, platform_order_no, platform_refund_id, bill_id, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (tenant_id, platform, platform_refund_id) DO NOTHING`
+
+	_, err := r.db.ExecContext(ctx, q,
+		uuid.New(), tenantID, platform, orderNo, platformRefundID, billID, time.Now().UTC(),
+	)
+	if err != nil && !isPgUniqueViolation(err) {
+		return fmt.Errorf("import repo: mark refund seen: %w", err)
+	}
+	return nil
+}
+
 // ----- helpers -----
 
 type rowScanner interface {

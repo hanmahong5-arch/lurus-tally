@@ -122,6 +122,54 @@ type UnknownSKU struct {
 	PlatformSKU string
 }
 
+// ----- cancellation types ---------------------------------------------------
+
+// CancelRequest is the input to IngestCancelOrder.
+type CancelRequest struct {
+	TenantID        uuid.UUID
+	CreatorID       uuid.UUID
+	Platform        Platform
+	PlatformOrderNo string
+}
+
+// CancelResult is returned on successful order cancellation.
+type CancelResult struct {
+	PlatformOrderNo string
+	OriginalBillID  uuid.UUID
+	ReversalBillID  uuid.UUID
+	ReversalBillNo  string
+}
+
+// ----- refund types ---------------------------------------------------------
+
+// RefundLine is one SKU line in a partial or full refund.
+type RefundLine struct {
+	PlatformSKU  string
+	Qty          decimal.Decimal
+	RefundAmount decimal.Decimal // per-unit, in the order's original currency
+}
+
+// RefundRequest is the input to IngestRefund.
+type RefundRequest struct {
+	TenantID         uuid.UUID
+	CreatorID        uuid.UUID
+	WarehouseID      uuid.UUID
+	Platform         Platform
+	PlatformOrderNo  string
+	PlatformRefundID string // Shopify refund.id — dedup key
+	Currency         string // ISO-4217; used for FX conversion of refund amounts
+	RefundDate       time.Time
+	Lines            []RefundLine
+}
+
+// RefundResult is returned on successful refund ingestion.
+type RefundResult struct {
+	PlatformOrderNo  string
+	PlatformRefundID string
+	BillID           uuid.UUID
+	BillNo           string
+}
+
 // ImportResult is the output of ImportOrdersUseCase.Execute.
 type ImportResult struct {
 	Imported    []ImportedOrder
@@ -132,7 +180,8 @@ type ImportResult struct {
 
 // ----- interfaces -----------------------------------------------------------
 
-// ImportRepo is the persistence contract for import_sku_map and import_order_seen.
+// ImportRepo is the persistence contract for import_sku_map, import_order_seen,
+// import_order_cancel_seen, and import_refund_seen.
 type ImportRepo interface {
 	// GetMapping returns a SKU mapping or nil when none exists.
 	GetMapping(ctx context.Context, tenantID uuid.UUID, platform, platformSKU string) (*SKUMapping, error)
@@ -144,6 +193,17 @@ type ImportRepo interface {
 	IsOrderSeen(ctx context.Context, tenantID uuid.UUID, platform, orderNo string) (bool, uuid.UUID, error)
 	// MarkOrderSeen records that an order has been imported as bill billID.
 	MarkOrderSeen(ctx context.Context, tenantID uuid.UUID, platform, orderNo string, billID uuid.UUID) error
+
+	// IsCancelSeen returns (true, originalBillID, reversalBillID) when the
+	// cancellation has already been processed; (false, nil, nil) otherwise.
+	IsCancelSeen(ctx context.Context, tenantID uuid.UUID, platform, orderNo string) (bool, uuid.UUID, uuid.UUID, error)
+	// MarkCancelSeen records that a cancellation has been processed.
+	MarkCancelSeen(ctx context.Context, tenantID uuid.UUID, platform, orderNo string, originalBillID, reversalBillID uuid.UUID) error
+
+	// IsRefundSeen returns (true, billID) when the refund has already been processed.
+	IsRefundSeen(ctx context.Context, tenantID uuid.UUID, platform, platformRefundID string) (bool, uuid.UUID, error)
+	// MarkRefundSeen records that a refund has been processed.
+	MarkRefundSeen(ctx context.Context, tenantID uuid.UUID, platform, orderNo, platformRefundID string, billID uuid.UUID) error
 }
 
 // SaleCreatorInput is the minimal input needed to create a sale bill draft.
@@ -190,6 +250,42 @@ type SaleApprover interface {
 	Approve(ctx context.Context, req SaleApproverInput) error
 }
 
+// ReturnCreatorInput is the input for creating a return-stock (入库-销售退货) bill.
+// Used for both cancellation reversals and partial refund lines.
+type ReturnCreatorInput struct {
+	TenantID       uuid.UUID
+	CreatorID      uuid.UUID
+	WarehouseID    *uuid.UUID
+	BillDate       time.Time
+	Remark         string // carries audit link to original bill
+	Items          []SaleLineItem
+}
+
+// ReturnCreatorOutput is returned by ReturnCreator.Create on success.
+type ReturnCreatorOutput struct {
+	BillID uuid.UUID
+	BillNo string
+}
+
+// ReturnCreator creates a return-stock (入库 / 销售退货) bill draft.
+// In production this is implemented by bill.CreateReturnUseCase (adapter shim).
+type ReturnCreator interface {
+	Create(ctx context.Context, req ReturnCreatorInput) (*ReturnCreatorOutput, error)
+}
+
+// ReturnApproverInput is the minimal input for approving a return bill.
+type ReturnApproverInput struct {
+	TenantID  uuid.UUID
+	BillID    uuid.UUID
+	CreatorID uuid.UUID
+}
+
+// ReturnApprover approves a return-stock bill (adds back stock).
+// In production implemented by bill.ApproveReturnUseCase (adapter shim).
+type ReturnApprover interface {
+	Approve(ctx context.Context, req ReturnApproverInput) error
+}
+
 // StockChecker returns the current available quantity for a product/warehouse.
 // Used in preview mode to flag potential oversell without touching any bill.
 type StockChecker interface {
@@ -212,14 +308,17 @@ type CurrencyRater interface {
 
 // ----- use case -------------------------------------------------------------
 
-// ImportOrdersUseCase orchestrates multi-platform order CSV ingestion.
+// ImportOrdersUseCase orchestrates multi-platform order CSV ingestion,
+// order cancellation reversals, and refund ingestion.
 type ImportOrdersUseCase struct {
-	repo         ImportRepo
-	saleCreator  SaleCreator
-	saleApprover SaleApprover
-	stockChecker StockChecker
-	whChecker    WarehouseChecker
-	currencyRate CurrencyRater
+	repo           ImportRepo
+	saleCreator    SaleCreator
+	saleApprover   SaleApprover
+	returnCreator  ReturnCreator
+	returnApprover ReturnApprover
+	stockChecker   StockChecker
+	whChecker      WarehouseChecker
+	currencyRate   CurrencyRater
 	// targetCurrency is the currency bills are denominated in (default "CNY").
 	targetCurrency string
 }
@@ -228,6 +327,8 @@ type ImportOrdersUseCase struct {
 // targetCurrency defaults to "CNY" when empty.
 // whChecker may be nil only in tests; production callers must provide one so the
 // tenant-warehouse binding is enforced before any sale bill is created.
+// returnCreator/returnApprover may be nil only in tests that do not exercise
+// cancellation or refund paths.
 func NewImportOrdersUseCase(
 	repo ImportRepo,
 	saleCreator SaleCreator,
@@ -249,6 +350,15 @@ func NewImportOrdersUseCase(
 		currencyRate:   currencyRate,
 		targetCurrency: targetCurrency,
 	}
+}
+
+// WithReturnHandlers attaches the return-bill creator and approver needed for
+// order cancellations and refund ingestion.  Call this after NewImportOrdersUseCase
+// when wiring the production container.
+func (uc *ImportOrdersUseCase) WithReturnHandlers(creator ReturnCreator, approver ReturnApprover) *ImportOrdersUseCase {
+	uc.returnCreator = creator
+	uc.returnApprover = approver
+	return uc
 }
 
 // Execute parses the CSV, resolves SKUs, deduplicates, optionally converts FX,
@@ -359,9 +469,10 @@ func (uc *ImportOrdersUseCase) Execute(ctx context.Context, req ImportRequest) (
 
 		// 4. FX conversion: convert unit_price to targetCurrency.
 		type lineWithPrice struct {
-			productID uuid.UUID
-			qty       decimal.Decimal
-			unitPrice decimal.Decimal // in targetCurrency
+			productID   uuid.UUID
+			platformSKU string // retained from resolved line for OversellRow (F06)
+			qty         decimal.Decimal
+			unitPrice   decimal.Decimal // in targetCurrency
 		}
 		var convertedLines []lineWithPrice
 
@@ -376,9 +487,10 @@ func (uc *ImportOrdersUseCase) Execute(ctx context.Context, req ImportRequest) (
 				price = price.Mul(rate).Round(4)
 			}
 			convertedLines = append(convertedLines, lineWithPrice{
-				productID: rl.productID,
-				qty:       rl.row.Qty,
-				unitPrice: price,
+				productID:   rl.productID,
+				platformSKU: rl.row.PlatformSKU,
+				qty:         rl.row.Qty,
+				unitPrice:   price,
 			})
 		}
 
@@ -392,7 +504,7 @@ func (uc *ImportOrdersUseCase) Execute(ctx context.Context, req ImportRequest) (
 				if cl.qty.GreaterThan(avail) {
 					result.Oversells = append(result.Oversells, OversellRow{
 						PlatformOrderNo: orderNo,
-						PlatformSKU:     "", // resolved away; caller cross-refs by productID
+						PlatformSKU:     cl.platformSKU, // F06 fix: surface SKU for UI display
 						ProductID:       cl.productID,
 						Requested:       cl.qty,
 						Available:       avail,
@@ -591,9 +703,10 @@ func (uc *ImportOrdersUseCase) ingestOneOrder(
 
 	// 3. FX conversion.
 	type lineWithPrice struct {
-		productID uuid.UUID
-		qty       decimal.Decimal
-		unitPrice decimal.Decimal
+		productID   uuid.UUID
+		platformSKU string // retained for potential oversell reporting
+		qty         decimal.Decimal
+		unitPrice   decimal.Decimal
 	}
 	var convertedLines []lineWithPrice
 	for _, rl := range resolved {
@@ -607,9 +720,10 @@ func (uc *ImportOrdersUseCase) ingestOneOrder(
 			price = price.Mul(rate).Round(4)
 		}
 		convertedLines = append(convertedLines, lineWithPrice{
-			productID: rl.productID,
-			qty:       rl.row.Qty,
-			unitPrice: price,
+			productID:   rl.productID,
+			platformSKU: rl.row.PlatformSKU,
+			qty:         rl.row.Qty,
+			unitPrice:   price,
 		})
 	}
 
@@ -663,6 +777,252 @@ func (uc *ImportOrdersUseCase) ingestOneOrder(
 		BillID:          out.BillID,
 		BillNo:          out.BillNo,
 	}, nil, nil
+}
+
+// ----- order cancellation ---------------------------------------------------
+
+// IngestCancelOrder processes an orders/cancelled webhook event.
+//
+// Steps:
+//  1. Validate inputs.
+//  2. Dedup: if already cancelled, return the existing reversal bill ids.
+//  3. Look up the original import_order_seen row to find the original bill_id.
+//     If the order was never imported (unknown to Tally) return a soft skip.
+//  4. Create a return-stock bill (入库/销售退货) that mirrors the original sale.
+//  5. Approve the reversal bill (adds stock back).
+//  6. Persist to import_order_cancel_seen.
+//
+// Returns an error only on hard infrastructure failures.
+func (uc *ImportOrdersUseCase) IngestCancelOrder(ctx context.Context, req CancelRequest) (*CancelResult, error) {
+	if req.TenantID == uuid.Nil {
+		return nil, fmt.Errorf("importing: tenant_id is required")
+	}
+	if req.CreatorID == uuid.Nil {
+		return nil, fmt.Errorf("importing: creator_id is required")
+	}
+	if err := req.Platform.Validate(); err != nil {
+		return nil, err
+	}
+	if req.PlatformOrderNo == "" {
+		return nil, fmt.Errorf("importing: platform_order_no is required")
+	}
+	if uc.returnCreator == nil || uc.returnApprover == nil {
+		return nil, fmt.Errorf("importing: ReturnCreator/ReturnApprover not wired; call WithReturnHandlers")
+	}
+
+	// 1. Dedup: already cancelled?
+	alreadyCancelled, origBillID, revBillID, err := uc.repo.IsCancelSeen(ctx, req.TenantID, string(req.Platform), req.PlatformOrderNo)
+	if err != nil {
+		return nil, fmt.Errorf("importing: cancel dedup check for order %s: %w", req.PlatformOrderNo, err)
+	}
+	if alreadyCancelled {
+		return &CancelResult{
+			PlatformOrderNo: req.PlatformOrderNo,
+			OriginalBillID:  origBillID,
+			ReversalBillID:  revBillID,
+		}, nil
+	}
+
+	// 2. Find the original import bill via import_order_seen.
+	seen, originalBillID, err := uc.repo.IsOrderSeen(ctx, req.TenantID, string(req.Platform), req.PlatformOrderNo)
+	if err != nil {
+		return nil, fmt.Errorf("importing: lookup original order %s: %w", req.PlatformOrderNo, err)
+	}
+	if !seen {
+		// Order was not imported through Tally — nothing to reverse.
+		return nil, fmt.Errorf("importing: cancel order %s: original order not found in import_order_seen", req.PlatformOrderNo)
+	}
+
+	// 3. Create reversal return-stock bill.
+	// Remark carries an audit link back to the original sale bill.
+	// The reversal bill mirrors the original sale line quantities; the actual
+	// line items must be fetched from the bill_head/bill_item tables by the
+	// ReturnCreator implementation.  Here we pass an empty Items slice and rely
+	// on the ReturnCreator to clone from original_bill_id via Remark convention:
+	//   "cancel:shopify:#1001:original_bill_id=<uuid>"
+	// Alternatively, the ReturnCreator reads from Remark and performs the lookup.
+	// This keeps the use case free of direct DB dependency on bill tables.
+	remark := fmt.Sprintf("cancel:%s:%s:original_bill_id=%s", req.Platform, req.PlatformOrderNo, originalBillID)
+	out, err := uc.returnCreator.Create(ctx, ReturnCreatorInput{
+		TenantID:  req.TenantID,
+		CreatorID: req.CreatorID,
+		BillDate:  time.Now().UTC(),
+		Remark:    remark,
+		Items:     nil, // ReturnCreator clones items from originalBillID via Remark
+	})
+	if err != nil {
+		return nil, fmt.Errorf("importing: create reversal bill for order %s: %w", req.PlatformOrderNo, err)
+	}
+
+	// 4. Approve reversal (restores stock).
+	if err := uc.returnApprover.Approve(ctx, ReturnApproverInput{
+		TenantID:  req.TenantID,
+		BillID:    out.BillID,
+		CreatorID: req.CreatorID,
+	}); err != nil {
+		return nil, fmt.Errorf("importing: approve reversal bill for order %s: %w", req.PlatformOrderNo, err)
+	}
+
+	// 5. Mark cancellation seen.
+	if err := uc.repo.MarkCancelSeen(ctx, req.TenantID, string(req.Platform), req.PlatformOrderNo, originalBillID, out.BillID); err != nil {
+		// Soft failure: reversal is committed; dedup row is missing.
+		// A duplicate webhook will attempt another reversal but IsCancelSeen
+		// returns false → double-reversal risk.  Log at caller level.
+		return &CancelResult{
+			PlatformOrderNo: req.PlatformOrderNo,
+			OriginalBillID:  originalBillID,
+			ReversalBillID:  out.BillID,
+			ReversalBillNo:  out.BillNo,
+		}, fmt.Errorf("importing: mark_cancel_seen failed (reversal committed): %w", err)
+	}
+
+	return &CancelResult{
+		PlatformOrderNo: req.PlatformOrderNo,
+		OriginalBillID:  originalBillID,
+		ReversalBillID:  out.BillID,
+		ReversalBillNo:  out.BillNo,
+	}, nil
+}
+
+// ----- refund ingestion -----------------------------------------------------
+
+// IngestRefund processes a refunds/create webhook event (full or partial refund).
+//
+// Steps:
+//  1. Validate inputs.
+//  2. Dedup by platform_refund_id.
+//  3. Resolve each RefundLine.PlatformSKU → product_id.
+//  4. FX-convert refund amounts to targetCurrency.
+//  5. Create a return-stock bill (入库/销售退货, sub_type implied by remark).
+//  6. Approve the bill (adds stock back).
+//  7. Persist to import_refund_seen.
+func (uc *ImportOrdersUseCase) IngestRefund(ctx context.Context, req RefundRequest) (*RefundResult, error) {
+	if req.TenantID == uuid.Nil {
+		return nil, fmt.Errorf("importing: tenant_id is required")
+	}
+	if req.CreatorID == uuid.Nil {
+		return nil, fmt.Errorf("importing: creator_id is required")
+	}
+	if req.WarehouseID == uuid.Nil {
+		return nil, fmt.Errorf("importing: warehouse_id is required")
+	}
+	if err := req.Platform.Validate(); err != nil {
+		return nil, err
+	}
+	if req.PlatformOrderNo == "" {
+		return nil, fmt.Errorf("importing: platform_order_no is required")
+	}
+	if req.PlatformRefundID == "" {
+		return nil, fmt.Errorf("importing: platform_refund_id is required")
+	}
+	if len(req.Lines) == 0 {
+		return nil, fmt.Errorf("importing: refund has no lines")
+	}
+	if uc.returnCreator == nil || uc.returnApprover == nil {
+		return nil, fmt.Errorf("importing: ReturnCreator/ReturnApprover not wired; call WithReturnHandlers")
+	}
+
+	// 1. Dedup by platform_refund_id.
+	alreadySeen, existingBillID, err := uc.repo.IsRefundSeen(ctx, req.TenantID, string(req.Platform), req.PlatformRefundID)
+	if err != nil {
+		return nil, fmt.Errorf("importing: refund dedup check for %s: %w", req.PlatformRefundID, err)
+	}
+	if alreadySeen {
+		return &RefundResult{
+			PlatformOrderNo:  req.PlatformOrderNo,
+			PlatformRefundID: req.PlatformRefundID,
+			BillID:           existingBillID,
+		}, nil
+	}
+
+	// 2. Resolve SKUs → product_ids.
+	type resolvedRefundLine struct {
+		platformSKU string
+		productID   uuid.UUID
+		qty         decimal.Decimal
+		unitPrice   decimal.Decimal // refund_amount, in targetCurrency
+	}
+	emptyHints := map[string]uuid.UUID{}
+	var resolved []resolvedRefundLine
+	for _, rl := range req.Lines {
+		productID, unknown, resolveErr := uc.resolveSKU(ctx, req.TenantID, string(req.Platform), rl.PlatformSKU, emptyHints)
+		if resolveErr != nil {
+			return nil, fmt.Errorf("importing: refund resolve sku %s: %w", rl.PlatformSKU, resolveErr)
+		}
+		if unknown {
+			return nil, fmt.Errorf("importing: refund sku %s not in import_sku_map; map it before re-sending", rl.PlatformSKU)
+		}
+
+		// FX-convert the per-unit refund amount.
+		price := rl.RefundAmount
+		srcCur := strings.ToUpper(req.Currency)
+		if srcCur != "" && srcCur != uc.targetCurrency {
+			rate, fxErr := uc.currencyRate.GetRate(ctx, req.TenantID, srcCur, uc.targetCurrency, req.RefundDate)
+			if fxErr != nil {
+				return nil, fmt.Errorf("importing: fx for refund %s: %w", req.PlatformRefundID, fxErr)
+			}
+			price = price.Mul(rate).Round(4)
+		}
+
+		resolved = append(resolved, resolvedRefundLine{
+			platformSKU: rl.PlatformSKU,
+			productID:   productID,
+			qty:         rl.Qty,
+			unitPrice:   price,
+		})
+	}
+
+	// 3. Build return-stock bill items.
+	items := make([]SaleLineItem, len(resolved))
+	for i, rl := range resolved {
+		items[i] = SaleLineItem{
+			ProductID: rl.productID,
+			LineNo:    i + 1,
+			Qty:       rl.qty,
+			UnitPrice: rl.unitPrice,
+		}
+	}
+
+	warehouseID := req.WarehouseID
+	remark := fmt.Sprintf("refund:%s:%s:refund_id=%s", req.Platform, req.PlatformOrderNo, req.PlatformRefundID)
+	out, err := uc.returnCreator.Create(ctx, ReturnCreatorInput{
+		TenantID:    req.TenantID,
+		CreatorID:   req.CreatorID,
+		WarehouseID: &warehouseID,
+		BillDate:    req.RefundDate,
+		Remark:      remark,
+		Items:       items,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("importing: create refund bill for %s: %w", req.PlatformRefundID, err)
+	}
+
+	// 4. Approve the return-stock bill.
+	if err := uc.returnApprover.Approve(ctx, ReturnApproverInput{
+		TenantID:  req.TenantID,
+		BillID:    out.BillID,
+		CreatorID: req.CreatorID,
+	}); err != nil {
+		return nil, fmt.Errorf("importing: approve refund bill for %s: %w", req.PlatformRefundID, err)
+	}
+
+	// 5. Mark refund seen — soft failure on dedup write is acceptable because
+	// the bill is already committed and the refund amount has been credited.
+	if err := uc.repo.MarkRefundSeen(ctx, req.TenantID, string(req.Platform), req.PlatformOrderNo, req.PlatformRefundID, out.BillID); err != nil {
+		return &RefundResult{
+			PlatformOrderNo:  req.PlatformOrderNo,
+			PlatformRefundID: req.PlatformRefundID,
+			BillID:           out.BillID,
+			BillNo:           out.BillNo,
+		}, fmt.Errorf("importing: mark_refund_seen failed (bill committed): %w", err)
+	}
+
+	return &RefundResult{
+		PlatformOrderNo:  req.PlatformOrderNo,
+		PlatformRefundID: req.PlatformRefundID,
+		BillID:           out.BillID,
+		BillNo:           out.BillNo,
+	}, nil
 }
 
 // ----- helpers --------------------------------------------------------------

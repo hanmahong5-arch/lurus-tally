@@ -192,6 +192,7 @@ type skippedOrderDTO struct {
 
 type oversellDTO struct {
 	PlatformOrderNo string `json:"platform_order_no"`
+	PlatformSKU     string `json:"platform_sku"`
 	ProductID       string `json:"product_id"`
 	Requested       string `json:"requested_qty"`
 	Available       string `json:"available_qty"`
@@ -229,6 +230,7 @@ func toResultDTO(r *appimporting.ImportResult) importResultDTO {
 	for _, o := range r.Oversells {
 		oversells = append(oversells, oversellDTO{
 			PlatformOrderNo: o.PlatformOrderNo,
+			PlatformSKU:     o.PlatformSKU, // F06 fix: surface SKU for UI display
 			ProductID:       o.ProductID.String(),
 			Requested:       o.Requested.String(),
 			Available:       o.Available.String(),

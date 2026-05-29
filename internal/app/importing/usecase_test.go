@@ -16,11 +16,13 @@ import (
 // ----- mock repo --------------------------------------------------------
 
 type mockRepo struct {
-	mappings map[string]*appimporting.SKUMapping // key: platform+":"+platformSKU
-	seen     map[string]uuid.UUID                // key: platform+":"+orderNo → billID
-	upserted []appimporting.SKUMapping
-	marked   []string // orderNos marked seen
-	markErr  error    // when set, MarkOrderSeen returns this error
+	mappings  map[string]*appimporting.SKUMapping // key: platform+":"+platformSKU
+	seen      map[string]uuid.UUID                // key: platform+":"+orderNo → billID
+	cancelled map[string][2]uuid.UUID             // key: "cancel:platform:orderNo" → [origBillID, revBillID]
+	refunds   map[string]uuid.UUID                // key: "refund:platform:refundID" → billID
+	upserted  []appimporting.SKUMapping
+	marked    []string // orderNos marked seen
+	markErr   error    // when set, MarkOrderSeen returns this error
 }
 
 func newMockRepo() *mockRepo {
@@ -74,6 +76,38 @@ func (m *mockRepo) MarkOrderSeen(_ context.Context, _ uuid.UUID, platform, order
 	}
 	m.seen[platform+":"+orderNo] = billID
 	m.marked = append(m.marked, orderNo)
+	return nil
+}
+
+func (m *mockRepo) IsCancelSeen(_ context.Context, _ uuid.UUID, platform, orderNo string) (bool, uuid.UUID, uuid.UUID, error) {
+	key := "cancel:" + platform + ":" + orderNo
+	if ids, ok := m.cancelled[key]; ok {
+		return true, ids[0], ids[1], nil
+	}
+	return false, uuid.Nil, uuid.Nil, nil
+}
+
+func (m *mockRepo) MarkCancelSeen(_ context.Context, _ uuid.UUID, platform, orderNo string, origBillID, revBillID uuid.UUID) error {
+	if m.cancelled == nil {
+		m.cancelled = make(map[string][2]uuid.UUID)
+	}
+	m.cancelled["cancel:"+platform+":"+orderNo] = [2]uuid.UUID{origBillID, revBillID}
+	return nil
+}
+
+func (m *mockRepo) IsRefundSeen(_ context.Context, _ uuid.UUID, platform, refundID string) (bool, uuid.UUID, error) {
+	key := "refund:" + platform + ":" + refundID
+	if billID, ok := m.refunds[key]; ok {
+		return true, billID, nil
+	}
+	return false, uuid.Nil, nil
+}
+
+func (m *mockRepo) MarkRefundSeen(_ context.Context, _ uuid.UUID, platform, _, refundID string, billID uuid.UUID) error {
+	if m.refunds == nil {
+		m.refunds = make(map[string]uuid.UUID)
+	}
+	m.refunds["refund:"+platform+":"+refundID] = billID
 	return nil
 }
 
@@ -137,12 +171,42 @@ func (r *mockRater) GetRate(_ context.Context, _ uuid.UUID, from, to string, _ t
 	return decimal.NewFromInt(1), nil // identity fallback
 }
 
+// ----- mock ReturnCreator -----------------------------------------------
+
+type mockReturnCreator struct {
+	created []appimporting.ReturnCreatorInput
+}
+
+func (c *mockReturnCreator) Create(_ context.Context, req appimporting.ReturnCreatorInput) (*appimporting.ReturnCreatorOutput, error) {
+	c.created = append(c.created, req)
+	return &appimporting.ReturnCreatorOutput{
+		BillID: uuid.New(),
+		BillNo: "RT-20260101-0001",
+	}, nil
+}
+
+// ----- mock ReturnApprover ----------------------------------------------
+
+type mockReturnApprover struct {
+	approved []uuid.UUID
+}
+
+func (a *mockReturnApprover) Approve(_ context.Context, req appimporting.ReturnApproverInput) error {
+	a.approved = append(a.approved, req.BillID)
+	return nil
+}
+
 // ----- helpers ----------------------------------------------------------
 
 func buildUseCase(repo *mockRepo, creator *mockCreator, approver *mockApprover, checker *mockStockChecker, rater *mockRater) *appimporting.ImportOrdersUseCase {
 	// whChecker nil: existing tests do not exercise cross-tenant warehouse rejection.
 	// See usecase_warehouse_check_test.go for the dedicated coverage.
 	return appimporting.NewImportOrdersUseCase(repo, creator, approver, checker, nil, rater, "CNY")
+}
+
+func buildUseCaseWithReturn(repo *mockRepo, creator *mockCreator, approver *mockApprover, retCreator *mockReturnCreator, retApprover *mockReturnApprover, checker *mockStockChecker, rater *mockRater) *appimporting.ImportOrdersUseCase {
+	uc := appimporting.NewImportOrdersUseCase(repo, creator, approver, checker, nil, rater, "CNY")
+	return uc.WithReturnHandlers(retCreator, retApprover)
 }
 
 func mustUUID(t *testing.T) uuid.UUID {
@@ -461,6 +525,265 @@ func TestImportOrdersUseCase_MarkOrderSeenFailure_StillReportsImported(t *testin
 	}
 	if len(approver.approved) != 1 {
 		t.Errorf("bill should have been approved, got %d", len(approver.approved))
+	}
+}
+
+// ----- IngestCancelOrder tests -----------------------------------------------
+
+func TestIngestCancelOrder_Happy(t *testing.T) {
+	repo := newMockRepo()
+	creator := &mockCreator{}
+	approver := &mockApprover{}
+	retCreator := &mockReturnCreator{}
+	retApprover := &mockReturnApprover{}
+	checker := newMockStockChecker()
+	rater := newMockRater()
+
+	tenantID, creatorID := mustUUID(t), mustUUID(t)
+	origBillID := mustUUID(t)
+	// Pre-populate: order was previously imported.
+	repo.seen["shopify:#CANCEL-001"] = origBillID
+
+	uc := buildUseCaseWithReturn(repo, creator, approver, retCreator, retApprover, checker, rater)
+
+	result, err := uc.IngestCancelOrder(context.Background(), appimporting.CancelRequest{
+		TenantID:        tenantID,
+		CreatorID:       creatorID,
+		Platform:        appimporting.PlatformShopify,
+		PlatformOrderNo: "#CANCEL-001",
+	})
+	if err != nil {
+		t.Fatalf("IngestCancelOrder: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.OriginalBillID != origBillID {
+		t.Errorf("original_bill_id: got %s, want %s", result.OriginalBillID, origBillID)
+	}
+	if result.ReversalBillID == uuid.Nil {
+		t.Error("expected non-nil reversal_bill_id")
+	}
+	if len(retCreator.created) != 1 {
+		t.Errorf("expected 1 reversal bill created, got %d", len(retCreator.created))
+	}
+	if len(retApprover.approved) != 1 {
+		t.Errorf("expected 1 reversal bill approved, got %d", len(retApprover.approved))
+	}
+	// Verify cancel dedup row was written.
+	seen, _, _, sErr := repo.IsCancelSeen(context.Background(), tenantID, "shopify", "#CANCEL-001")
+	if sErr != nil || !seen {
+		t.Error("expected cancel seen row written")
+	}
+}
+
+func TestIngestCancelOrder_Dedup_ReturnsExisting(t *testing.T) {
+	repo := newMockRepo()
+	retCreator := &mockReturnCreator{}
+	retApprover := &mockReturnApprover{}
+
+	tenantID, creatorID := mustUUID(t), mustUUID(t)
+	origBillID, revBillID := mustUUID(t), mustUUID(t)
+
+	// Pre-populate both seen rows.
+	repo.seen["shopify:#CANCEL-DUP"] = origBillID
+	if repo.cancelled == nil {
+		repo.cancelled = make(map[string][2]uuid.UUID)
+	}
+	repo.cancelled["cancel:shopify:#CANCEL-DUP"] = [2]uuid.UUID{origBillID, revBillID}
+
+	uc := buildUseCaseWithReturn(repo, &mockCreator{}, &mockApprover{}, retCreator, retApprover, newMockStockChecker(), newMockRater())
+
+	result, err := uc.IngestCancelOrder(context.Background(), appimporting.CancelRequest{
+		TenantID:        tenantID,
+		CreatorID:       creatorID,
+		Platform:        appimporting.PlatformShopify,
+		PlatformOrderNo: "#CANCEL-DUP",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.ReversalBillID != revBillID {
+		t.Errorf("expected existing reversal_bill_id on dup, got %s", result.ReversalBillID)
+	}
+	// No new bill should be created.
+	if len(retCreator.created) != 0 {
+		t.Errorf("expected no new reversal bill on dup, got %d", len(retCreator.created))
+	}
+}
+
+func TestIngestCancelOrder_MissingOriginal_ReturnsError(t *testing.T) {
+	repo := newMockRepo()
+	retCreator := &mockReturnCreator{}
+	retApprover := &mockReturnApprover{}
+
+	uc := buildUseCaseWithReturn(repo, &mockCreator{}, &mockApprover{}, retCreator, retApprover, newMockStockChecker(), newMockRater())
+
+	_, err := uc.IngestCancelOrder(context.Background(), appimporting.CancelRequest{
+		TenantID:        mustUUID(t),
+		CreatorID:       mustUUID(t),
+		Platform:        appimporting.PlatformShopify,
+		PlatformOrderNo: "#NEVER-IMPORTED",
+	})
+	if err == nil {
+		t.Fatal("expected error for unimported order, got nil")
+	}
+	if !strings.Contains(err.Error(), "not found") {
+		t.Errorf("expected 'not found' error, got: %v", err)
+	}
+}
+
+// ----- IngestRefund tests ----------------------------------------------------
+
+func TestIngestRefund_Happy(t *testing.T) {
+	repo := newMockRepo()
+	retCreator := &mockReturnCreator{}
+	retApprover := &mockReturnApprover{}
+	rater := newMockRater()
+
+	tenantID, creatorID, warehouseID := mustUUID(t), mustUUID(t), mustUUID(t)
+	productID := mustUUID(t)
+	repo.addMapping("shopify", "REF-SKU", productID)
+
+	uc := buildUseCaseWithReturn(repo, &mockCreator{}, &mockApprover{}, retCreator, retApprover, newMockStockChecker(), rater)
+
+	result, err := uc.IngestRefund(context.Background(), appimporting.RefundRequest{
+		TenantID:         tenantID,
+		CreatorID:        creatorID,
+		WarehouseID:      warehouseID,
+		Platform:         appimporting.PlatformShopify,
+		PlatformOrderNo:  "#3001",
+		PlatformRefundID: "REFUND-001",
+		Currency:         "CNY",
+		RefundDate:       time.Now().UTC(),
+		Lines: []appimporting.RefundLine{
+			{PlatformSKU: "REF-SKU", Qty: decimal.NewFromInt(2), RefundAmount: decimal.NewFromFloat(50.00)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("IngestRefund: %v", err)
+	}
+	if result == nil || result.BillID == uuid.Nil {
+		t.Fatal("expected non-nil result with bill_id")
+	}
+	if result.PlatformRefundID != "REFUND-001" {
+		t.Errorf("platform_refund_id: got %s", result.PlatformRefundID)
+	}
+	if len(retCreator.created) != 1 {
+		t.Errorf("expected 1 refund bill created, got %d", len(retCreator.created))
+	}
+	if len(retApprover.approved) != 1 {
+		t.Errorf("expected 1 refund bill approved, got %d", len(retApprover.approved))
+	}
+}
+
+func TestIngestRefund_Dedup_ReturnsExistingBillID(t *testing.T) {
+	repo := newMockRepo()
+	retCreator := &mockReturnCreator{}
+	retApprover := &mockReturnApprover{}
+
+	tenantID, creatorID, warehouseID := mustUUID(t), mustUUID(t), mustUUID(t)
+	existingBillID := mustUUID(t)
+	if repo.refunds == nil {
+		repo.refunds = make(map[string]uuid.UUID)
+	}
+	repo.refunds["refund:shopify:REFUND-DUP"] = existingBillID
+
+	uc := buildUseCaseWithReturn(repo, &mockCreator{}, &mockApprover{}, retCreator, retApprover, newMockStockChecker(), newMockRater())
+
+	result, err := uc.IngestRefund(context.Background(), appimporting.RefundRequest{
+		TenantID:         tenantID,
+		CreatorID:        creatorID,
+		WarehouseID:      warehouseID,
+		Platform:         appimporting.PlatformShopify,
+		PlatformOrderNo:  "#3002",
+		PlatformRefundID: "REFUND-DUP",
+		Currency:         "CNY",
+		RefundDate:       time.Now().UTC(),
+		Lines: []appimporting.RefundLine{
+			{PlatformSKU: "ANY-SKU", Qty: decimal.NewFromInt(1), RefundAmount: decimal.NewFromFloat(10.00)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.BillID != existingBillID {
+		t.Errorf("expected existing bill_id on dup, got %s", result.BillID)
+	}
+	if len(retCreator.created) != 0 {
+		t.Errorf("no new bill should be created on refund dup, got %d", len(retCreator.created))
+	}
+}
+
+func TestIngestRefund_MissingOriginal_ReturnsError(t *testing.T) {
+	repo := newMockRepo()
+	retCreator := &mockReturnCreator{}
+	retApprover := &mockReturnApprover{}
+
+	uc := buildUseCaseWithReturn(repo, &mockCreator{}, &mockApprover{}, retCreator, retApprover, newMockStockChecker(), newMockRater())
+
+	// "NO-SUCH-SKU" is not in import_sku_map.
+	_, err := uc.IngestRefund(context.Background(), appimporting.RefundRequest{
+		TenantID:         mustUUID(t),
+		CreatorID:        mustUUID(t),
+		WarehouseID:      mustUUID(t),
+		Platform:         appimporting.PlatformShopify,
+		PlatformOrderNo:  "#3003",
+		PlatformRefundID: "REFUND-MISSING-SKU",
+		Currency:         "CNY",
+		RefundDate:       time.Now().UTC(),
+		Lines: []appimporting.RefundLine{
+			{PlatformSKU: "NO-SUCH-SKU", Qty: decimal.NewFromInt(1), RefundAmount: decimal.NewFromFloat(10.00)},
+		},
+	})
+	if err == nil {
+		t.Fatal("expected error for unknown SKU, got nil")
+	}
+	if !strings.Contains(err.Error(), "not in import_sku_map") {
+		t.Errorf("expected 'not in import_sku_map' error, got: %v", err)
+	}
+}
+
+// ----- F06 fix tests --------------------------------------------------------
+
+// TestDryRun_OversellRow_PlatformSKUNonEmpty verifies the F06 fix:
+// OversellRow.PlatformSKU must not be empty in preview mode so the UI can
+// display "which SKU is out of stock" without requiring a separate lookup.
+func TestDryRun_OversellRow_PlatformSKUNonEmpty(t *testing.T) {
+	repo := newMockRepo()
+	creator := &mockCreator{}
+	approver := &mockApprover{}
+	checker := newMockStockChecker()
+	rater := newMockRater()
+
+	productID := mustUUID(t)
+	const wantSKU = "OVERSELL-SKU"
+	repo.addMapping("amazon", wantSKU, productID)
+	checker.qty[productID.String()] = decimal.NewFromInt(1) // only 1 in stock
+
+	uc := buildUseCase(repo, creator, approver, checker, rater)
+	csv := amazonCSV("ORD-OVERSELL," + wantSKU + ",5,20.00,CNY,2026-01-18")
+
+	result, err := uc.Execute(context.Background(), appimporting.ImportRequest{
+		TenantID:    uuid.New(),
+		CreatorID:   uuid.New(),
+		WarehouseID: uuid.New(),
+		Platform:    appimporting.PlatformAmazon,
+		CSVData:     csv,
+		DryRun:      true,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Oversells) != 1 {
+		t.Fatalf("expected 1 oversell row, got %d", len(result.Oversells))
+	}
+	got := result.Oversells[0].PlatformSKU
+	if got == "" {
+		t.Error("F06: OversellRow.PlatformSKU must not be empty in DryRun mode")
+	}
+	if got != wantSKU {
+		t.Errorf("F06: OversellRow.PlatformSKU got %q, want %q", got, wantSKU)
 	}
 }
 
