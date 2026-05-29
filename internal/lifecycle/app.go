@@ -34,6 +34,7 @@ import (
 	handlerreports "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/reports"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
 	handlersearch "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/search"
+	handlershopify "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/shopify"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlersupp "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/supplier"
 	handlertelemetry "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/telemetry"
@@ -58,6 +59,7 @@ import (
 	reporepl "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/replenish"
 	reporeports "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/reports"
 	reposearch "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/search"
+	reposhopify "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/shopify"
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
 	reposupplier "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/supplier"
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
@@ -79,6 +81,7 @@ import (
 	appreplenish "github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
 	appreports "github.com/hanmahong5-arch/lurus-tally/internal/app/reports"
 	appsearch "github.com/hanmahong5-arch/lurus-tally/internal/app/search"
+	appshopify "github.com/hanmahong5-arch/lurus-tally/internal/app/shopify"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	appsupp "github.com/hanmahong5-arch/lurus-tally/internal/app/supplier"
 	apptenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
@@ -588,6 +591,25 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// Mounted on the root engine so it bypasses the /api/v1 auth middleware.
 	shopifyHandler := BuildShopifyHandler(db, importUC, cfg.ShopifyWebhookSecret, l)
 	shopifyHandler.RegisterRoutes(r)
+
+	// /api/v1/shopify/shops — tenant-scoped shop-binding admin (auth-gated).
+	// Mounted via a dedicated /api/v1 group so the route inherits the same
+	// authMW + idempotencyMW stack that router.New attaches to its own group.
+	shopifyAdminGroup := r.Group("/api/v1")
+	if authMW != nil {
+		shopifyAdminGroup.Use(authMW)
+	}
+	if idempotencyMW != nil {
+		shopifyAdminGroup.Use(idempotencyMW)
+	}
+	shopRepo := newShopRepoAdapter(reposhopify.New(db))
+	whGetter := appwarehouse.NewGetByIDUseCase(whRepo)
+	shopifyAdminHandler := handlershopify.New(
+		appshopify.NewBindShopUseCase(shopRepo, appshopify.NewWarehouseCheckerAdapter(whGetter)),
+		appshopify.NewListShopsUseCase(shopRepo),
+		appshopify.NewUnbindShopUseCase(shopRepo),
+	)
+	shopifyAdminHandler.RegisterRoutes(shopifyAdminGroup)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.Port,
