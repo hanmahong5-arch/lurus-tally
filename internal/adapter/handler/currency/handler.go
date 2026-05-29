@@ -9,10 +9,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // Handler groups all currency and exchange rate Gin handlers.
@@ -107,7 +107,7 @@ func (h *Handler) CreateRate(c *gin.Context) {
 		return
 	}
 
-	rate, err := decimal.NewFromString(req.Rate)
+	rate, err := decimalutil.Parse(req.Rate, "rate")
 	if err != nil || rate.IsZero() || rate.IsNegative() {
 		c.JSON(http.StatusBadRequest, errResp("invalid_rate", "rate must be a positive decimal", ""))
 		return

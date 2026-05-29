@@ -122,6 +122,7 @@ func buildTestRouter(record RecordExecutor, getSnap *stubGetSnapshot, listSnaps 
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 			return
 		}
+		// TODO: surface parse error instead of silently defaulting to zero.
 		qty, _ := decimal.NewFromString(body.Qty)
 		uc, _ := decimal.NewFromString(body.UnitCost)
 

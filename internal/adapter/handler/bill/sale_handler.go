@@ -16,6 +16,7 @@ import (
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // SaleHandler groups all sale bill Gin handlers.
@@ -165,7 +166,7 @@ func (h *SaleHandler) Approve(c *gin.Context) {
 
 	paidAmount := decimal.Zero
 	if req.PaidAmount != "" {
-		paidAmount, err = decimal.NewFromString(req.PaidAmount)
+		paidAmount, err = decimalutil.Parse(req.PaidAmount, "paid_amount")
 		if err != nil {
 			c.JSON(http.StatusBadRequest, errResp("validation_error", "invalid paid_amount", ""))
 			return
@@ -376,7 +377,8 @@ func (h *SaleHandler) QuickCheckout(c *gin.Context) {
 		return
 	}
 
-	paidAmount, err := decimal.NewFromString(req.PaidAmount)
+	// TODO: surface parse error to caller instead of silently defaulting to zero.
+	paidAmount, err := decimalutil.Parse(req.PaidAmount, "paid_amount")
 	if err != nil {
 		paidAmount = decimal.Zero
 	}
@@ -481,7 +483,7 @@ func buildCreateSaleRequest(tenantID, creatorID uuid.UUID, req createSaleRequest
 
 	shippingFee := decimal.Zero
 	if req.ShippingFee != "" {
-		f, err := decimal.NewFromString(req.ShippingFee)
+		f, err := decimalutil.Parse(req.ShippingFee, "shipping_fee")
 		if err != nil {
 			return appbill.CreateSaleRequest{}, errWithField("shipping_fee", "must be a valid decimal")
 		}
@@ -490,7 +492,7 @@ func buildCreateSaleRequest(tenantID, creatorID uuid.UUID, req createSaleRequest
 
 	taxAmount := decimal.Zero
 	if req.TaxAmount != "" {
-		f, err := decimal.NewFromString(req.TaxAmount)
+		f, err := decimalutil.Parse(req.TaxAmount, "tax_amount")
 		if err != nil {
 			return appbill.CreateSaleRequest{}, errWithField("tax_amount", "must be a valid decimal")
 		}
@@ -522,13 +524,13 @@ func parseSaleItems(raw []saleItemInput) ([]appbill.SaleItem, error) {
 		if err != nil {
 			return nil, errWithField("items["+strconv.Itoa(i)+"].product_id", "must be a valid UUID")
 		}
-		qty, err := decimal.NewFromString(it.Qty)
+		qty, err := decimalutil.Parse(it.Qty, "qty")
 		if err != nil || qty.IsZero() || qty.IsNegative() {
 			return nil, errWithField("items["+strconv.Itoa(i)+"].qty", "must be a positive decimal")
 		}
 		unitPrice := decimal.Zero
 		if it.UnitPrice != "" {
-			unitPrice, err = decimal.NewFromString(it.UnitPrice)
+			unitPrice, err = decimalutil.Parse(it.UnitPrice, "unit_price")
 			if err != nil || unitPrice.IsNegative() {
 				return nil, errWithField("items["+strconv.Itoa(i)+"].unit_price", "must be a non-negative decimal")
 			}

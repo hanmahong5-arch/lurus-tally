@@ -13,6 +13,7 @@ import (
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // RecordMovementRequest is the canonical input type for recording a stock movement.
@@ -262,7 +263,7 @@ func convertToBase(qty decimal.Decimal, factor string) (decimal.Decimal, error) 
 	if factor == "" || factor == "1" {
 		return qty, nil
 	}
-	f, err := decimal.NewFromString(factor)
+	f, err := decimalutil.Parse(factor, "conversion_factor")
 	if err != nil {
 		return decimal.Zero, fmt.Errorf("invalid conversion factor %q: %w", factor, err)
 	}

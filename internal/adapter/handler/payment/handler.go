@@ -11,6 +11,7 @@ import (
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // Handler groups payment Gin handlers.
@@ -70,7 +71,7 @@ func (h *Handler) Record(c *gin.Context) {
 		return
 	}
 
-	amount, err := decimal.NewFromString(req.Amount)
+	amount, err := decimalutil.Parse(req.Amount, "amount")
 	if err != nil || amount.IsZero() || amount.IsNegative() {
 		c.JSON(http.StatusBadRequest, errResp("validation_error", "amount must be a positive decimal", ""))
 		return

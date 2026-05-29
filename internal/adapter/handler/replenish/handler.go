@@ -13,9 +13,10 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
+
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appreplenish "github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // ListSuggestionsUseCase is the surface the handler calls for GET suggestions.
@@ -171,7 +172,7 @@ func (h *Handler) PostDraftBatch(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "invalid product_id: " + l.ProductID})
 			return
 		}
-		qty, err := decimal.NewFromString(l.Qty)
+		qty, err := decimalutil.Parse(l.Qty, "qty")
 		if err != nil || qty.IsZero() || qty.IsNegative() {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "qty must be a positive number"})
 			return

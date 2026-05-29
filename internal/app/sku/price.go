@@ -12,6 +12,8 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
+
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // DefaultSKU is the minimal pricing view of a product's default SKU.
@@ -93,20 +95,20 @@ func ApplyAction(current decimal.Decimal, action string) (decimal.Decimal, error
 	switch {
 	case strings.HasSuffix(a, "%"):
 		numPart := strings.TrimSpace(strings.TrimSuffix(a, "%"))
-		pct, err := decimal.NewFromString(numPart)
+		pct, err := decimalutil.Parse(numPart, "percentage")
 		if err != nil {
 			return decimal.Zero, fmt.Errorf("invalid percentage action %q: %w", action, err)
 		}
 		factor := decimal.NewFromInt(1).Add(pct.Div(decimal.NewFromInt(100)))
 		result = current.Mul(factor)
 	case strings.HasPrefix(a, "="):
-		v, err := decimal.NewFromString(strings.TrimSpace(strings.TrimPrefix(a, "=")))
+		v, err := decimalutil.Parse(strings.TrimSpace(strings.TrimPrefix(a, "=")), "absolute_price")
 		if err != nil {
 			return decimal.Zero, fmt.Errorf("invalid absolute action %q: %w", action, err)
 		}
 		result = v
 	default:
-		v, err := decimal.NewFromString(a)
+		v, err := decimalutil.Parse(a, "delta")
 		if err != nil {
 			return decimal.Zero, fmt.Errorf("unrecognised price action %q (use '+5%%', '-10%%' or '=199.00')", action)
 		}

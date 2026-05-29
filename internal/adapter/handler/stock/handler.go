@@ -12,6 +12,7 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // Handler groups all stock REST handlers.
@@ -102,7 +103,7 @@ func (h *Handler) PostMovement(c *gin.Context) {
 		return
 	}
 
-	qty, err := decimal.NewFromString(req.Qty)
+	qty, err := decimalutil.Parse(req.Qty, "qty")
 	if err != nil || qty.IsZero() {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid qty: must be a non-zero decimal"})
 		return
@@ -110,7 +111,7 @@ func (h *Handler) PostMovement(c *gin.Context) {
 
 	unitCost := decimal.Zero
 	if req.UnitCost != "" {
-		unitCost, err = decimal.NewFromString(req.UnitCost)
+		unitCost, err = decimalutil.Parse(req.UnitCost, "unit_cost")
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid unit_cost: must be a decimal"})
 			return

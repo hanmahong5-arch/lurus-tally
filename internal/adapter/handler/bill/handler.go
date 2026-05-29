@@ -14,6 +14,7 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // Handler groups all purchase bill Gin handlers.
@@ -419,7 +420,7 @@ func buildCreateRequest(tenantID, creatorID uuid.UUID, req createRequest) (appbi
 
 	shippingFee := decimal.Zero
 	if req.ShippingFee != "" {
-		f, err := decimal.NewFromString(req.ShippingFee)
+		f, err := decimalutil.Parse(req.ShippingFee, "shipping_fee")
 		if err != nil {
 			return appbill.CreatePurchaseDraftRequest{}, errWithField("shipping_fee", "must be a valid decimal")
 		}
@@ -428,7 +429,7 @@ func buildCreateRequest(tenantID, creatorID uuid.UUID, req createRequest) (appbi
 
 	taxAmount := decimal.Zero
 	if req.TaxAmount != "" {
-		f, err := decimal.NewFromString(req.TaxAmount)
+		f, err := decimalutil.Parse(req.TaxAmount, "tax_amount")
 		if err != nil {
 			return appbill.CreatePurchaseDraftRequest{}, errWithField("tax_amount", "must be a valid decimal")
 		}
@@ -441,13 +442,13 @@ func buildCreateRequest(tenantID, creatorID uuid.UUID, req createRequest) (appbi
 		if err != nil {
 			return appbill.CreatePurchaseDraftRequest{}, errWithField("items["+strconv.Itoa(i)+"].product_id", "must be a valid UUID")
 		}
-		qty, err := decimal.NewFromString(it.Qty)
+		qty, err := decimalutil.Parse(it.Qty, "qty")
 		if err != nil || qty.IsZero() || qty.IsNegative() {
 			return appbill.CreatePurchaseDraftRequest{}, errWithField("items["+strconv.Itoa(i)+"].qty", "must be a positive decimal")
 		}
 		unitPrice := decimal.Zero
 		if it.UnitPrice != "" {
-			unitPrice, err = decimal.NewFromString(it.UnitPrice)
+			unitPrice, err = decimalutil.Parse(it.UnitPrice, "unit_price")
 			if err != nil || unitPrice.IsNegative() {
 				return appbill.CreatePurchaseDraftRequest{}, errWithField("items["+strconv.Itoa(i)+"].unit_price", "must be a non-negative decimal")
 			}
