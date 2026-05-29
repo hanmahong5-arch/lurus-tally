@@ -568,6 +568,10 @@ func NewApp(cfg *config.Config) (*App, error) {
 		importCurrencyRater{uc: appcurrency.NewGetRateUseCase(currencyRepo)},
 		"CNY",
 	)
+	importUC.WithReturnHandlers(
+		importReturnCreator{uc: appbill.NewCreateReturnBillUseCase(billRepo)},
+		importReturnApprover{uc: appbill.NewApproveReturnBillUseCase(billRepo, recordMovementUC)},
+	)
 	importHandler := handlerimporting.New(importUC, uuid.Nil)
 
 	// Wave-2 handlers — weekly digest (Req 9) + onboarding wizard (Req 7).

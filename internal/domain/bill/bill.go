@@ -31,8 +31,9 @@ const (
 type BillSubType string
 
 const (
-	BillSubTypePurchase BillSubType = "采购"
-	BillSubTypeSale     BillSubType = "销售"
+	BillSubTypePurchase   BillSubType = "采购"
+	BillSubTypeSale       BillSubType = "销售"
+	BillSubTypeSaleReturn BillSubType = "销售退货"
 )
 
 // ErrInvalidTransition is returned when the requested status transition is not allowed.

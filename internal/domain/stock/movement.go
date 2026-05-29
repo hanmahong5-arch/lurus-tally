@@ -37,6 +37,7 @@ type ReferenceType string
 const (
 	RefPurchase ReferenceType = "purchase"
 	RefSale     ReferenceType = "sale"
+	RefReturn   ReferenceType = "return"
 	RefAdjust   ReferenceType = "adjust"
 	RefTransfer ReferenceType = "transfer"
 	RefInit     ReferenceType = "init"
