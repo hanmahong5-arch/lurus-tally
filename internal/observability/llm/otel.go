@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"os"
+	"strconv"
 	"sync"
 	"time"
 
@@ -27,6 +28,11 @@ const (
 	envPublicKey = "LANGFUSE_PUBLIC_KEY"
 	// envSecretKey is the Langfuse secret key (used as OTLP basic-auth password).
 	envSecretKey = "LANGFUSE_SECRET_KEY"
+
+	// envSampleRatio controls the fraction of LLM spans that are exported.
+	// Valid range: 0.0 (none) to 1.0 (all). Values outside [0, 1] or
+	// non-numeric strings are silently treated as 1.0 (AlwaysSample).
+	envSampleRatio = "LLM_TRACE_SAMPLE_RATIO"
 
 	// maxAttrBytes is the maximum number of bytes stored for prompt/output
 	// span attributes. Langfuse persists these; keeping them bounded avoids
@@ -123,11 +129,38 @@ func buildProvider(host, pubKey, secKey, serviceName, serviceVersion string) (*s
 	tp := sdktrace.NewTracerProvider(
 		sdktrace.WithBatcher(exp),
 		sdktrace.WithResource(res),
-		// LLM calls are infrequent; sample 100% to get full coverage.
-		// Lower to ParentBased(TraceIDRatioBased(0.1)) if volume grows.
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+		sdktrace.WithSampler(parseSampler()),
 	)
 	return tp, nil
+}
+
+// parseSampler reads LLM_TRACE_SAMPLE_RATIO and returns the corresponding
+// sdktrace.Sampler. Invalid or absent values fall back to AlwaysSample so
+// the service starts safely without explicit configuration.
+//
+// Recommended values:
+//
+//	unset / "1.0"  — AlwaysSample (default; good for low-volume deployments)
+//	"0.1"          — sample 10 % of traces (high-throughput staging)
+//	"0.0"          — NeverSample  (disable tracing without removing env vars)
+func parseSampler() sdktrace.Sampler {
+	raw := os.Getenv(envSampleRatio)
+	if raw == "" {
+		return sdktrace.AlwaysSample()
+	}
+	ratio, err := strconv.ParseFloat(raw, 64)
+	if err != nil || ratio < 0 || ratio > 1 {
+		// Silent fallback: misconfigured ratio must not break the service.
+		return sdktrace.AlwaysSample()
+	}
+	switch {
+	case ratio >= 1.0:
+		return sdktrace.AlwaysSample()
+	case ratio <= 0.0:
+		return sdktrace.NeverSample()
+	default:
+		return sdktrace.ParentBased(sdktrace.TraceIDRatioBased(ratio))
+	}
 }
 
 // ShutdownOTelProvider flushes and shuts down the global TracerProvider.
@@ -149,7 +182,7 @@ func (o *otelTracer) StartLLMSpan(ctx context.Context, op, model, prompt string)
 		trace.WithAttributes(
 			attribute.String("llm.operation", op),
 			attribute.String("llm.model", model),
-			attribute.String("llm.prompt", truncate(prompt, maxAttrBytes)),
+			attribute.String("llm.prompt", Redact(truncate(prompt, maxAttrBytes))),
 		),
 	)
 	return &otelSpan{s: s, tracer: o.t}, ctx
@@ -170,7 +203,7 @@ func (sp *otelSpan) End(output string, tok TokenCount, err error) {
 		)
 	} else {
 		sp.s.SetAttributes(
-			attribute.String("llm.output", truncate(output, maxAttrBytes)),
+			attribute.String("llm.output", Redact(truncate(output, maxAttrBytes))),
 			attribute.Int("llm.tokens.prompt", tok.Prompt),
 			attribute.Int("llm.tokens.completion", tok.Completion),
 			attribute.Int("llm.tokens.total", tok.Total),
@@ -198,8 +231,8 @@ func (sp *otelSpan) AttachToolCall(name, argsJSON, resultJSON string) {
 		trace.WithSpanKind(trace.SpanKindInternal),
 		trace.WithAttributes(
 			attribute.String("llm.tool.name", name),
-			attribute.String("llm.tool.args", truncate(argsJSON, maxAttrBytes)),
-			attribute.String("llm.tool.result", truncate(resultJSON, maxAttrBytes)),
+			attribute.String("llm.tool.args", RedactJSON(truncate(argsJSON, maxAttrBytes))),
+			attribute.String("llm.tool.result", RedactJSON(truncate(resultJSON, maxAttrBytes))),
 		),
 	)
 	child.End()
