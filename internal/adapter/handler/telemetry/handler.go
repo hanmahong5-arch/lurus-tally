@@ -5,6 +5,7 @@
 package telemetry
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
@@ -14,11 +15,21 @@ import (
 	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
 )
 
+// DAURecorder records a per-user Daily-Active-User hit for an allow-listed
+// event. Implementations are fire-and-forget from the handler's perspective: a
+// returned error is surfaced via a response header but never blocks the 200
+// (telemetry must never break the caller). nil is a valid value — DAU counting
+// is simply skipped when Redis is unavailable.
+type DAURecorder interface {
+	Record(ctx context.Context, event, userID string) error
+}
+
 // Handler forwards web telemetry events into NATS.
 type Handler struct {
 	publisher     adapternats.Publisher
 	expectedKey   string
 	defaultTenant string
+	dau           DAURecorder
 }
 
 // New builds a telemetry handler.
@@ -28,11 +39,12 @@ type Handler struct {
 //   - expectedKey: bearer-token gate; "" disables auth (dev).
 //   - defaultTenant: used when the request omits a tenant id (e.g. when
 //     telemetry fires before login completes). Use "anonymous" in prod.
-func New(publisher adapternats.Publisher, expectedKey, defaultTenant string) *Handler {
+//   - dau: optional per-user DAU recorder; nil disables DAU counting.
+func New(publisher adapternats.Publisher, expectedKey, defaultTenant string, dau DAURecorder) *Handler {
 	if defaultTenant == "" {
 		defaultTenant = "anonymous"
 	}
-	return &Handler{publisher: publisher, expectedKey: expectedKey, defaultTenant: defaultTenant}
+	return &Handler{publisher: publisher, expectedKey: expectedKey, defaultTenant: defaultTenant, dau: dau}
 }
 
 // Register mounts POST /internal/v1/telemetry/web on the given gin engine.
@@ -43,6 +55,7 @@ func (h *Handler) Register(r *gin.Engine) {
 type webEvent struct {
 	Event    string         `json:"event"`
 	TenantID string         `json:"tenant_id,omitempty"`
+	UserID   string         `json:"user_id,omitempty"`
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
@@ -74,6 +87,16 @@ func (h *Handler) serve(c *gin.Context) {
 	// Count the event in Prometheus so the activation funnel is scrapable at
 	// /internal/v1/metrics even when NATS (the durable sink) is unavailable.
 	middleware.IncWebTelemetry(body.Event)
+
+	// Per-user DAU. body.UserID is the verified session subject injected by the
+	// Next /api/otel-events route — never client-trusted, so a blank id means
+	// "no session" and is skipped (an anonymous DAU is not a measurement).
+	// Best-effort: a Redis hiccup surfaces via a header but never blocks the 200.
+	if h.dau != nil && body.UserID != "" {
+		if err := h.dau.Record(c.Request.Context(), body.Event, body.UserID); err != nil {
+			c.Header("X-DAU-Status", "record-failed")
+		}
+	}
 
 	tenant := body.TenantID
 	if tenant == "" {

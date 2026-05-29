@@ -1,3 +1,4 @@
+import { auth } from "@/auth"
 import { NextResponse } from "next/server"
 
 /**
@@ -73,6 +74,15 @@ export async function POST(request: Request): Promise<NextResponse> {
   const backendUrl = process.env.TALLY_BACKEND_TELEMETRY_URL
   if (backendUrl) {
     const internalKey = process.env.PLATFORM_INTERNAL_KEY ?? ""
+    // Inject the *verified* server-side identity so the backend can build
+    // per-user DAU. Never trust a client-supplied id — telemetry fires from the
+    // browser and would be trivially spoofable. Omitted when there is no
+    // session (pre-login events) so the backend degrades to not-counted rather
+    // than attributing the hit to a fake user.
+    const session = await auth()
+    const identity: Record<string, string> = {}
+    if (session?.user?.id) identity.user_id = session.user.id
+    if (session?.user?.tenantId) identity.tenant_id = session.user.tenantId
     sinks.push(
       fetch(backendUrl, {
         method: "POST",
@@ -80,7 +90,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           "Content-Type": "application/json",
           ...(internalKey ? { Authorization: `Bearer ${internalKey}` } : {}),
         },
-        body: JSON.stringify({ event, metadata: attrs }),
+        body: JSON.stringify({ event, metadata: attrs, ...identity }),
       }).catch(() => undefined)
     )
   }

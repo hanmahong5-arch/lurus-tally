@@ -48,6 +48,7 @@ import (
 	repoauth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/auth"
 	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
+	repodau "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dau"
 	repodigest "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/digest"
 	repooutbox "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/event_outbox"
 	repohorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/horticulture"
@@ -95,6 +96,7 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/memorusclient"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -298,20 +300,27 @@ func NewApp(cfg *config.Config) (*App, error) {
 		l.Info("billing integration enabled")
 	}
 
-	// Wire AI assistant. Requires NEWAPI_API_KEY; when absent, AI routes return 501.
-	// rdb is hoisted so the readiness probe can ping it when AI is enabled. When
-	// AI is disabled, Redis is not opened at all and is not part of the readiness
-	// contract — degraded but bootable.
-	var (
-		aiHandler *handlerai.Handler
-		rdb       *redis.Client
-	)
-	if cfg.NewAPIKey != "" {
+	// Hoisted Redis client. Per-user DAU counting, the idempotency dedup layer,
+	// and the AI plan store all share one connection. Created whenever REDIS_URL
+	// is set (it is a required config field in production); nil only in degraded
+	// dev/test configs where REDIS_URL is blank — in that case DAU, idempotency,
+	// and AI all degrade gracefully rather than failing boot.
+	var rdb *redis.Client
+	if cfg.RedisURL != "" {
 		rdbOpts, rerr := redis.ParseURL(cfg.RedisURL)
 		if rerr != nil {
-			return nil, fmt.Errorf("lifecycle: cannot parse REDIS_URL for AI store: %w", rerr)
+			return nil, fmt.Errorf("lifecycle: cannot parse REDIS_URL: %w; check REDIS_URL", rerr)
 		}
 		rdb = redis.NewClient(rdbOpts)
+	}
+
+	// Wire AI assistant. Requires NEWAPI_API_KEY; when absent, AI routes return 501.
+	// The AI plan store reuses the hoisted Redis client above.
+	var aiHandler *handlerai.Handler
+	if cfg.NewAPIKey != "" {
+		if rdb == nil {
+			return nil, fmt.Errorf("lifecycle: AI assistant requires REDIS_URL (NEWAPI_API_KEY is set but Redis is unavailable)")
+		}
 		planTTL := time.Duration(cfg.AIPlanTTLSeconds) * time.Second
 		planStore := repoai.New(repoai.NewGoRedisAdapter(rdb), planTTL)
 
@@ -586,9 +595,30 @@ func NewApp(cfg *config.Config) (*App, error) {
 		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler, exportHandler, accountHandler,
 		replenishHandler, reportsHandler, searchHandler, importHandler, digestHandler, onboardingHandler)
 
+	// Per-user DAU (S0.C1). Backed by the hoisted Redis client; when Redis is
+	// absent the telemetry handler skips counting and the collector is not
+	// registered, so tally_*_dau report no data rather than a fabricated zero.
+	var dauRecorder handlertelemetry.DAURecorder
+	if rdb != nil {
+		dauStore := repodau.New(rdb)
+		dauRecorder = dauStore
+		// Expose tally_palette_invocation_dau / tally_ai_drawer_open_dau /
+		// tally_total_dau on /internal/v1/metrics (default Prometheus registry).
+		// Register (not MustRegister) and tolerate duplicate registration so
+		// repeated NewApp calls in tests don't panic.
+		dauCollector := handlermetrics.NewDAUCollector(dauStore, l)
+		if regErr := prometheus.Register(dauCollector); regErr != nil {
+			var already prometheus.AlreadyRegisteredError
+			if !errors.As(regErr, &already) {
+				l.Warn("dau collector registration failed; tally_*_dau will be absent",
+					slog.String("error", regErr.Error()))
+			}
+		}
+	}
+
 	// POST /internal/v1/telemetry/web — browser-side product telemetry → NATS
 	// PSI_TELEMETRY.web.* (S0.Q3). Bearer-gated via the same key as metrics.
-	telemetryHandler := handlertelemetry.New(natsPub, cfg.PlatformInternalKey, "anonymous")
+	telemetryHandler := handlertelemetry.New(natsPub, cfg.PlatformInternalKey, "anonymous", dauRecorder)
 	telemetryHandler.Register(r)
 
 	// POST /webhooks/shopify/orders — public (HMAC-verified) e-commerce ingest.

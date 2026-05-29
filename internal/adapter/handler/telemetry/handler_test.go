@@ -60,6 +60,25 @@ func (f *fakePublisher) PublishLowStockAlert(_ context.Context, _ string, _ adap
 }
 func (f *fakePublisher) Close() error { return nil }
 
+// fakeDAU records every Record call so tests can assert the handler forwards
+// (event, userID) exactly when a non-blank user id is present.
+type fakeDAU struct {
+	mu    sync.Mutex
+	calls []dauCall
+}
+
+type dauCall struct {
+	Event  string
+	UserID string
+}
+
+func (f *fakeDAU) Record(_ context.Context, event, userID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, dauCall{Event: event, UserID: userID})
+	return nil
+}
+
 func newRouter(h *telemetry.Handler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -82,7 +101,7 @@ func postJSON(t *testing.T, r *gin.Engine, body any, headers map[string]string) 
 
 func TestTelemetry_AllowListedEvent_PublishesToFake(t *testing.T) {
 	pub := &fakePublisher{}
-	h := telemetry.New(pub, "", "anonymous")
+	h := telemetry.New(pub, "", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{
@@ -108,7 +127,7 @@ func TestTelemetry_AllowListedEvent_PublishesToFake(t *testing.T) {
 
 func TestTelemetry_UnknownEvent_Returns400(t *testing.T) {
 	pub := &fakePublisher{}
-	h := telemetry.New(pub, "", "anonymous")
+	h := telemetry.New(pub, "", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{"event": "totally_bogus"}, nil)
@@ -122,7 +141,7 @@ func TestTelemetry_UnknownEvent_Returns400(t *testing.T) {
 
 func TestTelemetry_MissingTenant_FallsBackToDefault(t *testing.T) {
 	pub := &fakePublisher{}
-	h := telemetry.New(pub, "", "anonymous")
+	h := telemetry.New(pub, "", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{"event": "ai_drawer_open"}, nil)
@@ -136,7 +155,7 @@ func TestTelemetry_MissingTenant_FallsBackToDefault(t *testing.T) {
 
 func TestTelemetry_BearerAuth_RejectsBadKey(t *testing.T) {
 	pub := &fakePublisher{}
-	h := telemetry.New(pub, "real-secret", "anonymous")
+	h := telemetry.New(pub, "real-secret", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{"event": "cmd_z_used"}, map[string]string{
@@ -152,7 +171,7 @@ func TestTelemetry_BearerAuth_RejectsBadKey(t *testing.T) {
 
 func TestTelemetry_BearerAuth_AcceptsRightKey(t *testing.T) {
 	pub := &fakePublisher{}
-	h := telemetry.New(pub, "real-secret", "anonymous")
+	h := telemetry.New(pub, "real-secret", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{"event": "undo_used", "tenant_id": "t-1"}, map[string]string{
@@ -165,7 +184,7 @@ func TestTelemetry_BearerAuth_AcceptsRightKey(t *testing.T) {
 
 func TestTelemetry_PublishFailure_StillReturns200(t *testing.T) {
 	pub := &fakePublisher{publishErr: errPub}
-	h := telemetry.New(pub, "", "anonymous")
+	h := telemetry.New(pub, "", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{"event": "draft_restore", "tenant_id": "t-1"}, nil)
@@ -174,6 +193,42 @@ func TestTelemetry_PublishFailure_StillReturns200(t *testing.T) {
 	}
 	if rec.Header().Get("X-Telemetry-Status") != "publish-failed" {
 		t.Errorf("expected X-Telemetry-Status=publish-failed, got %q", rec.Header().Get("X-Telemetry-Status"))
+	}
+}
+
+func TestTelemetry_RecordsDAU_WhenUserIDPresent(t *testing.T) {
+	pub := &fakePublisher{}
+	rec := &fakeDAU{}
+	h := telemetry.New(pub, "", "anonymous", rec)
+	r := newRouter(h)
+
+	resp := postJSON(t, r, map[string]any{
+		"event":   "palette_invocation",
+		"user_id": "user-123",
+	}, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", resp.Code, resp.Body.String())
+	}
+	if len(rec.calls) != 1 {
+		t.Fatalf("expected 1 DAU record, got %d", len(rec.calls))
+	}
+	if rec.calls[0].Event != "palette_invocation" || rec.calls[0].UserID != "user-123" {
+		t.Errorf("DAU record = %+v, want palette_invocation/user-123", rec.calls[0])
+	}
+}
+
+func TestTelemetry_SkipsDAU_WhenUserIDEmpty(t *testing.T) {
+	pub := &fakePublisher{}
+	rec := &fakeDAU{}
+	h := telemetry.New(pub, "", "anonymous", rec)
+	r := newRouter(h)
+
+	resp := postJSON(t, r, map[string]any{"event": "ai_drawer_open"}, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("expected no DAU record for anonymous event, got %+v", rec.calls)
 	}
 }
 

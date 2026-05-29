@@ -103,8 +103,11 @@ h2_val="n/a"
 h2_status="inconclusive"
 
 # H3: Palette DAU penetration < 0.40 → falsified. Use the lower of palette / drawer ratio.
-palette_ratio=$(prom_query '(sum(increase(tally_palette_invocation_dau[1d])) or vector(0)) / (sum(increase(tally_total_dau[1d])) or vector(1))')
-drawer_ratio=$(prom_query '(sum(increase(tally_ai_drawer_open_dau[1d])) or vector(0)) / (sum(increase(tally_total_dau[1d])) or vector(1))')
+# tally_*_dau are gauges (today's HLL cardinality recomputed each scrape), so read
+# them directly — increase() over a gauge is meaningless. Denominator falls back to
+# 1 so an absent total never divides by zero.
+palette_ratio=$(prom_query '(tally_palette_invocation_dau or vector(0)) / (tally_total_dau or vector(1))')
+drawer_ratio=$(prom_query '(tally_ai_drawer_open_dau or vector(0)) / (tally_total_dau or vector(1))')
 if [ "$palette_ratio" = "n/a" ] && [ "$drawer_ratio" = "n/a" ]; then
   h3_val="n/a"
 else
