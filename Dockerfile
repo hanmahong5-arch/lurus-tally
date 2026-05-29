@@ -12,7 +12,10 @@ ARG BUILD_DATE=unknown
 ARG SOURCE_URL=https://github.com/hanmahong5-arch/lurus-tally
 RUN CGO_ENABLED=0 GOOS=linux go build \
     -ldflags="-s -w -X github.com/hanmahong5-arch/lurus-tally/internal/pkg/version.Version=${BUILD_VERSION}" \
-    -trimpath -o /tally-backend ./cmd/server
+    -trimpath -o /tally-backend ./cmd/server && \
+    CGO_ENABLED=0 GOOS=linux go build \
+    -ldflags="-s -w" \
+    -trimpath -o /kill-switch-monitor ./cmd/kill-switch-monitor
 
 # Stage 2: runtime (scratch — minimal attack surface, image < 15 MB)
 FROM scratch
@@ -21,6 +24,7 @@ ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
 COPY --from=builder /tally-backend /tally-backend
+COPY --from=builder /kill-switch-monitor /kill-switch-monitor
 LABEL org.opencontainers.image.source="https://github.com/hanmahong5-arch/lurus-tally" \
       org.opencontainers.image.revision="${VCS_REF}" \
       org.opencontainers.image.created="${BUILD_DATE}"

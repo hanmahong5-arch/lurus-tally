@@ -128,13 +128,43 @@ ASSUMPTIONS_FILE=_bmad-output/planning-artifacts/assumptions.md \
 
 ---
 
+## Deployment — Substitute Image Tag
+
+`cronjob-killswitch.yaml` uses `main-PLACEHOLDER` as the image tag.  Replace it
+before `kubectl apply`:
+
+**Option A — one-shot sed (manual deploy):**
+```bash
+SHA=$(git rev-parse --short HEAD)
+sed -i "s/main-PLACEHOLDER/main-${SHA}/" deploy/k8s/base/cronjob-killswitch.yaml
+kubectl apply -f deploy/k8s/base/cronjob-killswitch.yaml
+# Restore placeholder after apply so the file stays clean in git:
+sed -i "s/main-${SHA}/main-PLACEHOLDER/" deploy/k8s/base/cronjob-killswitch.yaml
+```
+
+**Option B — Kustomize overlay (recommended for R6 stage):**
+```yaml
+# deploy/k8s/overlays/stage/kustomization.yaml
+images:
+  - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
+    newTag: main-<sha7>   # filled by CI or operator
+```
+Then: `kubectl apply -k deploy/k8s/overlays/stage/`
+
+**Option C — ArgoCD ApplicationSet:** pass `sha7` as a generator param and
+render `newTag` in the Application spec.  The base YAML placeholder is never
+applied directly in this path.
+
+---
+
 ## Follow-up Items (owned by main-line)
 
-1. **Dockerfile** — add a second `go build` stage for `/kill-switch-monitor`.
-2. **Image tag** — replace `main-latest` in `cronjob-killswitch.yaml` with the
-   actual `main-<sha7>` tag once CI builds the new binary.
+1. ~~**Dockerfile** — add a second `go build` stage for `/kill-switch-monitor`.~~ ✅ Done.
+2. ~~**Image tag** — replace `main-latest` placeholder.~~ ✅ Done (`main-PLACEHOLDER`).
 3. **`tally-killswitch-secrets` Secret** — add Feishu webhook URL and/or
    SMTP credentials via Sealed Secrets or the existing secret injection path.
 4. **Volume strategy** — replace the `hostPath /data/repos/lurus-tally` mount
    with a git-sync sidecar or a CI-generated ConfigMap once live customer data
    starts flowing into `assumptions.md`.
+5. **ArgoCD ApplicationSet** — if adopting Option C above, add the `sha7`
+   generator param to the ApplicationSet template for R6 stage.

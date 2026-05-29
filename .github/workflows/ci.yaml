@@ -102,8 +102,10 @@ jobs:
           cache: true
       - name: Build backend binary
         run: CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o tally-backend ./cmd/server
+      - name: Build kill-switch-monitor binary
+        run: CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath -o kill-switch-monitor ./cmd/kill-switch-monitor
       - name: Verify binary
-        run: ls -lh tally-backend
+        run: ls -lh tally-backend kill-switch-monitor
       - name: Upload binary
         uses: actions/upload-artifact@v4
         with:

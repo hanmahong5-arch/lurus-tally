@@ -37,9 +37,14 @@ spec:
         spec:
           restartPolicy: OnFailure
           containers:
-            - name: killswitch
-              # CI replaces the tag with the actual main-<sha7> on each push.
-              image: ghcr.io/hanmahong5-arch/lurus-tally-backend:main-latest
+            - name: kill-switch-monitor
+              # PLACEHOLDER must be replaced before apply.  Options:
+              #   (a) sed: sed -i "s/main-PLACEHOLDER/main-$(git rev-parse --short HEAD)/" cronjob-killswitch.yaml
+              #   (b) Kustomize: use images[].newTag in an overlay kustomization.yaml
+              #   (c) ArgoCD ApplicationSet: pass sha7 via generators params
+              # Never kubectl apply this file with the literal string "main-PLACEHOLDER" —
+              # the pod will enter ImagePullBackOff until the tag is substituted.
+              image: ghcr.io/hanmahong5-arch/lurus-tally-backend:main-PLACEHOLDER
               imagePullPolicy: Always
               command: ["/kill-switch-monitor"]
               env:
