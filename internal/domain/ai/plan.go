@@ -15,6 +15,11 @@ const (
 	PlanStatusConfirmed PlanStatus = "confirmed"
 	PlanStatusCancelled PlanStatus = "cancelled"
 	PlanStatusExpired   PlanStatus = "expired"
+	// PlanStatusFailed marks plans whose execution started but encountered an
+	// unrecoverable error. The plan is terminal: the user must explicitly cancel
+	// it and request a fresh suggestion rather than retrying, because execution
+	// may have produced partial side effects that cannot be safely re-applied.
+	PlanStatusFailed PlanStatus = "failed"
 )
 
 // PlanType identifies which destructive operation a plan represents.

@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -237,12 +238,21 @@ func (h *Handler) ConfirmPlan(c *gin.Context) {
 
 	plan, result, err := h.orchestrator.ConfirmPlan(c.Request.Context(), tenantID, actorID, planID)
 	if err != nil {
-		switch err {
-		case appai.ErrPlanNotFound:
+		switch {
+		case errors.Is(err, appai.ErrPlanNotFound):
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "plan not found"})
 			return
-		case appai.ErrPlanExpired:
+		case errors.Is(err, appai.ErrPlanExpired):
 			c.JSON(http.StatusConflict, gin.H{"error": "plan_expired", "detail": "plan TTL elapsed; ask AI again to generate a fresh plan"})
+			return
+		case errors.Is(err, appai.ErrPlanExecutionFailed):
+			// Execution left the plan in Failed (terminal) state. Partial side effects
+			// may have already been applied, so a retry is unsafe. The user must cancel
+			// this plan and request a new suggestion.
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":  "execution_failed",
+				"detail": err.Error(),
+			})
 			return
 		}
 		c.JSON(http.StatusConflict, gin.H{"error": "conflict", "detail": err.Error()})

@@ -6,7 +6,6 @@ package reports
 import (
 	"context"
 	"fmt"
-	"math"
 	"sort"
 	"time"
 
@@ -360,21 +359,3 @@ func (uc *UseCase) SalesTop(ctx context.Context, tenantID uuid.UUID, metric stri
 	}, nil
 }
 
-// ── ROP helper (mirrors internal/app/ai/tools.go:computeROP) ─────────────────
-
-// computeROP calculates the Re-Order Point.
-// ROP = lead_time_days × avg_daily_sales + safety_stock
-// safety_stock = z × σ × √lead_time (z=1.65, σ = avg_daily_sales × 0.3)
-func computeROP(s StockRow) decimal.Decimal {
-	if s.AvgDailySales.IsZero() || s.LeadTimeDays == 0 {
-		return decimal.Zero
-	}
-	lt := decimal.NewFromInt(int64(s.LeadTimeDays))
-	z := decimal.NewFromFloat(1.65)
-	sigma := s.AvgDailySales.Mul(decimal.NewFromFloat(0.3))
-	sqrtLT := decimal.NewFromFloat(math.Sqrt(float64(s.LeadTimeDays)))
-	return lt.Mul(s.AvgDailySales).Add(z.Mul(sigma).Mul(sqrtLT))
-}
-
-// suppress unused-import lint when computeROP is referenced only by future callers.
-var _ = computeROP

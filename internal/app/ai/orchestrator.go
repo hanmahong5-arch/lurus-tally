@@ -392,12 +392,16 @@ func (o *Orchestrator) ConfirmPlan(ctx context.Context, tenantID, actorID, planI
 	result, execErr := o.executor.Execute(ctx, actorID, plan)
 	if execErr != nil {
 		o.recordAudit(ctx, actorID, plan, nil, execErr)
-		// Revert so the user can retry rather than seeing a confirmed-but-empty plan.
-		plan.Status = domainai.PlanStatusPending
-		if revertErr := o.planStore.UpdatePlan(ctx, plan); revertErr != nil {
-			return nil, nil, fmt.Errorf("confirm plan: execute failed (%v) and revert failed: %w", execErr, revertErr)
+		// Mark as Failed — a terminal state. Execution may have produced partial
+		// side effects (e.g. price rows already changed before a later row errors),
+		// so reverting to Pending and allowing an immediate retry is unsafe: a
+		// re-confirm could double-apply the successfully-executed portion.
+		// The user must cancel this plan and request a fresh suggestion.
+		plan.Status = domainai.PlanStatusFailed
+		if markErr := o.planStore.UpdatePlan(ctx, plan); markErr != nil {
+			return nil, nil, fmt.Errorf("confirm plan: execute failed (%v) and mark-failed: %w", execErr, markErr)
 		}
-		return nil, nil, fmt.Errorf("confirm plan: execute: %w", execErr)
+		return nil, nil, fmt.Errorf("confirm plan: %w: %w", ErrPlanExecutionFailed, execErr)
 	}
 	o.recordAudit(ctx, actorID, plan, result, nil)
 	return plan, result, nil
@@ -476,6 +480,11 @@ var ErrPlanNotFound = fmt.Errorf("plan not found")
 // passed. The handler maps this to 409 Conflict so the UI can prompt the user
 // to start a new turn rather than retrying blindly.
 var ErrPlanExpired = fmt.Errorf("plan expired")
+
+// ErrPlanExecutionFailed is returned when ConfirmPlan's executor call fails.
+// The plan is marked Failed (terminal); the handler maps this to 422 so the UI
+// knows not to offer a retry button — the user must cancel and start over.
+var ErrPlanExecutionFailed = fmt.Errorf("plan execution failed")
 
 // buildMessages assembles the full message list for the LLM.
 func buildMessages(in ChatInput) []llmclient.Message {

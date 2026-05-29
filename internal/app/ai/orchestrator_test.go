@@ -3,6 +3,8 @@ package ai_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -295,9 +297,10 @@ func TestConfirmPlan_WithExecutor_RunsAndReturnsResult(t *testing.T) {
 	}
 }
 
-// TestConfirmPlan_ExecutorFailure_RevertsToPending verifies that a failed
-// execution leaves the plan re-confirmable rather than confirmed-but-empty.
-func TestConfirmPlan_ExecutorFailure_RevertsToPending(t *testing.T) {
+// TestConfirmPlan_ExecutorFailure_MarksFailedNotPending verifies that a failed
+// execution leaves the plan in Failed (terminal) state rather than Pending.
+// This prevents unsafe retries when partial side effects may have been applied.
+func TestConfirmPlan_ExecutorFailure_MarksFailedNotPending(t *testing.T) {
 	store := newMockPlanStore()
 	tenantID, actorID, planID := uuid.New(), uuid.New(), uuid.New()
 	_ = store.SavePlan(context.Background(), pendingPlan(tenantID, planID, domainai.PlanTypeCreatePurchase))
@@ -309,9 +312,12 @@ func TestConfirmPlan_ExecutorFailure_RevertsToPending(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from failed execution")
 	}
+	if !errors.Is(err, appai.ErrPlanExecutionFailed) {
+		t.Errorf("err=%v, want errors.Is(ErrPlanExecutionFailed)", err)
+	}
 	persisted, _ := store.GetPlan(context.Background(), tenantID, planID)
-	if persisted.Status != domainai.PlanStatusPending {
-		t.Errorf("status=%s after failure, want Pending (retryable)", persisted.Status)
+	if persisted.Status != domainai.PlanStatusFailed {
+		t.Errorf("status=%s after failure, want Failed (terminal — not retryable)", persisted.Status)
 	}
 }
 
@@ -431,6 +437,127 @@ func TestPlanDomain_PlanPreview_SerializesCorrectly(t *testing.T) {
 	}
 	if decoded.Preview.SampleRows[0].Name != "Product A" {
 		t.Errorf("expected 'Product A', got %s", decoded.Preview.SampleRows[0].Name)
+	}
+}
+
+// threadSafePlanStore is a mutex-guarded plan store for concurrent tests.
+// It is intentionally separate from mockPlanStore (which has no concurrency
+// protection) so the race detector can validate the orchestrator itself.
+type threadSafePlanStore struct {
+	mu    sync.Mutex
+	plans map[string]*domainai.Plan
+}
+
+func newThreadSafePlanStore() *threadSafePlanStore {
+	return &threadSafePlanStore{plans: make(map[string]*domainai.Plan)}
+}
+
+func (s *threadSafePlanStore) SavePlan(_ context.Context, plan *domainai.Plan) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := *plan
+	s.plans[plan.ID.String()] = &cp
+	return nil
+}
+
+func (s *threadSafePlanStore) GetPlan(_ context.Context, _, planID uuid.UUID) (*domainai.Plan, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	p, ok := s.plans[planID.String()]
+	if !ok {
+		return nil, nil
+	}
+	cp := *p
+	return &cp, nil
+}
+
+func (s *threadSafePlanStore) UpdatePlan(_ context.Context, plan *domainai.Plan) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cp := *plan
+	s.plans[plan.ID.String()] = &cp
+	return nil
+}
+
+func (s *threadSafePlanStore) ListByTenant(_ context.Context, tenantID uuid.UUID, statusFilter string) ([]*domainai.Plan, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]*domainai.Plan, 0, len(s.plans))
+	for _, p := range s.plans {
+		if p.TenantID != tenantID {
+			continue
+		}
+		if statusFilter != "" && string(p.Status) != statusFilter {
+			continue
+		}
+		cp := *p
+		out = append(out, &cp)
+	}
+	return out, nil
+}
+
+// TestConfirmPlan_ExecutorFailure_ConcurrentRetry_TerminalState exercises the
+// race scenario from F13: T1 confirms and executor fails; concurrently T2 also
+// tries to confirm the same plan. After both goroutines complete the plan must
+// be in Failed (terminal) state — never back in Pending — so a third goroutine
+// cannot silently re-apply partially-executed side effects.
+func TestConfirmPlan_ExecutorFailure_ConcurrentRetry_TerminalState(t *testing.T) {
+	store := newThreadSafePlanStore()
+	tenantID, actorID, planID := uuid.New(), uuid.New(), uuid.New()
+	_ = store.SavePlan(context.Background(), pendingPlan(tenantID, planID, domainai.PlanTypeBulkStockAdjust))
+
+	// Both goroutines see an executor that always fails.
+	ex := &fakeExecutor{err: errFakeExec}
+	o := appai.NewOrchestrator(nil, nil, store, "").WithExecutor(ex)
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, _, errs[i] = o.ConfirmPlan(context.Background(), tenantID, actorID, planID)
+		}()
+	}
+	wg.Wait()
+
+	// At least one goroutine must have seen an error (executor always fails or
+	// second goroutine is rejected because plan is not Pending).
+	nonNilErrs := 0
+	for _, e := range errs {
+		if e != nil {
+			nonNilErrs++
+		}
+	}
+	if nonNilErrs == 0 {
+		t.Fatal("expected at least one goroutine to receive an error")
+	}
+
+	// Final plan state must be Failed (or the rejected goroutine saw Confirmed
+	// before the flip-to-Failed completed). It must NOT be Pending.
+	final, err := store.GetPlan(context.Background(), tenantID, planID)
+	if err != nil {
+		t.Fatalf("GetPlan: %v", err)
+	}
+	if final.Status == domainai.PlanStatusPending {
+		t.Errorf("plan returned to Pending after concurrent failure — unsafe retry window open")
+	}
+}
+
+// TestConfirmPlan_ExecutorFailure_ErrorIsSentinel verifies callers can
+// reliably detect execution failures via errors.Is(ErrPlanExecutionFailed).
+func TestConfirmPlan_ExecutorFailure_ErrorIsSentinel(t *testing.T) {
+	store := newMockPlanStore()
+	tenantID, actorID, planID := uuid.New(), uuid.New(), uuid.New()
+	_ = store.SavePlan(context.Background(), pendingPlan(tenantID, planID, domainai.PlanTypeCreatePurchase))
+
+	ex := &fakeExecutor{err: errFakeExec}
+	o := appai.NewOrchestrator(nil, nil, store, "").WithExecutor(ex)
+
+	_, _, err := o.ConfirmPlan(context.Background(), tenantID, actorID, planID)
+	if !errors.Is(err, appai.ErrPlanExecutionFailed) {
+		t.Errorf("expected errors.Is(err, ErrPlanExecutionFailed), got: %v", err)
 	}
 }
 
