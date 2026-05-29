@@ -4,10 +4,13 @@ import fs from "fs"
 
 const AUTH_FILE = path.join(__dirname, ".auth/user.json")
 
-const ZITADEL_USER = process.env.E2E_USER ?? "zitadel-admin@zitadel.auth.lurus.cn"
-const ZITADEL_PASS = process.env.E2E_PASS ?? "Lurus@ops"
+// Dev/E2E Credentials provider credentials.
+// AUTH_DEV_PROVIDER must be set to "true" in the test environment for this to
+// work. See playwright.config.ts env block and .env.example.
+const DEV_EMAIL = process.env.E2E_DEV_EMAIL ?? "uat@tally.test"
+const DEV_TENANT_ID = process.env.E2E_DEV_TENANT_ID ?? "00000000-0000-0000-0000-000000000001"
 
-test("authenticate via Zitadel", async ({ page }) => {
+test("authenticate via dev credentials provider", async ({ page }) => {
   fs.mkdirSync(path.dirname(AUTH_FILE), { recursive: true })
 
   page.on("console", (msg) => console.log(`[browser ${msg.type()}]`, msg.text()))
@@ -16,62 +19,60 @@ test("authenticate via Zitadel", async ({ page }) => {
     if (f === page.mainFrame()) console.log("[nav]", f.url())
   })
 
-  // 1. Tally /login page
-  console.log("→ goto /login")
-  await page.goto("/login", { waitUntil: "domcontentloaded" })
+  // 1. POST to NextAuth credentials sign-in endpoint directly.
+  //    This bypasses the /login page UI and avoids the OIDC redirect entirely,
+  //    which is exactly what we need for offline E2E runs (no Zitadel reachable).
+  console.log("→ signing in via dev credentials provider")
+
+  // NextAuth v5 sign-in via API route. We navigate to the credentials callback
+  // URL with a POST form — NextAuth handles setting the session cookie.
+  await page.goto("/api/auth/csrf")
+  const csrfData = await page.evaluate(async () => {
+    const res = await fetch("/api/auth/csrf")
+    return (await res.json()) as { csrfToken: string }
+  })
+  const csrfToken = csrfData.csrfToken
+  console.log("→ got csrf token")
+
+  // POST sign-in form to NextAuth credentials endpoint.
+  const signInResponse = await page.evaluate(
+    async ({ email, tenantId, csrf }) => {
+      const body = new URLSearchParams({
+        email,
+        tenantId,
+        csrfToken: csrf,
+        redirect: "false",
+        callbackUrl: "/dashboard",
+        json: "true",
+      })
+      const res = await fetch("/api/auth/callback/credentials", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+        credentials: "include",
+      })
+      return { status: res.status, url: res.url }
+    },
+    { email: DEV_EMAIL, tenantId: DEV_TENANT_ID, csrf: csrfToken },
+  )
+  console.log("→ sign-in response:", signInResponse.status, signInResponse.url)
+
+  // 2. Navigate to dashboard — should succeed if session cookie is set.
+  console.log("→ navigating to /dashboard")
+  await page.goto("/dashboard", { waitUntil: "domcontentloaded" })
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {})
 
-  // 2. Click "使用 Lurus 账户登录" — form server action triggers OIDC
-  const signInBtn = page.getByRole("button", { name: /使用.*登录|sign in|continue/i }).first()
-  await signInBtn.waitFor({ state: "visible", timeout: 10_000 })
-  console.log("→ click sign in")
-  await signInBtn.click()
-
-  // 3. Wait for Zitadel
-  await page.waitForURL((url) => url.host === "test-auth.lurus.cn", { timeout: 30_000 })
-  console.log("→ on Zitadel:", page.url())
-  await page.waitForLoadState("domcontentloaded")
-
-  // 4. Username
-  const userInput = page.locator('input[name="loginName"], input[type="email"]').first()
-  await userInput.waitFor({ state: "visible", timeout: 15_000 })
-  await userInput.fill(ZITADEL_USER)
-  console.log("→ filled username")
-  await page.keyboard.press("Enter")
-  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => {})
-
-  // 5. Password
-  const pwdInput = page.locator('input[name="password"], input[type="password"]').first()
-  await pwdInput.waitFor({ state: "visible", timeout: 15_000 })
-  await pwdInput.fill(ZITADEL_PASS)
-  console.log("→ filled password")
-  await page.keyboard.press("Enter")
-
-  // 6. Wait for return — handle MFA / consent loops
-  console.log("→ wait for tally-stage")
-  for (let i = 0; i < 20; i++) {
-    if (page.url().includes("tally-stage.lurus.cn")) break
-    const skip = page
-      .getByRole("button", { name: /skip|continue|allow|授权|继续|允许|跳过/i })
-      .first()
-    if (await skip.isVisible({ timeout: 1_000 }).catch(() => false)) {
-      const txt = await skip.textContent().catch(() => "")
-      console.log("→ click", txt)
-      await skip.click().catch(() => {})
-    }
-    await page.waitForTimeout(1_000)
-  }
-  await page.waitForURL((url) => url.host === "tally-stage.lurus.cn", { timeout: 30_000 })
-  console.log("→ back on tally:", page.url())
-
-  // 7. If on /setup, choose retail
+  // If middleware still redirected us (e.g., /setup for first-time users), skip.
   if (page.url().includes("/setup")) {
-    console.log("→ on /setup, choosing retail")
+    console.log("→ on /setup, choosing cross_border persona")
     await page.getByRole("button", { name: "选这个" }).first().click()
     await page.waitForURL(/\/(dashboard|products)/, { timeout: 30_000 })
   }
 
+  // 3. Persist storage state for all downstream specs.
   await page.context().storageState({ path: AUTH_FILE })
   console.log("→ auth saved:", AUTH_FILE)
-  await expect(page).toHaveURL(/tally-stage\.lurus\.cn/)
+
+  // Verify we are NOT on /login — the session must have been established.
+  await expect(page).not.toHaveURL(/\/login/)
 })

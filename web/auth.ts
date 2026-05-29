@@ -1,4 +1,5 @@
 import NextAuth from "next-auth"
+import Credentials from "next-auth/providers/credentials"
 import Zitadel from "next-auth/providers/zitadel"
 
 declare module "next-auth" {
@@ -26,6 +27,43 @@ declare module "next-auth" {
 // BACKEND_URL is the in-cluster service URL for tally-backend.
 // Falls back to the public domain only when running outside K8s.
 const BACKEND_URL = process.env.BACKEND_URL ?? "http://tally-backend:18200"
+
+// DEV_TENANT_ID is the fixed tenant used by the offline dev/E2E Credentials
+// provider. Choosing a predictable value lets E2E specs assert tenantId without
+// dynamic lookup.
+const DEV_TENANT_ID = "00000000-0000-0000-0000-000000000001"
+// DEV_USER_ID is the fixed user id returned by the dev provider. Predictable
+// value allows E2E specs to assert session.user.id without dynamic lookup.
+const DEV_USER_ID = "00000000-0000-0000-0000-000000000002"
+
+// devProviderEnabled checks the two required conditions before activating the
+// offline Credentials provider. Both must be true — neither alone is sufficient.
+// Production environments MUST never have this provider active regardless of
+// what env vars are present.
+//
+// Gate 1: AUTH_DEV_PROVIDER === "true"   — explicit opt-in
+// Gate 2: NODE_ENV !== "production"      — production hard-block
+//
+// If someone accidentally sets AUTH_DEV_PROVIDER=true in production, we emit a
+// console.error and refuse to activate the provider. This is a production-safety
+// red line — dev sessions must never work in production.
+function devProviderEnabled(): boolean {
+  const opted = process.env.AUTH_DEV_PROVIDER === "true"
+  if (!opted) return false
+
+  const isProd = process.env.NODE_ENV === "production"
+  if (isProd) {
+    // Production safety gate — refuse unconditionally and alert operators.
+    console.error(
+      "[auth] DANGER: AUTH_DEV_PROVIDER=true detected in production. " +
+        "The offline dev Credentials provider will NOT be activated. " +
+        "Remove AUTH_DEV_PROVIDER from your production environment immediately.",
+    )
+    return false
+  }
+
+  return true
+}
 
 // Profile cache TTL — re-fetch /api/v1/me at most once every 60s on session
 // access. We invalidate eagerly via NextAuth update() after /setup submit.
@@ -60,6 +98,35 @@ async function fetchMe(accessToken: string): Promise<MePayload | null> {
   }
 }
 
+// devCredentialsProvider returns an offline Credentials provider that accepts
+// any email + optional tenantId and issues a fixed dev session. This provider
+// is only included in the providers list when devProviderEnabled() returns true.
+// It does NOT call the backend — it is an entirely offline stub for UAT/E2E use.
+function devCredentialsProvider() {
+  return Credentials({
+    id: "credentials",
+    name: "Dev / E2E (offline)",
+    credentials: {
+      email: { label: "Email", type: "email" },
+      tenantId: { label: "Tenant ID", type: "text" },
+    },
+    async authorize(raw) {
+      const email = typeof raw?.email === "string" && raw.email ? raw.email : "dev@tally.test"
+      const tenantId =
+        typeof raw?.tenantId === "string" && raw.tenantId ? raw.tenantId : DEV_TENANT_ID
+
+      return {
+        // Fixed, predictable values so E2E assertions are deterministic.
+        id: DEV_USER_ID,
+        email,
+        name: "Dev User",
+        // Extra fields stored in the JWT via the jwt() callback below.
+        devTenantId: tenantId,
+      }
+    },
+  })
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
     Zitadel({
@@ -67,6 +134,10 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       issuer: process.env.ZITADEL_ISSUER ?? "https://auth.lurus.cn",
       // PKCE is enabled by default for Zitadel provider.
     }),
+    // Dev/E2E Credentials provider — conditionally appended. Production gate
+    // is enforced inside devProviderEnabled(); the provider is never present in
+    // the array unless both NODE_ENV !== "production" AND AUTH_DEV_PROVIDER=true.
+    ...(devProviderEnabled() ? [devCredentialsProvider()] : []),
   ],
   pages: {
     signIn: "/login",
@@ -77,8 +148,27 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     //   1. capture the access_token from the OIDC `account` (only present at sign-in)
     //   2. lazily fetch /api/v1/me to populate tenant/profile fields on the token
     //   3. refresh on explicit update() (post /setup submit)
-    async jwt({ token, account, profile, trigger }) {
+    async jwt({ token, account, profile, user, trigger }) {
       const t = token as Record<string, unknown>
+
+      // Dev/E2E offline path: Credentials provider sign-in.
+      // The `user` object from authorize() carries devTenantId; we detect this
+      // path by the absence of an OIDC account object.
+      const devUser = user as (typeof user & { devTenantId?: string }) | undefined
+      if (devUser?.devTenantId !== undefined) {
+        t.sub = typeof user?.id === "string" ? user.id : DEV_USER_ID
+        t.tenantId = devUser.devTenantId
+        t.profileType = "cross_border"
+        t.isFirstTime = false
+        t.role = "owner"
+        t.isOwner = true
+        t.profileFetchedAt = Date.now()
+        // No accessToken — dev sessions are offline; the session callback
+        // will leave accessToken undefined which is safe for E2E use.
+        return token
+      }
+
+      // Production OIDC path (Zitadel) — unchanged below this line.
 
       // First sign-in: capture sub + id_token from the OIDC account.
       // We use id_token (always JWT, OIDC standard) rather than access_token
