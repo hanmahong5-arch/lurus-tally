@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/currency"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // Repo implements appcurrency.CurrencyRepo.
@@ -148,9 +148,9 @@ func scanExchangeRate(row rowScanner) (*domain.ExchangeRate, error) {
 	if err != nil {
 		return nil, err
 	}
-	rate, err := decimal.NewFromString(rateStr)
+	rate, err := decimalutil.Parse(rateStr, "rate")
 	if err != nil {
-		return nil, fmt.Errorf("parse rate %q: %w", rateStr, err)
+		return nil, err
 	}
 	er.Rate = rate
 	return &er, nil
@@ -166,9 +166,9 @@ func scanExchangeRateRow(rows *sql.Rows) (*domain.ExchangeRate, error) {
 	if err != nil {
 		return nil, err
 	}
-	rate, err := decimal.NewFromString(rateStr)
+	rate, err := decimalutil.Parse(rateStr, "rate")
 	if err != nil {
-		return nil, fmt.Errorf("parse rate %q: %w", rateStr, err)
+		return nil, err
 	}
 	er.Rate = rate
 	return &er, nil

@@ -15,6 +15,7 @@ import (
 
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // ErrNotFound is returned when a required row does not exist.
@@ -112,9 +113,10 @@ func scanSnapshot(row *sql.Row) (*domain.Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stock repo: scan snapshot: %w", err)
 	}
-	s.OnHandQty, _ = decimal.NewFromString(onHand)
-	s.AvailableQty, _ = decimal.NewFromString(available)
-	s.UnitCost, _ = decimal.NewFromString(unitCost)
+	// TODO: these callers originally ignored parse errors; behaviour preserved.
+	s.OnHandQty, _ = decimalutil.Parse(onHand, "on_hand_qty")
+	s.AvailableQty, _ = decimalutil.Parse(available, "available_qty")
+	s.UnitCost, _ = decimalutil.Parse(unitCost, "unit_cost")
 	return &s, nil
 }
 
@@ -189,9 +191,10 @@ func (r *Repo) ListSnapshots(ctx context.Context, f appstock.ListSnapshotsFilter
 		); err != nil {
 			return nil, fmt.Errorf("stock repo: list snapshots scan: %w", err)
 		}
-		s.OnHandQty, _ = decimal.NewFromString(onHand)
-		s.AvailableQty, _ = decimal.NewFromString(available)
-		s.UnitCost, _ = decimal.NewFromString(unitCost)
+		// TODO: these callers originally ignored parse errors; behaviour preserved.
+		s.OnHandQty, _ = decimalutil.Parse(onHand, "on_hand_qty")
+		s.AvailableQty, _ = decimalutil.Parse(available, "available_qty")
+		s.UnitCost, _ = decimalutil.Parse(unitCost, "unit_cost")
 		snaps = append(snaps, s)
 	}
 	if err := rows.Err(); err != nil {
@@ -270,9 +273,10 @@ func (r *Repo) ListMovements(ctx context.Context, f appstock.MovementFilter) ([]
 		}
 		m.Direction = domain.Direction(dir)
 		m.ReferenceType = domain.ReferenceType(refType)
-		m.QtyBase, _ = decimal.NewFromString(qtyBase)
-		m.UnitCost, _ = decimal.NewFromString(unitCost)
-		m.TotalCost, _ = decimal.NewFromString(totalCost)
+		// TODO: these callers originally ignored parse errors; behaviour preserved.
+		m.QtyBase, _ = decimalutil.Parse(qtyBase, "qty_base")
+		m.UnitCost, _ = decimalutil.Parse(unitCost, "unit_cost")
+		m.TotalCost, _ = decimalutil.Parse(totalCost, "total_cost")
 		mvs = append(mvs, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -312,9 +316,10 @@ func (r *Repo) ListMovementsByReference(ctx context.Context, tenantID, reference
 		}
 		m.Direction = domain.Direction(dir)
 		m.ReferenceType = domain.ReferenceType(refType)
-		m.QtyBase, _ = decimal.NewFromString(qtyBase)
-		m.UnitCost, _ = decimal.NewFromString(unitCost)
-		m.TotalCost, _ = decimal.NewFromString(totalCost)
+		// TODO: these callers originally ignored parse errors; behaviour preserved.
+		m.QtyBase, _ = decimalutil.Parse(qtyBase, "qty_base")
+		m.UnitCost, _ = decimalutil.Parse(unitCost, "unit_cost")
+		m.TotalCost, _ = decimalutil.Parse(totalCost, "total_cost")
 		mvs = append(mvs, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -371,9 +376,10 @@ func (r *Repo) ListActiveLots(ctx context.Context, tx *sql.Tx, tenantID, product
 		); err != nil {
 			return nil, fmt.Errorf("stock repo: list active lots scan: %w", err)
 		}
-		l.Qty, _ = decimal.NewFromString(qty)
-		l.QtyRemaining, _ = decimal.NewFromString(qtyRem)
-		l.UnitCost, _ = decimal.NewFromString(unitCost)
+		// TODO: these callers originally ignored parse errors; behaviour preserved.
+		l.Qty, _ = decimalutil.Parse(qty, "qty")
+		l.QtyRemaining, _ = decimalutil.Parse(qtyRem, "qty_remaining")
+		l.UnitCost, _ = decimalutil.Parse(unitCost, "unit_cost")
 		lots = append(lots, l)
 	}
 	if err := rows.Err(); err != nil {

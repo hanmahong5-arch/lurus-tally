@@ -17,6 +17,7 @@ import (
 
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // ErrNotFound is returned when a bill_head row is not found.
@@ -210,11 +211,12 @@ func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
 	h.BillType = domain.BillType(billType)
 	h.SubType = domain.BillSubType(subType)
 	h.Status = domain.BillStatus(status)
-	h.Subtotal, _ = decimal.NewFromString(subtotal)
-	h.ShippingFee, _ = decimal.NewFromString(shippingFee)
-	h.TaxAmount, _ = decimal.NewFromString(taxAmount)
-	h.TotalAmount, _ = decimal.NewFromString(totalAmount)
-	h.PaidAmount, _ = decimal.NewFromString(paidAmount)
+	// TODO: these callers originally ignored parse errors; behaviour preserved.
+	h.Subtotal, _ = decimalutil.Parse(subtotal, "subtotal")
+	h.ShippingFee, _ = decimalutil.Parse(shippingFee, "shipping_fee")
+	h.TaxAmount, _ = decimalutil.Parse(taxAmount, "tax_amount")
+	h.TotalAmount, _ = decimalutil.Parse(totalAmount, "total_amount")
+	h.PaidAmount, _ = decimalutil.Parse(paidAmount, "paid_amount")
 	return &h, nil
 }
 
@@ -241,9 +243,10 @@ func (r *Repo) GetBillItems(ctx context.Context, tenantID, billID uuid.UUID) ([]
 		); err != nil {
 			return nil, fmt.Errorf("bill repo: scan item: %w", err)
 		}
-		it.Qty, _ = decimal.NewFromString(qty)
-		it.UnitPrice, _ = decimal.NewFromString(unitPrice)
-		it.LineAmount, _ = decimal.NewFromString(lineAmount)
+		// TODO: these callers originally ignored parse errors; behaviour preserved.
+		it.Qty, _ = decimalutil.Parse(qty, "qty")
+		it.UnitPrice, _ = decimalutil.Parse(unitPrice, "unit_price")
+		it.LineAmount, _ = decimalutil.Parse(lineAmount, "line_amount")
 		items = append(items, &it)
 	}
 	if err := rows.Err(); err != nil {
@@ -406,11 +409,12 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 		h.BillType = domain.BillType(billType)
 		h.SubType = domain.BillSubType(subType)
 		h.Status = domain.BillStatus(status)
-		h.Subtotal, _ = decimal.NewFromString(subtotal)
-		h.ShippingFee, _ = decimal.NewFromString(shippingFee)
-		h.TaxAmount, _ = decimal.NewFromString(taxAmount)
-		h.TotalAmount, _ = decimal.NewFromString(totalAmount)
-		h.PaidAmount, _ = decimal.NewFromString(paidAmount)
+		// TODO: these callers originally ignored parse errors; behaviour preserved.
+		h.Subtotal, _ = decimalutil.Parse(subtotal, "subtotal")
+		h.ShippingFee, _ = decimalutil.Parse(shippingFee, "shipping_fee")
+		h.TaxAmount, _ = decimalutil.Parse(taxAmount, "tax_amount")
+		h.TotalAmount, _ = decimalutil.Parse(totalAmount, "total_amount")
+		h.PaidAmount, _ = decimalutil.Parse(paidAmount, "paid_amount")
 		bills = append(bills, h)
 	}
 	if err := rows.Err(); err != nil {

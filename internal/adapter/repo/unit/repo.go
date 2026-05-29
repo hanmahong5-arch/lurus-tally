@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/unit"
 	"github.com/shopspring/decimal"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // ErrNotFound is returned when a unit_def row is not found.
@@ -130,7 +131,8 @@ func (r *Repo) GetConversionFactor(ctx context.Context, productID, unitID uuid.U
 	if err != nil {
 		return decimal.Zero, fmt.Errorf("unit repo: get conversion factor: %w", err)
 	}
-	f, _ := decimal.NewFromString(factor)
+	// TODO: originally ignored parse error; behaviour preserved.
+	f, _ := decimalutil.Parse(factor, "conversion_factor")
 	return f, nil
 }
 

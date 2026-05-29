@@ -14,6 +14,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	appsku "github.com/hanmahong5-arch/lurus-tally/internal/app/sku"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // DB abstracts the minimal database/sql surface needed by this repo.
@@ -62,8 +63,9 @@ func (r *Repo) ListDefaultSKUs(ctx context.Context, tenantID uuid.UUID, productI
 		if err := rows.Scan(&s.SKUID, &s.ProductID, &retailStr, &purchaseStr); err != nil {
 			return nil, fmt.Errorf("sku repo scan: %w", err)
 		}
-		s.RetailPrice, _ = decimal.NewFromString(retailStr)
-		s.PurchasePrice, _ = decimal.NewFromString(purchaseStr)
+		// TODO: these callers originally ignored parse errors; behaviour preserved.
+		s.RetailPrice, _ = decimalutil.Parse(retailStr, "retail_price")
+		s.PurchasePrice, _ = decimalutil.Parse(purchaseStr, "purchase_price")
 		out = append(out, s)
 	}
 	return out, rows.Err()

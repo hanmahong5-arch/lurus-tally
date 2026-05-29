@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
 	"github.com/shopspring/decimal"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // SQLProductRepo implements appai.ProductRepo using PostgreSQL.
@@ -144,9 +145,10 @@ func (r *SQLStockRepo) ListStockSnapshots(ctx context.Context, tenantID uuid.UUI
 			&qtyStr, &costStr, &s.LastMovedAt, &avgStr); err != nil {
 			return nil, fmt.Errorf("ai stock scan: %w", err)
 		}
-		s.Qty, _ = decimal.NewFromString(qtyStr)
-		s.UnitCost, _ = decimal.NewFromString(costStr)
-		s.AvgDailySales, _ = decimal.NewFromString(avgStr)
+		// TODO: these callers originally ignored parse errors; behaviour preserved.
+		s.Qty, _ = decimalutil.Parse(qtyStr, "on_hand_qty")
+		s.UnitCost, _ = decimalutil.Parse(costStr, "unit_cost")
+		s.AvgDailySales, _ = decimalutil.Parse(avgStr, "avg_daily_sales")
 		s.LeadTimeDays = 7 // default; per-product config deferred
 		out = append(out, s)
 	}
@@ -211,9 +213,10 @@ func (r *SQLSaleRepo) ListRecentSaleLines(ctx context.Context, tenantID uuid.UUI
 			&qtyStr, &revStr, &marginStr, &s.SoldAt); err != nil {
 			return nil, fmt.Errorf("ai sale scan: %w", err)
 		}
-		s.Qty, _ = decimal.NewFromString(qtyStr)
-		s.Revenue, _ = decimal.NewFromString(revStr)
-		s.Margin, _ = decimal.NewFromString(marginStr)
+		// TODO: these callers originally ignored parse errors; behaviour preserved.
+		s.Qty, _ = decimalutil.Parse(qtyStr, "qty")
+		s.Revenue, _ = decimalutil.Parse(revStr, "revenue")
+		s.Margin, _ = decimalutil.Parse(marginStr, "margin")
 		out = append(out, s)
 	}
 	return out, rows.Err()
@@ -247,9 +250,9 @@ func (r *SQLExchangeRateRepo) GetRate(ctx context.Context, tenantID uuid.UUID, f
 	if err != nil {
 		return decimal.Zero, fmt.Errorf("ai exchange rate %s→%s: %w", from, to, err)
 	}
-	rate, err := decimal.NewFromString(rateStr)
+	rate, err := decimalutil.Parse(rateStr, "rate")
 	if err != nil {
-		return decimal.Zero, fmt.Errorf("ai exchange rate parse: %w", err)
+		return decimal.Zero, err
 	}
 	return rate, nil
 }

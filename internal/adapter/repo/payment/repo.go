@@ -13,6 +13,7 @@ import (
 
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/payment"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
 // Repo implements apppayment.PaymentRepo.
@@ -132,9 +133,9 @@ func (r *Repo) SumByBill(ctx context.Context, tx *sql.Tx, tenantID, billID uuid.
 	if err := tx.QueryRowContext(ctx, q, billID, tenantID).Scan(&total); err != nil {
 		return decimal.Zero, fmt.Errorf("payment repo: sum by bill: %w", err)
 	}
-	d, err := decimal.NewFromString(total)
+	d, err := decimalutil.Parse(total, "amount")
 	if err != nil {
-		return decimal.Zero, fmt.Errorf("payment repo: parse sum: %w", err)
+		return decimal.Zero, err
 	}
 	return d, nil
 }
@@ -157,7 +158,8 @@ func scanPayment(rows *sql.Rows) (*domain.Payment, error) {
 		return nil, err
 	}
 	p.PayType = domain.PayType(payType)
-	p.Amount, _ = decimal.NewFromString(amount)
+	// TODO: originally ignored parse error; behaviour preserved.
+	p.Amount, _ = decimalutil.Parse(amount, "amount")
 	p.TotalAmount = p.Amount
 	if billNo.Valid {
 		p.BillNo = billNo.String
