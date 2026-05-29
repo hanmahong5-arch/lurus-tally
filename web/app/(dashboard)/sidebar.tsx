@@ -50,6 +50,7 @@ const SECTIONS: NavSection[] = [
       { href: "/suppliers", label: "供应商", icon: "🏭" },
       { href: "/warehouses", label: "仓库", icon: "🏪" },
       { href: "/units", label: "单位", icon: "📐", badge: "NEW" },
+      { href: "/settings/shopify", label: "Shopify 店铺", icon: "🛍️" },
       { href: "/account?tab=api-keys", label: "API 密钥", icon: "🔑" },
       { href: "/account?tab=subscription", label: "订阅", icon: "💰" },
       { href: "/dictionary", label: "苗木字典", icon: "🌿", industry: ["horticulture"] },
