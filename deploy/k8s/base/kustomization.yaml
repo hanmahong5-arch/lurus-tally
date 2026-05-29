@@ -11,3 +11,4 @@ resources:
   - service-web.yaml
   - ingressroute.yaml
   - cronjob-pgbackup.yaml
+  - cronjob-killswitch.yaml
