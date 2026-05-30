@@ -18,6 +18,10 @@ const VALID_EVENTS = new Set([
   "plan_accept_rate",
   "onboarding_first_po_exported",
   "cmd_z_used",
+  // North Star WAD: one increment per purchase-draft batch (see
+  // web/lib/telemetry.ts wad_increment). Missing here = 400-rejected =
+  // North Star never recorded.
+  "wad_increment",
 ])
 
 interface OtelEventPayload {

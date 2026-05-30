@@ -12,6 +12,8 @@ import {
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useTenantId } from "@/hooks/use-tenant-id"
 import { trackEvent } from "@/lib/telemetry"
+import { notifyFirstPoExported } from "@/components/onboarding/OnboardingWizard"
+import { extractApiError } from "@/lib/api/errors"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable, currencyCell } from "@/components/ui/data-table"
@@ -54,7 +56,7 @@ export default function ReplenishPage() {
         })
         .catch((e) => {
           if (isCancelled?.() || signal?.aborted) return
-          setError(String(e))
+          setError(extractApiError(e).message)
         })
         .finally(() => {
           if (isCancelled?.()) return
@@ -114,12 +116,23 @@ export default function ReplenishPage() {
       // North Star WAD telemetry — each batch-create counts once per draft.
       trackEvent("wad_increment", { draft_count: draftCount, line_count: totalLines })
 
+      // KS1 onboarding-completion trigger: a user's first PO draft IS the
+      // onboarding aha-moment ("生成第一张采购单", OnboardingWizard step 3).
+      // notifyFirstPoExported fires onboarding_first_po_exported exactly once
+      // and advances the wizard to "done", so this is a no-op on later drafts.
+      if (
+        typeof window !== "undefined" &&
+        localStorage.getItem("tally_onboarding_step") === "replenish"
+      ) {
+        notifyFirstPoExported()
+      }
+
       toast.success(
         `已生成 ${draftCount} 张采购草稿（按供应商拆单，共 ${totalLines} 行）→ 请前往"采购单管理"确认`
       )
       setSelected(new Set())
     } catch (e) {
-      toast.error(`草稿生成失败：${String(e)}`)
+      toast.error(`草稿生成失败：${extractApiError(e).message}`)
     } finally {
       setSubmitting(false)
     }

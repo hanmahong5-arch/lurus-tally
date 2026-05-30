@@ -122,8 +122,28 @@ h3_status=$(decide_status "$palette_ratio" "<0.40" "true")
 # IS a real 0% completion), but the DENOMINATOR has no fallback — with zero
 # signups the rate is undefined, so the query yields empty → "n/a", not a
 # fabricated 0 that would masquerade as "falsified".
+#
+# DEDUP CAVEAT (S7-5): tally_web_telemetry_total{event="onboarding_first_po_exported"}
+# is a raw EVENT counter with NO tenant label (see internal/adapter/middleware/
+# metrics.go: the counter is "always unlabelled by tenant"). One tenant exporting
+# twice therefore inflates the numerator above the distinct-tenant count and can
+# push this rate above 1.0 — a completion rate > 100% is impossible and signals
+# double-counting, not over-completion. A true distinct-tenant numerator needs a
+# tenant-keyed HLL gauge (e.g. tally_onboarding_first_po_export_tenants_d14),
+# which is a backend metrics change tracked as owner-gated. Until that exists,
+# detect the impossible case below and report it as inconclusive WITH a value
+# annotation, rather than emitting a clean-looking ratio that hides the bug.
+ks1_num=$(prom_query 'sum(tally_web_telemetry_total{event="onboarding_first_po_exported"}) or vector(0)')
+ks1_den=$(prom_query 'sum(tally_tenant_signups_total)')
 ks1_val=$(prom_query '(sum(tally_web_telemetry_total{event="onboarding_first_po_exported"}) or vector(0)) / sum(tally_tenant_signups_total)')
-ks1_status=$(decide_status "$ks1_val" "<0.40" "true")
+if [ "$ks1_val" != "n/a" ] && awk -v v="$ks1_val" 'BEGIN { exit !(v > 1.0) }'; then
+  # Ratio > 1.0 is impossible for a completion rate; the raw-event numerator
+  # has out-counted distinct signups → double-count inflation. Do NOT trust it.
+  ks1_status="inconclusive"
+  ks1_val="event-count>signups (num=${ks1_num}/den=${ks1_den}); needs distinct-tenant numerator"
+else
+  ks1_status=$(decide_status "$ks1_val" "<0.40" "true")
+fi
 
 # KS2: AI-plan adoption rate = confirmed / all decisions. Falsified < 0.20.
 # Same honesty rule: numerator (accepted="1") falls back to 0, denominator does

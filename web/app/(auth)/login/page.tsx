@@ -2,6 +2,36 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { signIn } from "@/auth"
 
+/**
+ * loginErrorMessage maps a NextAuth/Zitadel signin error CODE (the raw
+ * `?error=` query value) to a user-readable Chinese message. Paying users must
+ * never see a machine code like "OAuthCallbackError" or "Configuration"; any
+ * unrecognized code falls back to a generic message rather than being echoed.
+ *
+ * Codes per NextAuth v5 SignInPageErrorParam + common OAuth provider errors.
+ */
+function loginErrorMessage(code: string): string {
+  switch (code) {
+    case "Configuration":
+      return "登录服务暂时不可用，请稍后再试或联系支持。"
+    case "AccessDenied":
+      return "你的账户没有访问权限，请联系管理员开通。"
+    case "Verification":
+      return "登录链接已失效，请重新发起登录。"
+    case "OAuthSignin":
+    case "OAuthCallbackError":
+    case "OAuthCallback":
+    case "Callback":
+      return "登录过程中断，请重新点击登录。"
+    case "OAuthAccountNotLinked":
+      return "该邮箱已用其他方式注册，请使用原有方式登录。"
+    case "SessionRequired":
+      return "请先登录后再继续。"
+    default:
+      return "登录失败，请重新尝试；若反复失败请联系支持。"
+  }
+}
+
 export default function LoginPage({
   searchParams,
 }: {
@@ -25,7 +55,7 @@ export default function LoginPage({
           </p>
           {error ? (
             <p className="text-center text-sm text-red-500">
-              登录失败：{error}
+              {loginErrorMessage(error)}
             </p>
           ) : null}
           <form

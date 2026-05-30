@@ -11,24 +11,40 @@ import (
 )
 
 // parseAssumptions reads the assumptions.md file and extracts kill-switch
-// signal snapshots from the status history table.
+// signal snapshots from the "状态历史" table.
 //
-// The expected table format (from assumptions.md):
+// The table header (assumptions.md § 状态历史) declares 11 columns:
 //
-//	| 日期       | H1 status | H1 current_value | H2 status | ... |
-//	|---|---|---|---|---|
-//	| 2026-05-18 | pending   | —                | pending   | ... |
+//	| 日期 | H1 status | H1 current_value | H2 status | H2 current_value |
+//	  H3 status | H3 current_value | KS1 status | KS1 value | KS2 status | KS2 value |
 //
-// Column mapping → Signal:
+// Column index (0-based) → field:
 //
-//	H1 status → ks1_onboarding_rate    (threshold 0.40, lt)
-//	H2 status → ks2_ai_po_order_rate   (threshold 0.20, lt)
-//	H3 status → ks3_trial_conversion   (threshold 0.30, lt)
+//	[0] date  [1] H1 status  [3] H2 status  [5] H3 status
+//	[7] KS1 status  [9] KS2 status
 //
-// A status value of "falsified" is treated as a breach (value = 0).
-// "truthy" is treated as green (value = 1). "pending" / "inconclusive" /
-// "—" / "n/a" yield 0 (breach) because they indicate data is not yet
-// confirming the hypothesis.
+// The H1/H2/H3 statuses are PRODUCT-hypothesis falsification signals and are
+// distinct from the KS1/KS2/KS3 kill switches. The kill-switch monitor must
+// read the dedicated KS columns ([7]/[9]) written by bin/assumption-snapshot.sh,
+// NOT the H1/H2/H3 columns. KS3 (trial→paid conversion) has no column in this
+// table yet — it lives in lurus-platform subscriptions and is intentionally
+// omitted (see bin/assumption-snapshot.sh KS3 note), so this parser does not
+// fabricate a ks3 signal from H3.
+//
+// Older rows predate the KS columns and carry only 7 cells; for those rows the
+// KS signals are simply absent (no reading), which is the honest representation.
+//
+// Per-status mapping is delegated to statusToValue:
+//
+//	"truthy"    → real reading 1.0 (green)
+//	"falsified" → real reading 0.0 (breach)
+//	"inconclusive" / "pending" / "n/a" / "—" / unknown → NO reading
+//
+// Signals with no reading are NOT appended to the snapshot. The evaluator
+// treats absent signals as neither red nor green (no streak start, no reset),
+// which matches the assumptions.md protocol: inconclusive is only treated as
+// falsified after a human-reviewed 1-sprint extension, not immediately by the
+// daily monitor.
 //
 // Returns an empty slice (not an error) when the file exists but contains
 // no parseable rows — the caller falls back to mock data with a WARN log.
@@ -43,7 +59,13 @@ func parseAssumptions(path string) ([]alert.Snapshot, error) {
 	const (
 		thresholdKS1 = 0.40
 		thresholdKS2 = 0.20
-		thresholdKS3 = 0.30
+	)
+
+	// Column indices in the 状态历史 table (see doc comment above).
+	const (
+		colDate = 0
+		colKS1  = 7 // "KS1 status"
+		colKS2  = 9 // "KS2 status"
 	)
 
 	var snapshots []alert.Snapshot
@@ -80,46 +102,45 @@ func parseAssumptions(path string) ([]alert.Snapshot, error) {
 			continue
 		}
 
-		// Data row: | 2026-05-18 | pending | — | pending | — | pending | — |
+		// Data row: | 2026-05-18 | pending | — | ... | KS1 status | KS1 val | KS2 status | KS2 val |
 		cols := splitTableRow(line)
-		if len(cols) < 7 {
+		// Need at least the date column to identify a data row; KS columns
+		// may be absent on older (7-cell) rows and are handled per-signal.
+		if len(cols) <= colDate {
 			continue
 		}
 
-		dateStr := strings.TrimSpace(cols[0])
+		dateStr := strings.TrimSpace(cols[colDate])
 		date, err := time.Parse(time.DateOnly, dateStr)
 		if err != nil {
 			continue // not a data row
 		}
 
-		h1Status := strings.TrimSpace(cols[1])
-		h2Status := strings.TrimSpace(cols[3])
-		h3Status := strings.TrimSpace(cols[5])
-
-		snap := alert.Snapshot{
-			Date: date,
-			Signals: []alert.Signal{
-				{
-					Name:      "ks1_onboarding_rate",
-					Value:     statusToValue(h1Status),
-					Threshold: thresholdKS1,
-					Direction: alert.DirectionLT,
-				},
-				{
-					Name:      "ks2_ai_po_order_rate",
-					Value:     statusToValue(h2Status),
-					Threshold: thresholdKS2,
-					Direction: alert.DirectionLT,
-				},
-				{
-					Name:      "ks3_trial_conversion",
-					Value:     statusToValue(h3Status),
-					Threshold: thresholdKS3,
-					Direction: alert.DirectionLT,
-				},
-			},
+		// Read the dedicated KS columns. A signal is appended only when its
+		// column exists AND statusToValue reports a real reading; otherwise it
+		// is left absent (no breach, no streak reset).
+		var signals []alert.Signal
+		if v, ok := statusAt(cols, colKS1); ok {
+			signals = append(signals, alert.Signal{
+				Name:      "ks1_onboarding_rate",
+				Value:     v,
+				Threshold: thresholdKS1,
+				Direction: alert.DirectionLT,
+			})
 		}
-		snapshots = append(snapshots, snap)
+		if v, ok := statusAt(cols, colKS2); ok {
+			signals = append(signals, alert.Signal{
+				Name:      "ks2_ai_po_order_rate",
+				Value:     v,
+				Threshold: thresholdKS2,
+				Direction: alert.DirectionLT,
+			})
+		}
+		// ks3_trial_conversion is intentionally not derived here: it has no
+		// column in this table (see doc comment). Emitting it would fabricate
+		// a perpetual breach from missing data.
+
+		snapshots = append(snapshots, alert.Snapshot{Date: date, Signals: signals})
 	}
 
 	if err := scanner.Err(); err != nil {
@@ -139,24 +160,41 @@ func splitTableRow(line string) []string {
 	return parts
 }
 
+// statusAt reads cols[idx] (if present) and maps it through statusToValue.
+// Returns ok=false when the column is out of range or the status carries no
+// real reading.
+func statusAt(cols []string, idx int) (float64, bool) {
+	if idx >= len(cols) {
+		return 0, false
+	}
+	return statusToValue(strings.TrimSpace(cols[idx]))
+}
+
 // statusToValue converts an assumptions.md status string to a numeric signal
-// value for breach detection.
+// value for breach detection. The second return value reports whether the
+// status represents a *real reading*; a false value means "no data — skip
+// this signal for this day" (the evaluator then treats it as absent, neither
+// red nor green).
 //
-// Mapping rationale:
-//   - "truthy"      → 1.0  (green: hypothesis confirmed for this period)
-//   - "falsified"   → 0.0  (red: hypothesis falsified)
-//   - "pending"     → 0.0  (treated as breach: no data yet, assume worst-case
-//     until evidence arrives)
-//   - "inconclusive"→ 0.0  (per evaluation protocol: inconclusive extended
-//     1 sprint is then treated as falsified)
-//   - "—" / "n/a"  → 0.0  (no data — conservative default)
-func statusToValue(status string) float64 {
-	switch strings.ToLower(status) {
+// Mapping rationale (see assumptions.md § 评分约定):
+//   - "truthy"      → (1.0, true)   green: hypothesis confirmed for this period
+//   - "falsified"   → (0.0, true)   red: hypothesis falsified → counts as breach
+//   - "inconclusive"→ (_, false)    NOT yet falsified — protocol says it only
+//     becomes falsified after a human-reviewed 1-sprint extension, so the
+//     daily monitor must not treat it as a breach.
+//   - "pending"     → (_, false)    no data yet — not a breach.
+//   - "n/a" / "—"   → (_, false)    no data — not a breach.
+//   - anything else → (_, false)    unknown status — fail safe to no-reading
+//     rather than fabricating a breach.
+func statusToValue(status string) (float64, bool) {
+	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "truthy":
-		return 1.0
+		return 1.0, true
+	case "falsified":
+		return 0.0, true
 	default:
-		// falsified, pending, inconclusive, —, n/a, or anything unknown.
-		return 0.0
+		// inconclusive, pending, n/a, —, empty, or anything unknown: no reading.
+		return 0, false
 	}
 }
 

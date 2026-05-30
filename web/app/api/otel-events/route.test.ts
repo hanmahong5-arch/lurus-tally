@@ -66,6 +66,8 @@ describe("POST /api/otel-events", () => {
     "plan_accept_rate",
     "onboarding_first_po_exported",
     "cmd_z_used",
+    // North Star WAD: was previously absent from VALID_EVENTS → 400-rejected.
+    "wad_increment",
   ]) {
     it(`S0.Q3: accepts ${event}`, async () => {
       const res = await callRoute({ event, metadata: { sample: "value" } })

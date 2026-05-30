@@ -126,6 +126,33 @@ func TestTelemetry_AllowListedEvent_PublishesToFake(t *testing.T) {
 	}
 }
 
+// TestTelemetry_WADIncrement_PublishesToFake locks in the North Star fix:
+// before this change wad_increment was NOT in AllowedWebTelemetryEvents, so
+// the gate 400-rejected it and the North Star metric was never recorded.
+// This asserts the 400→200 behavior change via a real HTTP round-trip (the
+// assertion path is independent of the allow-list map definition).
+func TestTelemetry_WADIncrement_PublishesToFake(t *testing.T) {
+	pub := &fakePublisher{}
+	h := telemetry.New(pub, "", "anonymous", nil)
+	r := newRouter(h)
+
+	rec := postJSON(t, r, map[string]any{
+		"event":     "wad_increment",
+		"tenant_id": "t-1",
+		"metadata":  map[string]any{"draft_count": 2, "line_count": 5},
+	}, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("wad_increment status = %d body = %s (regression: WAD event rejected by allow-list)", rec.Code, rec.Body.String())
+	}
+	if len(pub.calls) != 1 {
+		t.Fatalf("expected 1 publish for wad_increment, got %d", len(pub.calls))
+	}
+	if pub.calls[0].Event != "wad_increment" {
+		t.Errorf("publish event = %q, want wad_increment", pub.calls[0].Event)
+	}
+}
+
 func TestTelemetry_UnknownEvent_Returns400(t *testing.T) {
 	pub := &fakePublisher{}
 	h := telemetry.New(pub, "", "anonymous", nil)
