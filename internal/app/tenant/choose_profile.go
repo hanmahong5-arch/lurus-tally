@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	repoTenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/tenant"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
@@ -130,6 +131,11 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 		// Should never happen — Bootstrap committed but profile not found.
 		return nil, fmt.Errorf("choose profile: bootstrap succeeded but profile not found")
 	}
+
+	// KS1 denominator: one signup per brand-new tenant. Counted only on this
+	// created path — returning-user logins fall through the mapping branch
+	// above and never reach here, so the tally stays a true signup count.
+	middleware.IncTenantSignup(string(pt))
 
 	// Provisioning: register the user on lurus-platform so wallet /
 	// subscription / VIP records exist from the very first login. Failure

@@ -11,6 +11,7 @@ import (
 	appTenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/tenant"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // stubUpserter records calls and lets tests inject failures. Mirrors the
@@ -301,6 +302,56 @@ func TestChooseProfile_NilUpserter_NoOp(t *testing.T) {
 		ProfileType: "retail",
 	}); err != nil {
 		t.Fatalf("nil upserter must be a no-op, not an error: %v", err)
+	}
+}
+
+// tenantSignupValue reads tally_tenant_signups_total{profile_type=<v>} from the
+// default registry. The middleware counter is unexported, so the test compares
+// a before/after delta rather than an absolute value.
+func tenantSignupValue(t *testing.T, profileType string) float64 {
+	t.Helper()
+	fams, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	for _, mf := range fams {
+		if mf.GetName() != "tally_tenant_signups_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "profile_type" && l.GetValue() == profileType {
+					return m.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// TestChooseProfile_FreshUser_CountsSignupOnce verifies the KS1 denominator
+// increments exactly once for a brand-new tenant and does NOT increment again
+// when the same user logs back in (idempotent returning path).
+func TestChooseProfile_FreshUser_CountsSignupOnce(t *testing.T) {
+	store := newStubBootstrapStore()
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+	in := appTenant.ChooseProfileInput{ZitadelSub: "sub-signup-001", ProfileType: "retail"}
+
+	before := tenantSignupValue(t, "retail")
+
+	if _, err := uc.Execute(context.Background(), in); err != nil {
+		t.Fatalf("fresh execute: %v", err)
+	}
+	if got := tenantSignupValue(t, "retail") - before; got != 1 {
+		t.Fatalf("signup delta after fresh bootstrap = %v, want 1", got)
+	}
+
+	// Returning user, same profile → idempotent no-op, must not double-count.
+	if _, err := uc.Execute(context.Background(), in); err != nil {
+		t.Fatalf("returning execute: %v", err)
+	}
+	if got := tenantSignupValue(t, "retail") - before; got != 1 {
+		t.Errorf("signup delta after returning login = %v, want 1 (no double count)", got)
 	}
 }
 

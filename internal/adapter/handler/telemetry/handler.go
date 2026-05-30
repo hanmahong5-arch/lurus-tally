@@ -88,6 +88,15 @@ func (h *Handler) serve(c *gin.Context) {
 	// /internal/v1/metrics even when NATS (the durable sink) is unavailable.
 	middleware.IncWebTelemetry(body.Event)
 
+	// KS2 — split the AI-plan decision by outcome so the adoption rate is
+	// computable (accepted=1 / sum). The FE sends metadata.accepted ∈ {"1","0"}
+	// (PlanCard confirm/cancel); a non-string or missing value normalizes to
+	// "unknown" inside IncPlanAccept. Fire-and-forget like the rest of telemetry.
+	if body.Event == "plan_accept_rate" {
+		accepted, _ := body.Metadata["accepted"].(string)
+		middleware.IncPlanAccept(accepted)
+	}
+
 	// Per-user DAU. body.UserID is the verified session subject injected by the
 	// Next /api/otel-events route — never client-trusted, so a blank id means
 	// "no session" and is skipped (an anonymous DAU is not a measurement).

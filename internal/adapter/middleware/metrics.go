@@ -62,6 +62,32 @@ var webTelemetry = prometheus.NewCounterVec(
 	[]string{"event"},
 )
 
+// planAccept counts AI-plan confirm/cancel decisions split by outcome so the
+// KS2 kill-switch (AI suggestion adoption rate) is computable as
+// tally_plan_accept_total{accepted="1"} / sum(tally_plan_accept_total).
+// The label is bounded to {"1","0","unknown"} by IncPlanAccept — never the
+// raw client value — so cardinality stays fixed regardless of payload drift.
+var planAccept = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "tally_plan_accept_total",
+		Help: "AI plan decisions, by accepted (1=confirmed|0=cancelled|unknown). KS2 = accepted=1 / sum.",
+	},
+	[]string{"accepted"},
+)
+
+// tenantSignups is the authoritative onboarding denominator: one increment per
+// brand-new tenant bootstrap (not per login). KS1 onboarding-completion rate =
+// tally_web_telemetry_total{event="onboarding_first_po_exported"} / sum(tally_tenant_signups_total).
+// Labelled by profile_type (cross_border|retail|horticulture) — bounded
+// cardinality — so signups can also be sliced by persona.
+var tenantSignups = prometheus.NewCounterVec(
+	prometheus.CounterOpts{
+		Name: "tally_tenant_signups_total",
+		Help: "Brand-new tenant bootstraps, by profile_type. KS1 denominator.",
+	},
+	[]string{"profile_type"},
+)
+
 func init() {
 	prometheus.MustRegister(idempotencySkipped)
 
@@ -143,6 +169,8 @@ func init() {
 		aiPlanExecuted,
 		wadTotal,
 		webTelemetry,
+		planAccept,
+		tenantSignups,
 	)
 }
 
@@ -217,6 +245,27 @@ func IncWAD(tenantID string) {
 // telemetry event (event name must already be allow-listed by the caller).
 func IncWebTelemetry(event string) {
 	webTelemetry.WithLabelValues(event).Inc()
+}
+
+// IncPlanAccept records one AI-plan decision for KS2. The accepted argument is
+// normalized at this boundary to one of {"1","0","unknown"} so an unexpected
+// or missing client value can never explode the metric's label cardinality.
+func IncPlanAccept(accepted string) {
+	switch accepted {
+	case "1", "0":
+		// keep as-is
+	default:
+		accepted = "unknown"
+	}
+	planAccept.WithLabelValues(accepted).Inc()
+}
+
+// IncTenantSignup records one brand-new tenant bootstrap for the KS1
+// onboarding-completion denominator. Call exactly once per fresh tenant (the
+// created path), never on returning-user logins, so the count stays a true
+// signup tally. profileType is the chosen persona (cross_border|retail|horticulture).
+func IncTenantSignup(profileType string) {
+	tenantSignups.WithLabelValues(profileType).Inc()
 }
 
 // SetOutboxPending sets tally_outbox_pending_count to the supplied count.

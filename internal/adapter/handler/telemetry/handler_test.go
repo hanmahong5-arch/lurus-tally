@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/telemetry"
 	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
@@ -229,6 +230,70 @@ func TestTelemetry_SkipsDAU_WhenUserIDEmpty(t *testing.T) {
 	}
 	if len(rec.calls) != 0 {
 		t.Errorf("expected no DAU record for anonymous event, got %+v", rec.calls)
+	}
+}
+
+// planAcceptValue reads the current tally_plan_accept_total{accepted=<v>} from
+// the default registry. The middleware counter is unexported and cannot be
+// Reset() from this package, so tests compare before/after deltas instead.
+func planAcceptValue(t *testing.T, accepted string) float64 {
+	t.Helper()
+	fams, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	for _, mf := range fams {
+		if mf.GetName() != "tally_plan_accept_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "accepted" && l.GetValue() == accepted {
+					return m.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// TestTelemetry_PlanAcceptRate_IncrementsByOutcome verifies the KS2 wiring:
+// a plan_accept_rate event bumps tally_plan_accept_total under the label that
+// matches metadata.accepted, and a missing field normalizes to "unknown".
+func TestTelemetry_PlanAcceptRate_IncrementsByOutcome(t *testing.T) {
+	pub := &fakePublisher{}
+	h := telemetry.New(pub, "", "anonymous", nil)
+	r := newRouter(h)
+
+	before1 := planAcceptValue(t, "1")
+	before0 := planAcceptValue(t, "0")
+	beforeU := planAcceptValue(t, "unknown")
+
+	if rec := postJSON(t, r, map[string]any{
+		"event":    "plan_accept_rate",
+		"metadata": map[string]any{"accepted": "1"},
+	}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("accepted=1 status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := postJSON(t, r, map[string]any{
+		"event":    "plan_accept_rate",
+		"metadata": map[string]any{"accepted": "0"},
+	}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("accepted=0 status = %d", rec.Code)
+	}
+	// No accepted field at all → unknown.
+	if rec := postJSON(t, r, map[string]any{"event": "plan_accept_rate"}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("missing-accepted status = %d", rec.Code)
+	}
+
+	if got := planAcceptValue(t, "1") - before1; got != 1 {
+		t.Errorf(`accepted="1" delta = %v, want 1`, got)
+	}
+	if got := planAcceptValue(t, "0") - before0; got != 1 {
+		t.Errorf(`accepted="0" delta = %v, want 1`, got)
+	}
+	if got := planAcceptValue(t, "unknown") - beforeU; got != 1 {
+		t.Errorf(`accepted="unknown" delta = %v, want 1`, got)
 	}
 }
 

@@ -116,11 +116,33 @@ fi
 # Coarse: take palette_ratio (proxy for H3 falsification).
 h3_status=$(decide_status "$palette_ratio" "<0.40" "true")
 
+# KS1: onboarding completion rate. Numerator = first-PO-export events (the
+# roadmap's "信任动作"); denominator = brand-new tenant signups. Falsified < 0.40.
+# Honesty: the numerator falls back to 0 (signups exist but nobody exported yet
+# IS a real 0% completion), but the DENOMINATOR has no fallback — with zero
+# signups the rate is undefined, so the query yields empty → "n/a", not a
+# fabricated 0 that would masquerade as "falsified".
+ks1_val=$(prom_query '(sum(tally_web_telemetry_total{event="onboarding_first_po_exported"}) or vector(0)) / sum(tally_tenant_signups_total)')
+ks1_status=$(decide_status "$ks1_val" "<0.40" "true")
+
+# KS2: AI-plan adoption rate = confirmed / all decisions. Falsified < 0.20.
+# Same honesty rule: numerator (accepted="1") falls back to 0, denominator does
+# not — zero decisions → "n/a", not 0.
+ks2_val=$(prom_query '(sum(tally_plan_accept_total{accepted="1"}) or vector(0)) / sum(tally_plan_accept_total)')
+ks2_status=$(decide_status "$ks2_val" "<0.20" "true")
+
+# KS3 (90d trial → paid conversion) is intentionally NOT emitted here yet: the
+# conversion source of truth lives in lurus-platform (subscriptions), and Tally
+# has no local subscription table/handler. It also shares H1's gauge
+# (tally_trial_conversion_d90, already queried above), which a W4 nightly job
+# will populate once the platform internal-key 401 is resolved. Until then KS3
+# is honestly n/a (0 paying customers → no value exists to report).
+
 # ---------------------------------------------------------------------------
 # Compose the row and append / replace.
 # ---------------------------------------------------------------------------
 
-new_row="| $today | $h1_status | $h1_val | $h2_status | $h2_val | $h3_status | $h3_val |"
+new_row="| $today | $h1_status | $h1_val | $h2_status | $h2_val | $h3_status | $h3_val | $ks1_status | $ks1_val | $ks2_status | $ks2_val |"
 
 echo "snapshot: $new_row"
 
