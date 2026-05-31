@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/alert"
 )
@@ -26,8 +27,8 @@ func TestStatusToValue_SkipSentinel(t *testing.T) {
 		{"n/a", 0, false},
 		{"—", 0, false},
 		{"", 0, false},
-		{"FALSIFIED", 0.0, true},   // case-insensitive
-		{" truthy ", 1.0, true},    // trimmed
+		{"FALSIFIED", 0.0, true},     // case-insensitive
+		{" truthy ", 1.0, true},      // trimmed
 		{"garbage_status", 0, false}, // unknown → fail safe to no-reading
 	}
 	for _, tt := range tests {
@@ -178,7 +179,163 @@ func TestParseAssumptions_FalsifiedKSBreaches(t *testing.T) {
 	}
 }
 
+// TestResolveSnapshots_MissingInputDegradesNotBreach locks in the P2 fix: when
+// the assumptions file is missing/unparseable (parse error) or parses to zero
+// rows, the monitor must report DEGRADED — it must NOT substitute the synthetic
+// 14-day all-breach mock data, which would fire a false-positive pivot alert.
+// Mock is only used when explicitly opted into via KILLSWITCH_ALLOW_MOCK.
+func TestResolveSnapshots_MissingInputDegradesNotBreach(t *testing.T) {
+	realRow := alert.Snapshot{
+		Date: mustDate(t, "2026-05-30"),
+		Signals: []alert.Signal{
+			{Name: "ks1_onboarding_rate", Value: 0.05, Threshold: 0.40, Direction: alert.DirectionLT},
+		},
+	}
+
+	tests := []struct {
+		name         string
+		snapshots    []alert.Snapshot
+		parseErr     error
+		allowMock    bool
+		wantDegraded bool
+		wantMock     bool // true = expect synthetic all-breach mock data
+	}{
+		{
+			name:         "parse error, mock off -> degraded, no fabricated breach",
+			snapshots:    nil,
+			parseErr:     errInput,
+			allowMock:    false,
+			wantDegraded: true,
+			wantMock:     false,
+		},
+		{
+			name:         "empty parse, mock off -> degraded, no fabricated breach",
+			snapshots:    []alert.Snapshot{},
+			parseErr:     nil,
+			allowMock:    false,
+			wantDegraded: true,
+			wantMock:     false,
+		},
+		{
+			name:         "parse error, mock explicitly on -> mock data, not degraded",
+			snapshots:    nil,
+			parseErr:     errInput,
+			allowMock:    true,
+			wantDegraded: false,
+			wantMock:     true,
+		},
+		{
+			name:         "real snapshots present -> evaluate them, never mock",
+			snapshots:    []alert.Snapshot{realRow},
+			parseErr:     nil,
+			allowMock:    false,
+			wantDegraded: false,
+			wantMock:     false,
+		},
+		{
+			name:         "real snapshots present, mock on -> still real data, no override",
+			snapshots:    []alert.Snapshot{realRow},
+			parseErr:     nil,
+			allowMock:    true,
+			wantDegraded: false,
+			wantMock:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, degraded := resolveSnapshots(tt.snapshots, tt.parseErr, tt.allowMock)
+			if degraded != tt.wantDegraded {
+				t.Fatalf("degraded = %v, want %v", degraded, tt.wantDegraded)
+			}
+			if tt.wantDegraded {
+				// Degraded path must NOT have synthesized any breach verdict.
+				if b := alert.Evaluate(got, 1); len(b) != 0 {
+					t.Fatalf("degraded result fabricated %d breaches, want 0", len(b))
+				}
+			}
+			if got2 := isMockData(got); got2 != tt.wantMock {
+				t.Errorf("isMockData = %v, want %v (len=%d)", got2, tt.wantMock, len(got))
+			}
+		})
+	}
+}
+
+// TestResolveSnapshots_EndToEnd_MissingFileDegrades drives the decision through
+// the real parser code path: a nonexistent file yields an open error, and the
+// monitor must degrade rather than fabricate a 14-day all-breach verdict.
+func TestResolveSnapshots_EndToEnd_MissingFileDegrades(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist.md")
+	snaps, err := parseAssumptions(missing)
+	if err == nil {
+		t.Fatalf("parseAssumptions(%q) returned nil error, want open error", missing)
+	}
+	got, degraded := resolveSnapshots(snaps, err, false /* allowMock */)
+	if !degraded {
+		t.Fatal("missing file must degrade the monitor, not fall back to mock data")
+	}
+	if b := alert.Evaluate(got, 1); len(b) != 0 {
+		t.Errorf("missing file produced %d breaches, want 0 (no fabricated verdict)", len(b))
+	}
+}
+
+// TestResolveSnapshots_EmptyTableDegrades verifies a file that exists but has no
+// parseable data rows (e.g. only inconclusive history removed, header only) also
+// degrades rather than fabricating a breach.
+func TestResolveSnapshots_EmptyTableDegrades(t *testing.T) {
+	const md = `## 状态历史
+
+| 日期 | H1 status |
+|---|---|
+`
+	path := writeFixture(t, md)
+	snaps, err := parseAssumptions(path)
+	if err != nil {
+		t.Fatalf("parseAssumptions: %v", err)
+	}
+	if len(snaps) != 0 {
+		t.Fatalf("header-only table produced %d snapshots, want 0", len(snaps))
+	}
+	_, degraded := resolveSnapshots(snaps, err, false)
+	if !degraded {
+		t.Fatal("empty parse must degrade the monitor, not fabricate a breach verdict")
+	}
+}
+
 // --- helpers ---
+
+// errInput is a sentinel parse error for resolveSnapshots table tests.
+var errInput = os.ErrNotExist
+
+// isMockData reports whether s looks like the synthetic mockSnapshots output:
+// 14 rows that each carry the ks3_trial_conversion signal (which the real
+// parser never emits — see parser.go doc comment), all breached.
+func isMockData(s []alert.Snapshot) bool {
+	if len(s) != 14 {
+		return false
+	}
+	for _, snap := range s {
+		hasKS3 := false
+		for _, sig := range snap.Signals {
+			if sig.Name == "ks3_trial_conversion" {
+				hasKS3 = true
+			}
+		}
+		if !hasKS3 {
+			return false
+		}
+	}
+	return true
+}
+
+func mustDate(t *testing.T, s string) time.Time {
+	t.Helper()
+	d, err := time.Parse(time.DateOnly, s)
+	if err != nil {
+		t.Fatalf("parse date %q: %v", s, err)
+	}
+	return d
+}
 
 func writeFixture(t *testing.T, content string) string {
 	t.Helper()

@@ -47,7 +47,9 @@ import (
 // daily monitor.
 //
 // Returns an empty slice (not an error) when the file exists but contains
-// no parseable rows — the caller falls back to mock data with a WARN log.
+// no parseable rows. An empty result (or an open/scan error) puts the caller
+// into the DATA-UNAVAILABLE degraded path unless KILLSWITCH_ALLOW_MOCK is set;
+// it never silently synthesizes a breach verdict.
 func parseAssumptions(path string) ([]alert.Snapshot, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -198,12 +200,14 @@ func statusToValue(status string) (float64, bool) {
 	}
 }
 
-// mockSnapshots returns synthetic Snapshot data so the CLI can complete a
-// dry-run when the assumptions file is absent or unreadable.
-// All signals are set to 0 (breach) for 14 consecutive days, exercising the
-// full alert pipeline without any real data dependency.
+// mockSnapshots returns synthetic Snapshot data so the CLI can exercise the
+// full alert pipeline during a local dry-run. All signals are set to 0 (breach)
+// for 14 consecutive days. This is data with no real-world meaning, so it is
+// ONLY used when KILLSWITCH_ALLOW_MOCK=true is explicitly set (see mockAllowed);
+// by default a missing/unparseable file exits DATA-UNAVAILABLE instead, so
+// absent input never fabricates a breach verdict in production.
 func mockSnapshots() []alert.Snapshot {
-	base := time.Now().UTC().Truncate(24 * time.Hour).AddDate(0, 0, -13)
+	base := time.Now().UTC().Truncate(24*time.Hour).AddDate(0, 0, -13)
 	snaps := make([]alert.Snapshot, 14)
 	for i := range snaps {
 		snaps[i] = alert.Snapshot{
