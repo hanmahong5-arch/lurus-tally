@@ -100,6 +100,16 @@ func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID,
 			warehouseID = *head.WarehouseID
 		}
 
+		// Resolve the FX rate that converts the bill's invoice currency to base (CNY).
+		// create_purchase defaults ExchangeRateVal to 1 for CNY bills, but a bill loaded
+		// from the DB may carry an unset (zero) rate; in both cases treat the unit price as
+		// already base by falling back to a rate of 1. A zero/negative rate is never a valid
+		// multiplier, so the guard also protects against corrupt data.
+		baseRate := head.ExchangeRateVal
+		if baseRate.IsZero() || baseRate.IsNegative() {
+			baseRate = decimal.NewFromInt(1)
+		}
+
 		// Record one stock movement per line item.
 		for _, item := range items {
 			// Resolve conversion factor: if no unit_id, assume 1 (already in base unit).
@@ -111,6 +121,12 @@ func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID,
 				}
 				convFactor = f.String()
 			}
+
+			// Convert the per-unit cost to base currency (CNY) at this boundary so the
+			// recorded movement, WAC/FIFO cost and downstream inventory valuation are all
+			// expressed in the same currency as bill_head.total_amount (already converted in
+			// create_purchase). For a base-currency bill baseRate == 1, so this is a no-op.
+			baseUnitCost := item.UnitPrice.Mul(baseRate)
 
 			_, err := uc.stockUC.ExecuteInTx(ctx, tx, appstock.RecordMovementRequest{
 				TenantID:    tenantID,
@@ -125,7 +141,7 @@ func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID,
 					return uuid.Nil
 				}(),
 				ConvFactor:    convFactor,
-				UnitCost:      item.UnitPrice,
+				UnitCost:      baseUnitCost,
 				CostStrategy:  "wac",
 				ReferenceType: domainstock.RefPurchase,
 				ReferenceID:   &billID,

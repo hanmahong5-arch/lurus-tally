@@ -113,10 +113,15 @@ func scanSnapshot(row *sql.Row) (*domain.Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("stock repo: scan snapshot: %w", err)
 	}
-	// TODO: these callers originally ignored parse errors; behaviour preserved.
-	s.OnHandQty, _ = decimalutil.Parse(onHand, "on_hand_qty")
-	s.AvailableQty, _ = decimalutil.Parse(available, "available_qty")
-	s.UnitCost, _ = decimalutil.Parse(unitCost, "unit_cost")
+	if s.OnHandQty, err = decimalutil.Parse(onHand, "on_hand_qty"); err != nil {
+		return nil, fmt.Errorf("stock repo: scan snapshot: %w", err)
+	}
+	if s.AvailableQty, err = decimalutil.Parse(available, "available_qty"); err != nil {
+		return nil, fmt.Errorf("stock repo: scan snapshot: %w", err)
+	}
+	if s.UnitCost, err = decimalutil.Parse(unitCost, "unit_cost"); err != nil {
+		return nil, fmt.Errorf("stock repo: scan snapshot: %w", err)
+	}
 	return &s, nil
 }
 
@@ -191,10 +196,15 @@ func (r *Repo) ListSnapshots(ctx context.Context, f appstock.ListSnapshotsFilter
 		); err != nil {
 			return nil, fmt.Errorf("stock repo: list snapshots scan: %w", err)
 		}
-		// TODO: these callers originally ignored parse errors; behaviour preserved.
-		s.OnHandQty, _ = decimalutil.Parse(onHand, "on_hand_qty")
-		s.AvailableQty, _ = decimalutil.Parse(available, "available_qty")
-		s.UnitCost, _ = decimalutil.Parse(unitCost, "unit_cost")
+		if s.OnHandQty, err = decimalutil.Parse(onHand, "on_hand_qty"); err != nil {
+			return nil, fmt.Errorf("stock repo: list snapshots scan: %w", err)
+		}
+		if s.AvailableQty, err = decimalutil.Parse(available, "available_qty"); err != nil {
+			return nil, fmt.Errorf("stock repo: list snapshots scan: %w", err)
+		}
+		if s.UnitCost, err = decimalutil.Parse(unitCost, "unit_cost"); err != nil {
+			return nil, fmt.Errorf("stock repo: list snapshots scan: %w", err)
+		}
 		snaps = append(snaps, s)
 	}
 	if err := rows.Err(); err != nil {
@@ -273,10 +283,15 @@ func (r *Repo) ListMovements(ctx context.Context, f appstock.MovementFilter) ([]
 		}
 		m.Direction = domain.Direction(dir)
 		m.ReferenceType = domain.ReferenceType(refType)
-		// TODO: these callers originally ignored parse errors; behaviour preserved.
-		m.QtyBase, _ = decimalutil.Parse(qtyBase, "qty_base")
-		m.UnitCost, _ = decimalutil.Parse(unitCost, "unit_cost")
-		m.TotalCost, _ = decimalutil.Parse(totalCost, "total_cost")
+		if m.QtyBase, err = decimalutil.Parse(qtyBase, "qty_base"); err != nil {
+			return nil, fmt.Errorf("stock repo: scan movement: %w", err)
+		}
+		if m.UnitCost, err = decimalutil.Parse(unitCost, "unit_cost"); err != nil {
+			return nil, fmt.Errorf("stock repo: scan movement: %w", err)
+		}
+		if m.TotalCost, err = decimalutil.Parse(totalCost, "total_cost"); err != nil {
+			return nil, fmt.Errorf("stock repo: scan movement: %w", err)
+		}
 		mvs = append(mvs, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -316,10 +331,15 @@ func (r *Repo) ListMovementsByReference(ctx context.Context, tenantID, reference
 		}
 		m.Direction = domain.Direction(dir)
 		m.ReferenceType = domain.ReferenceType(refType)
-		// TODO: these callers originally ignored parse errors; behaviour preserved.
-		m.QtyBase, _ = decimalutil.Parse(qtyBase, "qty_base")
-		m.UnitCost, _ = decimalutil.Parse(unitCost, "unit_cost")
-		m.TotalCost, _ = decimalutil.Parse(totalCost, "total_cost")
+		if m.QtyBase, err = decimalutil.Parse(qtyBase, "qty_base"); err != nil {
+			return nil, fmt.Errorf("stock repo: scan movement: %w", err)
+		}
+		if m.UnitCost, err = decimalutil.Parse(unitCost, "unit_cost"); err != nil {
+			return nil, fmt.Errorf("stock repo: scan movement: %w", err)
+		}
+		if m.TotalCost, err = decimalutil.Parse(totalCost, "total_cost"); err != nil {
+			return nil, fmt.Errorf("stock repo: scan movement: %w", err)
+		}
 		mvs = append(mvs, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -376,10 +396,15 @@ func (r *Repo) ListActiveLots(ctx context.Context, tx *sql.Tx, tenantID, product
 		); err != nil {
 			return nil, fmt.Errorf("stock repo: list active lots scan: %w", err)
 		}
-		// TODO: these callers originally ignored parse errors; behaviour preserved.
-		l.Qty, _ = decimalutil.Parse(qty, "qty")
-		l.QtyRemaining, _ = decimalutil.Parse(qtyRem, "qty_remaining")
-		l.UnitCost, _ = decimalutil.Parse(unitCost, "unit_cost")
+		if l.Qty, err = decimalutil.Parse(qty, "qty"); err != nil {
+			return nil, fmt.Errorf("stock repo: list active lots scan: %w", err)
+		}
+		if l.QtyRemaining, err = decimalutil.Parse(qtyRem, "qty_remaining"); err != nil {
+			return nil, fmt.Errorf("stock repo: list active lots scan: %w", err)
+		}
+		if l.UnitCost, err = decimalutil.Parse(unitCost, "unit_cost"); err != nil {
+			return nil, fmt.Errorf("stock repo: list active lots scan: %w", err)
+		}
 		lots = append(lots, l)
 	}
 	if err := rows.Err(); err != nil {

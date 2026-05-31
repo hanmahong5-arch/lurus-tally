@@ -35,8 +35,8 @@ import (
 	"github.com/gin-gonic/gin"
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
 	handlertelemetry "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/telemetry"
-	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
+	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
 )
 
 // metricsEngine returns a gin engine that serves GET /internal/v1/metrics
@@ -55,7 +55,7 @@ func telemetryEngine() *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	pub, _ := adapternats.NewPublisher(adapternats.Config{NoOpFallback: true})
-	th := handlertelemetry.New(pub, "", "anonymous")
+	th := handlertelemetry.New(pub, "", "anonymous", nil)
 	th.Register(r)
 	return r
 }

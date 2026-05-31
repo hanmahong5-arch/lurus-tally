@@ -24,6 +24,15 @@ type PaymentRecorder interface {
 	Record(ctx context.Context, tx *sql.Tx, p *domainpayment.Payment) error
 }
 
+// itemPurchasePriceUpdater persists the cost of goods sold onto a sale line so margin
+// reports compare sale price against the real WAC/FIFO cost instead of zero.
+// It is an optional capability detected on BillRepo at runtime: the production adapter
+// implements it, while test doubles that do not are simply skipped. This keeps the cost
+// write inside the approval transaction without widening the shared BillRepo interface.
+type itemPurchasePriceUpdater interface {
+	UpdateItemPurchasePrice(ctx context.Context, tx *sql.Tx, tenantID, itemID uuid.UUID, purchasePrice decimal.Decimal) error
+}
+
 // ApproveSaleRequest is the input to ApproveSaleUseCase.
 type ApproveSaleRequest struct {
 	TenantID   uuid.UUID
@@ -137,7 +146,7 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 
 		itemWH := warehouseID // bill-level fallback already resolved above
 
-		_, err := uc.stockUC.ExecuteInTx(ctx, tx, appstock.RecordMovementRequest{
+		snap, err := uc.stockUC.ExecuteInTx(ctx, tx, appstock.RecordMovementRequest{
 			TenantID:    req.TenantID,
 			ProductID:   item.ProductID,
 			WarehouseID: itemWH,
@@ -165,6 +174,16 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 			}
 			// Non-stock error (infra/programming fault) — short-circuit.
 			return fmt.Errorf("approve sale: record movement for item line_no=%d: %w", item.LineNo, err)
+		}
+
+		// Persist the cost of goods sold onto the line so margin reports compare the
+		// sale price against the real cost instead of zero. snap.UnitCost is the
+		// post-movement snapshot cost (base currency); for WAC this equals the cost the
+		// goods left at. Skipped when the repo does not implement the optional capability.
+		if updater, ok := uc.repo.(itemPurchasePriceUpdater); ok && snap != nil {
+			if err := updater.UpdateItemPurchasePrice(ctx, tx, req.TenantID, item.ID, snap.UnitCost); err != nil {
+				return fmt.Errorf("approve sale: persist purchase_price for item line_no=%d: %w", item.LineNo, err)
+			}
 		}
 	}
 
