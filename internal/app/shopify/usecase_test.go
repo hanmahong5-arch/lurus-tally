@@ -12,12 +12,12 @@ import (
 // ---- fakes ----------------------------------------------------------------
 
 type fakeShopRepo struct {
-	createErr  error
-	listItems  []appshopify.ShopMapping
-	listErr    error
-	deleteErr  error
-	created    *appshopify.ShopMapping
-	deletedID  uuid.UUID
+	createErr error
+	listItems []appshopify.ShopMapping
+	listErr   error
+	deleteErr error
+	created   *appshopify.ShopMapping
+	deletedID uuid.UUID
 }
 
 func (f *fakeShopRepo) Create(_ context.Context, m *appshopify.ShopMapping) error {

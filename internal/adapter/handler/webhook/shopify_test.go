@@ -17,8 +17,8 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 
-	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/webhook"
+	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
 )
 
 // ----- mocks ----------------------------------------------------------------

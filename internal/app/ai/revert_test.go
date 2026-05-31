@@ -15,8 +15,8 @@ import (
 // --- fakes ---
 
 type fakeStockReverter struct {
-	affected int
-	err      error
+	affected  int
+	err       error
 	gotPlanID uuid.UUID
 }
 
@@ -26,8 +26,8 @@ func (f *fakeStockReverter) RevertStockAdjust(_ context.Context, _, _, planID uu
 }
 
 type fakePriceReverter struct {
-	affected int
-	err      error
+	affected   int
+	err        error
 	gotEntries []appai.PriceBeforeEntry
 }
 

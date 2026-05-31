@@ -72,9 +72,9 @@ func (uc *WeeklySummaryUseCase) Execute(ctx context.Context, tenantID uuid.UUID)
 	g, gctx := errgroup.WithContext(ctx)
 
 	var (
-		replRows    []ReplenishRow
-		oversellN   int
-		deadStockN  int
+		replRows   []ReplenishRow
+		oversellN  int
+		deadStockN int
 	)
 
 	g.Go(func() error {

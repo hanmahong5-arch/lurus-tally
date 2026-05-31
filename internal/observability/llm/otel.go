@@ -44,7 +44,7 @@ const (
 // under concurrent calls (e.g. test harnesses that call NewOTelTracer multiple
 // times in parallel).
 var (
-	providerMu    sync.Mutex
+	providerMu     sync.Mutex
 	globalProvider *sdktrace.TracerProvider
 )
 

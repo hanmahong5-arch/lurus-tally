@@ -337,12 +337,12 @@ type shopifyLine struct {
 // shopifyRefund is the minimal Shopify refund JSON shape.
 // https://shopify.dev/docs/api/admin-rest/latest/resources/refund
 type shopifyRefund struct {
-	ID      json.Number        `json:"id"`
-	OrderID json.Number        `json:"order_id"`
+	ID      json.Number `json:"id"`
+	OrderID json.Number `json:"order_id"`
 	// Note: "created_at" in refund payload.
-	CreatedAt time.Time        `json:"created_at"`
+	CreatedAt time.Time `json:"created_at"`
 	// Currency of the parent order.
-	Currency  string           `json:"currency"`
+	Currency        string              `json:"currency"`
 	RefundLineItems []shopifyRefundLine `json:"refund_line_items"`
 }
 

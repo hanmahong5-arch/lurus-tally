@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/hanmahong5-arch/lurus-tally/internal/lifecycle"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // setupTestDB starts a postgres container, runs migrations, and returns a connected *sql.DB.

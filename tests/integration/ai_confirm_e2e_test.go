@@ -22,8 +22,8 @@ import (
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/shopspring/decimal"
 
-	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	repoai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/ai"
+	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	reposku "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/sku"
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
 	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"

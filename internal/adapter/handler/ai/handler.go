@@ -41,7 +41,7 @@ type PlanReverter interface {
 // Handler groups the AI HTTP endpoints.
 type Handler struct {
 	orchestrator ChatOrchestrator
-	reverter     PlanReverter        // nil → revert endpoint returns 501
+	reverter     PlanReverter            // nil → revert endpoint returns 501
 	limiter      *llmgateway.RateLimiter // nil → no rate limiting (dev / tests)
 }
 
