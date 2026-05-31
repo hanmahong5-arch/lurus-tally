@@ -58,7 +58,10 @@ type TenantLookup func(ctx context.Context, sub string) (uuid.UUID, error)
 //     non-nil patResolver is provided, the middleware skips JWKS/JWT entirely
 //     and uses the resolver. This is what tally-mcp and other API clients use.
 //  2. Zitadel JWT — RS256, validated against the JWKS at jwksURL with
-//     expectedIssuer enforced.
+//     expectedIssuer AND expectedAudience enforced. The audience guard rejects
+//     tokens minted for other apps on the shared issuer (Zitadel issues one
+//     issuer per instance but a distinct audience per project/client), so a
+//     valid token for another Lurus product can't be replayed against Tally.
 //
 // On success it writes into the Gin context:
 //   - CtxKeyZitadelSub  → Zitadel sub claim (string; empty for PAT path)
@@ -66,7 +69,7 @@ type TenantLookup func(ctx context.Context, sub string) (uuid.UUID, error)
 //
 // On failure it aborts with 401. patResolver may be nil — in that case PATs
 // are rejected and only JWTs work.
-func NewAuthMiddleware(jwksURL, expectedIssuer string, tenantLookup TenantLookup, patResolver PATResolver) gin.HandlerFunc {
+func NewAuthMiddleware(jwksURL, expectedIssuer, expectedAudience string, tenantLookup TenantLookup, patResolver PATResolver) gin.HandlerFunc {
 	cache := jwk.NewCache(context.Background())
 	_ = cache.Register(jwksURL, jwk.WithRefreshInterval(jwksCacheTTL))
 
@@ -118,10 +121,14 @@ func NewAuthMiddleware(jwksURL, expectedIssuer string, tenantLookup TenantLookup
 			return
 		}
 
-		// Parse and validate the token. jwx validates exp, nbf, and signature automatically.
+		// Parse and validate the token. jwx validates exp, nbf, and signature
+		// automatically. WithAudience additionally requires expectedAudience to
+		// appear in the token's aud claim, rejecting tokens issued for other
+		// apps on the same Zitadel issuer.
 		tok, err := jwt.Parse([]byte(rawToken),
 			jwt.WithKeySet(keySet),
 			jwt.WithIssuer(expectedIssuer),
+			jwt.WithAudience(expectedAudience),
 			jwt.WithValidate(true),
 		)
 		if err != nil {

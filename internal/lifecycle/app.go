@@ -451,7 +451,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 			return pat.TenantID, pat.Scopes, nil
 		}
 
-		authMW = middleware.NewAuthMiddleware(jwksURL, issuer, tenantLookup, patResolver)
+		authMW = middleware.NewAuthMiddleware(jwksURL, issuer, cfg.ZitadelAudience, tenantLookup, patResolver)
 		l.Info("auth middleware enabled",
 			slog.String("issuer", issuer),
 			slog.String("jwks_url", jwksURL))

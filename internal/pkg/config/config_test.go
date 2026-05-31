@@ -33,11 +33,15 @@ func setEnv(t *testing.T, vars map[string]string) {
 }
 
 // fullEnv returns a map with all required env vars set to placeholder values.
+// ZITADEL_* are explicitly cleared so auth stays disabled (dev default) unless
+// a test opts in — this keeps the suite independent of a polluted local env.
 func fullEnv() map[string]string {
 	return map[string]string{
-		"DATABASE_DSN": "postgres://placeholder:placeholder@localhost/placeholder?sslmode=disable",
-		"REDIS_URL":    "redis://localhost:6379/5",
-		"NATS_URL":     "nats://localhost:4222",
+		"DATABASE_DSN":     "postgres://placeholder:placeholder@localhost/placeholder?sslmode=disable",
+		"REDIS_URL":        "redis://localhost:6379/5",
+		"NATS_URL":         "nats://localhost:4222",
+		"ZITADEL_DOMAIN":   "",
+		"ZITADEL_AUDIENCE": "",
 	}
 }
 
@@ -102,6 +106,50 @@ func TestConfig_AllSet_ReturnsConfig(t *testing.T) {
 	}
 	if cfg.LogLevel != "info" {
 		t.Errorf("default LogLevel: want info, got %s", cfg.LogLevel)
+	}
+}
+
+func TestConfig_ZitadelDomainSet_RequiresAudience(t *testing.T) {
+	env := fullEnv()
+	env["ZITADEL_DOMAIN"] = "auth.lurus.cn"
+	// ZITADEL_AUDIENCE intentionally left unset.
+	setEnv(t, env)
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected error when ZITADEL_DOMAIN is set but ZITADEL_AUDIENCE is missing, got nil")
+	}
+}
+
+func TestConfig_ZitadelDomainAndAudienceSet_ReturnsConfig(t *testing.T) {
+	env := fullEnv()
+	env["ZITADEL_DOMAIN"] = "auth.lurus.cn"
+	env["ZITADEL_AUDIENCE"] = "tally-client-id"
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("expected no error when both ZITADEL_DOMAIN and ZITADEL_AUDIENCE are set, got: %v", err)
+	}
+	if cfg.ZitadelDomain != "auth.lurus.cn" {
+		t.Errorf("ZitadelDomain: want auth.lurus.cn, got %q", cfg.ZitadelDomain)
+	}
+	if cfg.ZitadelAudience != "tally-client-id" {
+		t.Errorf("ZitadelAudience: want tally-client-id, got %q", cfg.ZitadelAudience)
+	}
+}
+
+func TestConfig_ZitadelDomainEmpty_AudienceOptional(t *testing.T) {
+	env := fullEnv()
+	// Both ZITADEL_* unset (dev / auth disabled) — Load must succeed.
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("expected no error when ZITADEL_DOMAIN is empty, got: %v", err)
+	}
+	if cfg.ZitadelAudience != "" {
+		t.Errorf("ZitadelAudience: want empty when auth disabled, got %q", cfg.ZitadelAudience)
 	}
 }
 
