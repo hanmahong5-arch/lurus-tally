@@ -6,6 +6,7 @@ package telemetry
 
 import (
 	"context"
+	"crypto/subtle"
 	"net/http"
 	"strings"
 
@@ -63,7 +64,8 @@ func (h *Handler) serve(c *gin.Context) {
 	if h.expectedKey != "" {
 		const prefix = "Bearer "
 		auth := c.GetHeader("Authorization")
-		if !strings.HasPrefix(auth, prefix) || auth[len(prefix):] != h.expectedKey {
+		token, ok := strings.CutPrefix(auth, prefix)
+		if !ok || subtle.ConstantTimeCompare([]byte(token), []byte(h.expectedKey)) != 1 {
 			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "telemetry endpoint requires INTERNAL_API_KEY bearer"})
 			return
 		}

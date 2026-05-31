@@ -110,6 +110,11 @@ func (h *Handler) streamCSV(c *gin.Context, filename string, fn func(io.Writer) 
 	c.Header("Cache-Control", "no-store")
 
 	pr, pw := io.Pipe()
+	// If the client disconnects mid-stream, io.Copy below returns and the handler
+	// unwinds; closing the read end makes a blocked pw.Write in the producer
+	// goroutine return ErrClosedPipe so the goroutine cannot leak (a stranded
+	// goroutine + DB cursor per aborted export is a slow DoS on flaky links).
+	defer func() { _ = pr.Close() }()
 
 	// Use case writes into pw; Gin reads from pr.
 	go func() {
