@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/payment"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
@@ -32,7 +33,9 @@ var _ apppayment.PaymentRepo = (*Repo)(nil)
 // ----- Transaction boundary -----
 
 func (r *Repo) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+	// Begin on the tenant-pinned connection when present so the tx inherits
+	// app.tenant_id and RLS binds its writes; falls back to the pool otherwise.
+	tx, err := dbscope.BeginTx(ctx, r.db, nil)
 	if err != nil {
 		return fmt.Errorf("payment repo: begin tx: %w", err)
 	}
@@ -101,7 +104,7 @@ func (r *Repo) ListByBill(ctx context.Context, tenantID, billID uuid.UUID) ([]*d
 		WHERE related_bill_id = $1 AND tenant_id = $2 AND deleted_at IS NULL
 		ORDER BY pay_date ASC`
 
-	rows, err := r.db.QueryContext(ctx, q, billID, tenantID)
+	rows, err := dbscope.From(ctx, r.db).QueryContext(ctx, q, billID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("payment repo: list by bill: %w", err)
 	}

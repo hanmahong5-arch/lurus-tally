@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
@@ -37,8 +38,10 @@ var _ appstock.StockRepo = (*Repo)(nil)
 // ----- Transaction boundary -----
 
 // WithTx opens a transaction, passes it to fn, commits on success, and rolls back on error or panic.
+// Begins on the tenant-pinned connection when present so the tx inherits app.tenant_id
+// and RLS binds its writes; falls back to the shared pool otherwise.
 func (r *Repo) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+	tx, err := dbscope.BeginTx(ctx, r.db, nil)
 	if err != nil {
 		return fmt.Errorf("stock repo: begin tx: %w", err)
 	}
@@ -87,7 +90,7 @@ func (r *Repo) GetSnapshot(ctx context.Context, tenantID, productID, warehouseID
 		FROM tally.stock_snapshot
 		WHERE tenant_id = $1 AND product_id = $2 AND warehouse_id = $3`
 
-	return scanSnapshot(r.db.QueryRowContext(ctx, q, tenantID, productID, warehouseID))
+	return scanSnapshot(dbscope.From(ctx, r.db).QueryRowContext(ctx, q, tenantID, productID, warehouseID))
 }
 
 // SelectForUpdate returns the snapshot with a row-level FOR UPDATE lock (must be inside a tx).
@@ -180,7 +183,7 @@ func (r *Repo) ListSnapshots(ctx context.Context, f appstock.ListSnapshotsFilter
 	q += fmt.Sprintf(" ORDER BY updated_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
 	args = append(args, lim, f.Offset)
 
-	rows, err := r.db.QueryContext(ctx, q, args...)
+	rows, err := dbscope.From(ctx, r.db).QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("stock repo: list snapshots: %w", err)
 	}
@@ -263,7 +266,7 @@ func (r *Repo) ListMovements(ctx context.Context, f appstock.MovementFilter) ([]
 	q += fmt.Sprintf(" ORDER BY occurred_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
 	args = append(args, lim, f.Offset)
 
-	rows, err := r.db.QueryContext(ctx, q, args...)
+	rows, err := dbscope.From(ctx, r.db).QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("stock repo: list movements: %w", err)
 	}
@@ -311,7 +314,7 @@ func (r *Repo) ListMovementsByReference(ctx context.Context, tenantID, reference
 		WHERE tenant_id = $1 AND reference_id = $2
 		ORDER BY created_at ASC`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID, referenceID)
+	rows, err := dbscope.From(ctx, r.db).QueryContext(ctx, q, tenantID, referenceID)
 	if err != nil {
 		return nil, fmt.Errorf("stock repo: list by reference: %w", err)
 	}
@@ -452,7 +455,7 @@ func (r *Repo) ListLowStock(ctx context.Context, tenantID uuid.UUID, limit int) 
 			AND ss.available_qty < si.low_safe_qty
 		ORDER BY (ss.available_qty / si.low_safe_qty) ASC
 		LIMIT $2`
-	rows, err := r.db.QueryContext(ctx, q, tenantID, limit)
+	rows, err := dbscope.From(ctx, r.db).QueryContext(ctx, q, tenantID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("stock repo: list low stock: %w", err)
 	}
