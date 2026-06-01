@@ -42,7 +42,7 @@ const (
 
 // rlsOwnedTables are reassigned to the non-superuser role so FORCE ROW LEVEL
 // SECURITY is the operative mechanism (owner-bound RLS) when that role queries.
-var rlsOwnedTables = []string{"product", "stock_snapshot", "bill_head", "payment_head"}
+var rlsOwnedTables = []string{"product", "stock_snapshot", "bill_head", "payment_head", "supplier", "project"}
 
 // startRLSTestDB starts a container, runs migrations, and returns the superuser
 // DSN + an open superuser *sql.DB (for seeding) alongside cleanup.
@@ -278,6 +278,86 @@ func TestRLS_ForceFlagSet(t *testing.T) {
 			t.Errorf("FAIL [%s]: relforcerowsecurity = false; FORCE ROW LEVEL SECURITY not applied", tbl)
 		} else {
 			t.Logf("PASS [%s]: FORCE ROW LEVEL SECURITY set", tbl)
+		}
+	}
+}
+
+// TestRLS_StrictFlip proves migration 000045 made supplier + project strict:
+// under the non-superuser owner, an UNPINNED query (app.tenant_id unset) returns
+// ZERO rows — a forgotten pin now fails loud — while a pinned query still returns
+// exactly the current tenant's rows. (Pinned ENDPOINT reachability under the flip
+// is separately proven by TestRLS_E2E_EntityCRUDIsolation.)
+func TestRLS_StrictFlip(t *testing.T) {
+	dsn, db, cleanup := startRLSTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	tenantA := insertTenant(t, db, ctx)
+	tenantB := insertTenant(t, db, ctx)
+	_ = insertSupplier(t, db, ctx, tenantA, "Flip Supplier A")
+	_ = insertSupplier(t, db, ctx, tenantB, "Flip Supplier B")
+	// project has no seed helper; insert inline (status must satisfy the 000029 CHECK).
+	for _, tn := range []uuid.UUID{tenantA, tenantB} {
+		mustExec(t, db, `INSERT INTO tally.project (id, tenant_id, code, name, status)
+			VALUES ($1, $2, $3, 'Flip Project', 'active')`, uuid.New(), tn, "FP-"+tn.String()[:8])
+	}
+
+	provisionAppRole(t, db) // owns supplier + project (added to rlsOwnedTables) → FORCE operative
+
+	appDB, err := sql.Open("pgx", appDSNFrom(t, dsn))
+	if err != nil {
+		t.Fatalf("open app db: %v", err)
+	}
+	defer appDB.Close() //nolint:errcheck
+
+	for _, tbl := range []string{"supplier", "project"} {
+		// (1) UNPINNED (GUC unset): strict policy -> 0 rows. This is the whole point
+		// of the flip — no silent reliance on a WHERE clause. Explicitly RESET the
+		// conn first so a value left by a prior pooled use can't mask the result.
+		freshConn, err := appDB.Conn(ctx)
+		if err != nil {
+			t.Fatalf("acquire fresh conn: %v", err)
+		}
+		if _, err := freshConn.ExecContext(ctx, "RESET app.tenant_id"); err != nil {
+			freshConn.Close() //nolint:errcheck
+			t.Fatalf("reset GUC: %v", err)
+		}
+		var unpinned int
+		if err := freshConn.QueryRowContext(ctx,
+			"SELECT count(*) FROM tally."+tbl).Scan(&unpinned); err != nil {
+			freshConn.Close() //nolint:errcheck
+			t.Fatalf("unpinned count %s: %v", tbl, err)
+		}
+		freshConn.Close() //nolint:errcheck
+		if unpinned != 0 {
+			t.Errorf("FAIL [%s]: unpinned count = %d, want 0 (flip not strict)", tbl, unpinned)
+		} else {
+			t.Logf("PASS [%s]: unpinned query returns 0 (strict)", tbl)
+		}
+
+		// (2) PINNED to A: returns exactly A's row (1), not B's. RESET before
+		// releasing so the conn does not leak app.tenant_id back to the pool.
+		pinned, err := appDB.Conn(ctx)
+		if err != nil {
+			t.Fatalf("acquire pinned conn: %v", err)
+		}
+		if _, err := pinned.ExecContext(ctx,
+			"SELECT set_config('app.tenant_id', $1, false)", tenantA.String()); err != nil {
+			pinned.Close() //nolint:errcheck
+			t.Fatalf("set GUC: %v", err)
+		}
+		var pinnedCount int
+		if err := pinned.QueryRowContext(ctx,
+			"SELECT count(*) FROM tally."+tbl).Scan(&pinnedCount); err != nil {
+			pinned.Close() //nolint:errcheck
+			t.Fatalf("pinned count %s: %v", tbl, err)
+		}
+		_, _ = pinned.ExecContext(ctx, "RESET app.tenant_id")
+		pinned.Close() //nolint:errcheck
+		if pinnedCount != 1 {
+			t.Errorf("FAIL [%s]: pinned(A) count = %d, want 1 (only A's row)", tbl, pinnedCount)
+		} else {
+			t.Logf("PASS [%s]: pinned to A returns only A's row", tbl)
 		}
 	}
 }
