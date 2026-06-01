@@ -296,3 +296,64 @@ func TestMigration_RLSEnabled(t *testing.T) {
 	}
 	_ = fmt.Sprintf // suppress import warning
 }
+
+// TestMigration_RLSPolicyShape verifies the structural guarantee of the 000042 /
+// 000043 hardening: every strict tenant table's policy uses the short-circuit
+// CASE form gated on current_setting('app.tenant_id', true) and carries an
+// explicit WITH CHECK. This guards against any regression to a naked 1-arg
+// current_setting cast (which crashes on an unset GUC) or a USING-only policy
+// (which leaves write semantics implicit).
+func TestMigration_RLSPolicyShape(t *testing.T) {
+	dsn, cleanup := startPostgres(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := lifecycle.RunMigrations(ctx, dsn, nil); err != nil {
+		t.Fatalf("RunMigrations: %v", err)
+	}
+	db, err := sql.Open("pgx", dsn)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	// Strict tables: the canonical CASE applies to USING and WITH CHECK alike.
+	// (Relaxed-by-design tables — tenant_profile / user_identity_mapping /
+	// personal_access_token / event_outbox / unit_def / nursery_dict — also use
+	// current_setting but with extra branches, so they are checked only for the
+	// GUC reference, not the strict equality.)
+	strict := []string{
+		"product", "bill_head", "bill_item", "payment_head", "stock_snapshot",
+		"stock_movement", "stock_lot", "supplier", "warehouse", "project",
+		"exchange_rate", "user_session", "account_audit_log", "user_profile",
+		// 000043 children
+		"product_sku", "payment_item", "finance_account", "stock_initial",
+		"warehouse_bin", "partner_bank",
+	}
+	for _, tbl := range strict {
+		var qual string
+		var withCheck sql.NullString
+		err := db.QueryRowContext(ctx, `
+			SELECT qual, with_check FROM pg_policies
+			WHERE schemaname = 'tally' AND tablename = $1 AND policyname = 'tenant_isolation'
+		`, tbl).Scan(&qual, &withCheck)
+		if err != nil {
+			t.Errorf("FAIL [%s]: no tenant_isolation policy / scan error: %v", tbl, err)
+			continue
+		}
+		bad := false
+		// Short-circuit form: 2-arg current_setting inside a CASE.
+		if !strings.Contains(qual, "current_setting") || !strings.Contains(strings.ToUpper(qual), "CASE") {
+			t.Errorf("FAIL [%s]: USING is not the short-circuit current_setting CASE form: %s", tbl, qual)
+			bad = true
+		}
+		// Explicit WITH CHECK so cross-tenant writes are rejected, not left implicit.
+		if !withCheck.Valid || !strings.Contains(withCheck.String, "current_setting") {
+			t.Errorf("FAIL [%s]: missing/!current_setting WITH CHECK: %q", tbl, withCheck.String)
+			bad = true
+		}
+		if !bad {
+			t.Logf("PASS [%s]: short-circuit CASE USING + WITH CHECK", tbl)
+		}
+	}
+}

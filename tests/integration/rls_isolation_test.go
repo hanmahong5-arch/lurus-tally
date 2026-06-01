@@ -241,12 +241,29 @@ func TestRLS_ForceFlagSet(t *testing.T) {
 	defer cleanup()
 	ctx := context.Background()
 
-	// A representative spread: strict tables, the 1-arg-current_setting account
-	// tables the migration fixed (H10), and the special-branch tables.
+	// Every tenant-scoped table must be FORCE after 000042 (parents) + 000043
+	// (children), so the policy binds the owner connection the app uses. This is
+	// the structural backbone of the backstop; behavioural isolation is proven on
+	// the core parents in TestRLS_ForceIsolation, and the children carry the
+	// identical canonical policy (shape asserted in TestMigration_RLSEnabled).
 	tables := []string{
-		"product", "stock_snapshot", "bill_head", "payment_head", "partner",
-		"supplier", "user_session", "account_audit_log", "user_profile",
-		"unit_def", "nursery_dict", "event_outbox",
+		// 000012 parents
+		"partner", "product", "warehouse", "stock_snapshot", "bill_head", "bill_item",
+		"payment_head", "audit_log", "system_config", "bill_sequence", "org_department",
+		// 000013/000031 relaxed-but-FORCE (pre-tenant auth)
+		"tenant_profile", "user_identity_mapping", "personal_access_token",
+		// 000014/000022/000024/000028/000029/000033
+		"unit_def", "product_unit", "stock_lot", "stock_movement", "exchange_rate",
+		"nursery_dict", "project", "supplier",
+		// 000035 service-branch + 000036 account tables (H10 fix)
+		"event_outbox", "user_session", "account_audit_log", "user_profile",
+		// 000037/000040 import dedup
+		"import_sku_map", "import_order_seen", "import_order_cancel_seen", "import_refund_seen",
+		// 000043 children
+		"org_user_rel", "partner_bank", "product_category", "product_sku",
+		"product_attribute", "unit", "warehouse_bin", "stock_initial",
+		"stock_serial", "finance_account", "finance_category", "payment_item",
+		"shopify_shop_map",
 	}
 	for _, tbl := range tables {
 		var forced bool
