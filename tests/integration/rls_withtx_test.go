@@ -26,6 +26,8 @@ import (
 
 	billrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
+	paymentrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/payment"
+	stockrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
 )
 
 // insertProductTx writes a product row inside the given tx (the unit of work a
@@ -114,6 +116,72 @@ func TestRLS_WithTxInheritsPin(t *testing.T) {
 	assertProductCode(t, db, ctx, "TX-OK-A", true)
 	assertProductCode(t, db, ctx, "TX-NOPIN-B", true)
 	assertProductCode(t, db, ctx, "TX-REJECT-B", false)
+}
+
+// TestRLS_WithTxStockPayment guards against a missed conversion: stock.Repo and
+// payment.Repo each route WithTx through dbscope.BeginTx, so a transaction pinned
+// to tenant A must reject a tenant-B write to stock_snapshot / payment_head. The
+// unpinned money-path tests cannot catch a repo whose WithTx was left on
+// r.db.BeginTx — this can.
+func TestRLS_WithTxStockPayment(t *testing.T) {
+	dsn, db, cleanup := startRLSTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	tenantA := insertTenant(t, db, ctx)
+	tenantB := insertTenant(t, db, ctx)
+	// stock_snapshot has FKs to product + warehouse (tenant-agnostic at the FK
+	// level); seed a tenant-B product/warehouse so only RLS — not an FK — can
+	// reject the cross-tenant write.
+	whB := insertWarehouse(t, db, ctx, tenantB)
+	prodB := insertProduct(t, db, ctx, tenantB, "B Product", "B-WT-1")
+
+	provisionAppRole(t, db)
+
+	appDB, err := sql.Open("pgx", appDSNFrom(t, dsn))
+	if err != nil {
+		t.Fatalf("open app db: %v", err)
+	}
+	defer appDB.Close() //nolint:errcheck
+
+	conn, err := appDB.Conn(ctx)
+	if err != nil {
+		t.Fatalf("acquire conn: %v", err)
+	}
+	defer conn.Close() //nolint:errcheck
+	if _, err := conn.ExecContext(ctx,
+		"SELECT set_config('app.tenant_id', $1, false)", tenantA.String()); err != nil {
+		t.Fatalf("set app.tenant_id: %v", err)
+	}
+	ctxA := dbscope.With(ctx, conn)
+
+	// stock.WithTx pinned to A → cross-tenant stock_snapshot write rejected.
+	errStock := stockrepo.New(appDB).WithTx(ctxA, func(tx *sql.Tx) error {
+		_, e := tx.ExecContext(ctx, `
+			INSERT INTO tally.stock_snapshot (tenant_id, product_id, warehouse_id, on_hand_qty, available_qty, unit_cost)
+			VALUES ($1, $2, $3, 1, 1, 1)
+		`, tenantB, prodB, whB)
+		return e
+	})
+	if errStock == nil || !strings.Contains(errStock.Error(), "row-level security") {
+		t.Errorf("FAIL: stock.WithTx cross-tenant write not rejected by RLS: %v", errStock)
+	} else {
+		t.Logf("PASS: stock.WithTx rejected cross-tenant write: %v", errStock)
+	}
+
+	// payment.WithTx pinned to A → cross-tenant payment_head write rejected.
+	errPay := paymentrepo.New(appDB).WithTx(ctxA, func(tx *sql.Tx) error {
+		_, e := tx.ExecContext(ctx, `
+			INSERT INTO tally.payment_head (id, tenant_id, pay_type, creator_id, pay_date, amount, total_amount)
+			VALUES ($1, $2, 'income', $3, now(), 1, 1)
+		`, uuid.New(), tenantB, uuid.New())
+		return e
+	})
+	if errPay == nil || !strings.Contains(errPay.Error(), "row-level security") {
+		t.Errorf("FAIL: payment.WithTx cross-tenant write not rejected by RLS: %v", errPay)
+	} else {
+		t.Logf("PASS: payment.WithTx rejected cross-tenant write: %v", errPay)
+	}
 }
 
 func assertProductCode(t *testing.T, db *sql.DB, ctx context.Context, code string, want bool) {
