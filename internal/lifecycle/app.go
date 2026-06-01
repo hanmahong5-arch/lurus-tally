@@ -100,6 +100,18 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// Connection-pool ceilings. Sized for a single 18200 pod against a Postgres
+// with the default max_connections=100: 50 open leaves headroom for migrations,
+// the outbox/audit workers, and operator psql sessions. Because TenantDB pins a
+// connection for the request's duration, max-open also caps concurrent
+// tenant-scoped requests; excess requests queue on the pool rather than failing.
+const (
+	dbMaxOpenConns    = 50
+	dbMaxIdleConns    = 25
+	dbConnMaxLifetime = 30 * time.Minute
+	dbConnMaxIdleTime = 5 * time.Minute
+)
+
 // App is the application root. It holds all wired dependencies and manages
 // the HTTP server lifecycle. No global variables; all state lives here.
 type App struct {
@@ -130,6 +142,15 @@ func NewApp(cfg *config.Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle: cannot open database: %w; check DATABASE_DSN", err)
 	}
+	// Bound the pool. middleware.TenantDB pins one connection for the whole
+	// request (to carry app.tenant_id for the RLS backstop), so an unbounded
+	// pool could open a connection per in-flight request and exhaust Postgres's
+	// max_connections. These ceilings cap concurrency and recycle connections so
+	// a leaked GUC can never outlive ConnMaxLifetime.
+	db.SetMaxOpenConns(dbMaxOpenConns)
+	db.SetMaxIdleConns(dbMaxIdleConns)
+	db.SetConnMaxLifetime(dbConnMaxLifetime)
+	db.SetConnMaxIdleTime(dbConnMaxIdleTime)
 
 	// Wire product use cases.
 	productRepo := repoproduct.New(db)
@@ -591,7 +612,12 @@ func NewApp(cfg *config.Config) (*App, error) {
 		repoonboarding.New(db),
 	)
 
-	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
+	// Per-request tenant pin. Sets app.tenant_id on a dedicated connection so the
+	// RLS policies (migration 000042) enforce isolation at the database. Mounted
+	// after auth (needs tenant_id) and before idempotency.
+	tenantDBMW := middleware.TenantDB(db)
+
+	r := router.New(h, authMW, tenantDBMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
 		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler, exportHandler, accountHandler,
 		replenishHandler, reportsHandler, searchHandler, importHandler, digestHandler, onboardingHandler)
 
@@ -633,6 +659,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	if authMW != nil {
 		shopifyAdminGroup.Use(authMW)
 	}
+	shopifyAdminGroup.Use(tenantDBMW) // after auth, before idempotency (same order as the main group)
 	if idempotencyMW != nil {
 		shopifyAdminGroup.Use(idempotencyMW)
 	}
