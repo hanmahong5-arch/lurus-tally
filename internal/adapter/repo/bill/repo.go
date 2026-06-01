@@ -320,7 +320,13 @@ func (r *Repo) UpdateBillStatus(ctx context.Context, tx *sql.Tx, tenantID, billI
 		}
 	}
 
-	q += fmt.Sprintf(" WHERE id = $%d AND tenant_id = $%d AND deleted_at IS NULL", len(args)-1, len(args))
+	// billID and tenantID are always args[2]/args[3] -> $3/$4 (appended before any
+	// optional meta SET clauses, which take $5+). Using fixed positions here is
+	// essential: computing them from len(args) after appending meta made the WHERE
+	// reuse the meta placeholders ($5/$6), so a single $5 was bound as both
+	// approved_at (timestamptz) and id (uuid) -> SQLSTATE 42804, breaking every
+	// successful approval. (Caught by the non-superuser app-boot e2e.)
+	q += " WHERE id = $3 AND tenant_id = $4 AND deleted_at IS NULL"
 
 	_, err := tx.ExecContext(ctx, q, args...)
 	if err != nil {
