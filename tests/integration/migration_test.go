@@ -356,4 +356,22 @@ func TestMigration_RLSPolicyShape(t *testing.T) {
 			t.Logf("PASS [%s]: short-circuit CASE USING + WITH CHECK", tbl)
 		}
 	}
+
+	// personal_access_token keeps its historical policy name pat_rls (000031),
+	// converted to the short-circuit CASE form by 000044 — lock it so it cannot
+	// regress to the crash-prone OR pattern the e2e exposed.
+	var patQual string
+	var patCheck sql.NullString
+	if err := db.QueryRowContext(ctx, `
+		SELECT qual, with_check FROM pg_policies
+		WHERE schemaname = 'tally' AND tablename = 'personal_access_token' AND policyname = 'pat_rls'
+	`).Scan(&patQual, &patCheck); err != nil {
+		t.Errorf("FAIL [personal_access_token]: pat_rls policy missing: %v", err)
+	} else if !strings.Contains(patQual, "current_setting") ||
+		!strings.Contains(strings.ToUpper(patQual), "CASE") || !patCheck.Valid {
+		t.Errorf("FAIL [personal_access_token]: pat_rls not short-circuit CASE + WITH CHECK: qual=%s check=%q",
+			patQual, patCheck.String)
+	} else {
+		t.Logf("PASS [personal_access_token]: pat_rls short-circuit CASE + WITH CHECK")
+	}
 }

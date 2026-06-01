@@ -721,6 +721,17 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}, nil
 }
 
+// Handler returns the app's fully-wired HTTP handler. It lets a caller mount the
+// app on a custom server or exercise it in-process (httptest) without binding a
+// TCP listener via Start — used by the RLS end-to-end integration test, which
+// drives real endpoints through the auth → tenant-pin → repo → RLS chain.
+func (a *App) Handler() http.Handler {
+	if a == nil {
+		return nil
+	}
+	return a.engine
+}
+
 // dbPinger adapts *sql.DB to the health.Pinger interface.
 type dbPinger struct{ db *sql.DB }
 
