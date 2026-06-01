@@ -159,6 +159,174 @@ func createProduct(t *testing.T, h http.Handler, bearer, code, name string) stri
 	return id
 }
 
+// postExpectCreated POSTs body as bearer and fails unless 201.
+func postExpectCreated(t *testing.T, h http.Handler, bearer, path, body string) string {
+	t.Helper()
+	status, resp := doReq(t, h, http.MethodPost, path, bearer, body)
+	if status != http.StatusCreated {
+		t.Fatalf("POST %s: want 201, got %d body=%s", path, status, resp)
+	}
+	return resp
+}
+
+// TestRLS_E2E_EntityCRUDIsolation drives the simple converted CRUD repos end to
+// end and asserts each tenant sees only its own rows. These are exactly the
+// tables the 000045 flip targets, so this is the gate that proves they stay
+// reachable when the policy turns strict.
+func TestRLS_E2E_EntityCRUDIsolation(t *testing.T) {
+	h, db, cleanup := bootRLSApp(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	tenantA := insertTenant(t, db, ctx)
+	tenantB := insertTenant(t, db, ctx)
+	patA := seedPAT(t, db, ctx, tenantA)
+	patB := seedPAT(t, db, ctx, tenantB)
+
+	// Each entity: a create path, a list path, and per-tenant bodies carrying a
+	// unique marker so the list assertion is unambiguous.
+	cases := []struct {
+		name             string
+		createPath       string
+		listPath         string
+		bodyA, bodyB     string
+		markerA, markerB string
+	}{
+		{"suppliers", "/api/v1/suppliers", "/api/v1/suppliers",
+			`{"name":"Sup-AAA-zz1"}`, `{"name":"Sup-BBB-zz1"}`, "Sup-AAA-zz1", "Sup-BBB-zz1"},
+		{"warehouses", "/api/v1/warehouses", "/api/v1/warehouses",
+			`{"name":"WH-AAA-zz2"}`, `{"name":"WH-BBB-zz2"}`, "WH-AAA-zz2", "WH-BBB-zz2"},
+		{"projects", "/api/v1/projects", "/api/v1/projects",
+			`{"code":"PA-zz3","name":"Proj-AAA-zz3","status":"active","address":"a","manager":"m","remark":""}`,
+			`{"code":"PB-zz3","name":"Proj-BBB-zz3","status":"active","address":"a","manager":"m","remark":""}`,
+			"Proj-AAA-zz3", "Proj-BBB-zz3"},
+		{"units", "/api/v1/units", "/api/v1/units",
+			`{"code":"uA-zz4","name":"Unit-AAA-zz4","unit_type":"length"}`,
+			`{"code":"uB-zz4","name":"Unit-BBB-zz4","unit_type":"length"}`,
+			"Unit-AAA-zz4", "Unit-BBB-zz4"},
+	}
+	for _, c := range cases {
+		postExpectCreated(t, h, patA, c.createPath, c.bodyA)
+		postExpectCreated(t, h, patB, c.createPath, c.bodyB)
+
+		_, listA := doReq(t, h, http.MethodGet, c.listPath, patA, "")
+		if !strings.Contains(listA, c.markerA) {
+			t.Errorf("FAIL [%s]: A's list missing its own row %q: %s", c.name, c.markerA, listA)
+		}
+		if strings.Contains(listA, c.markerB) {
+			t.Errorf("FAIL [%s]: A's list LEAKED B's row %q: %s", c.name, c.markerB, listA)
+		}
+		_, listB := doReq(t, h, http.MethodGet, c.listPath, patB, "")
+		if strings.Contains(listB, c.markerA) {
+			t.Errorf("FAIL [%s]: B's list LEAKED A's row %q: %s", c.name, c.markerA, listB)
+		}
+		if t.Failed() {
+			continue
+		}
+		t.Logf("PASS [%s]: per-tenant CRUD isolation through full stack", c.name)
+	}
+
+	// exchange_rate uses GetRate(from,to) rather than a plain list: both tenants
+	// book USD->CNY at different rates and must each read back their own.
+	postExpectCreated(t, h, patA, "/api/v1/exchange-rates",
+		`{"from_currency":"USD","to_currency":"CNY","rate":"6.50","effective_at":"2026-06-01"}`)
+	postExpectCreated(t, h, patB, "/api/v1/exchange-rates",
+		`{"from_currency":"USD","to_currency":"CNY","rate":"7.77","effective_at":"2026-06-01"}`)
+	_, rateA := doReq(t, h, http.MethodGet, "/api/v1/exchange-rates?from=USD&to=CNY", patA, "")
+	_, rateB := doReq(t, h, http.MethodGet, "/api/v1/exchange-rates?from=USD&to=CNY", patB, "")
+	if !strings.Contains(rateA, "6.5") || strings.Contains(rateA, "7.77") {
+		t.Errorf("FAIL [exchange_rate]: A read the wrong tenant's rate: %s", rateA)
+	}
+	if !strings.Contains(rateB, "7.77") {
+		t.Errorf("FAIL [exchange_rate]: B did not read its own rate: %s", rateB)
+	}
+	if !t.Failed() {
+		t.Logf("PASS [exchange_rate]: per-tenant rate isolation")
+	}
+}
+
+// TestRLS_E2E_MoneyFlowIsolation drives the purchase->approve->stock and
+// quick-checkout->payment money path end to end and asserts the resulting
+// stock/bill/payment rows are tenant-isolated. (These tables are NOT flipped by
+// 000045 — the public shopify webhook writes them unpinned — but proving they
+// isolate when pinned locks Phase-2 correctness on the money path and is the
+// groundwork for a future webhook-pin + money-table flip.)
+func TestRLS_E2E_MoneyFlowIsolation(t *testing.T) {
+	h, db, cleanup := bootRLSApp(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	tenantA := insertTenant(t, db, ctx)
+	tenantB := insertTenant(t, db, ctx)
+	patA := seedPAT(t, db, ctx, tenantA)
+	patB := seedPAT(t, db, ctx, tenantB)
+
+	// Tenant A: product + warehouse, then a purchase booked & approved (stock-in).
+	prodA := createProduct(t, h, patA, "MF-A-1", "MoneyFlow A")
+	whResp := postExpectCreated(t, h, patA, "/api/v1/warehouses", `{"name":"MF-WH-A"}`)
+	whA := jsonField(t, whResp, "id")
+
+	billResp := postExpectCreated(t, h, patA, "/api/v1/purchase-bills",
+		`{"warehouse_id":"`+whA+`","items":[{"product_id":"`+prodA+`","qty":"10.00","unit_price":"5.00"}]}`)
+	billA := jsonField(t, billResp, "bill_id")
+	if st, body := doReq(t, h, http.MethodPost, "/api/v1/purchase-bills/"+billA+"/approve", patA, "{}"); st != http.StatusOK {
+		t.Fatalf("approve purchase as A: want 200, got %d body=%s", st, body)
+	}
+
+	// Stock snapshot now exists for A; B must not see it.
+	_, snapA := doReq(t, h, http.MethodGet, "/api/v1/stock/snapshots", patA, "")
+	if !strings.Contains(snapA, prodA) {
+		t.Errorf("FAIL: A's stock snapshots missing its product %s: %s", prodA, snapA)
+	}
+	_, snapB := doReq(t, h, http.MethodGet, "/api/v1/stock/snapshots", patB, "")
+	if strings.Contains(snapB, prodA) {
+		t.Errorf("FAIL: B's stock snapshots LEAKED A's product %s: %s", prodA, snapB)
+	}
+
+	// Purchase bill list isolation.
+	_, billsA := doReq(t, h, http.MethodGet, "/api/v1/purchase-bills", patA, "")
+	_, billsB := doReq(t, h, http.MethodGet, "/api/v1/purchase-bills", patB, "")
+	if !strings.Contains(billsA, billA) {
+		t.Errorf("FAIL: A's purchase-bills missing its bill %s", billA)
+	}
+	if strings.Contains(billsB, billA) {
+		t.Errorf("FAIL: B's purchase-bills LEAKED A's bill %s", billA)
+	}
+
+	// Quick-checkout sale (stock-out + payment) for A, then payment isolation.
+	// paid_amount must be <= total (3 * 20 = 60), per the bill_head_paid_le_total check.
+	saleResp := postExpectCreated(t, h, patA, "/api/v1/sale-bills/quick-checkout",
+		`{"payment_method":"cash","paid_amount":"60.00","items":[{"product_id":"`+prodA+`","warehouse_id":"`+whA+`","qty":"3.00","unit_price":"20.00"}]}`)
+	saleA := jsonField(t, saleResp, "bill_id")
+	// A sees its own payment for the sale bill; B querying the same bill id sees
+	// none (RLS hides A's payment_head rows under B's pin).
+	_, payA := doReq(t, h, http.MethodGet, "/api/v1/payments?bill_id="+saleA, patA, "")
+	if !strings.Contains(payA, "amount") {
+		t.Errorf("FAIL: A's payments for its sale bill are empty: %s", payA)
+	}
+	_, payB := doReq(t, h, http.MethodGet, "/api/v1/payments?bill_id="+saleA, patB, "")
+	if strings.Contains(payB, "amount") {
+		t.Errorf("FAIL: B read A's payment for bill %s: %s", saleA, payB)
+	}
+	if !t.Failed() {
+		t.Logf("PASS: money-flow (purchase->approve->stock, quick-checkout->payment) tenant-isolated")
+	}
+}
+
+// jsonField extracts a top-level string field from a JSON object body.
+func jsonField(t *testing.T, body, field string) string {
+	t.Helper()
+	var m map[string]any
+	if err := json.Unmarshal([]byte(body), &m); err != nil {
+		t.Fatalf("response not JSON object: %v (%s)", err, body)
+	}
+	v, _ := m[field].(string)
+	if v == "" {
+		t.Fatalf("response missing %q: %s", field, body)
+	}
+	return v
+}
+
 // TestRLS_E2E_CrossTenantIsolation proves the full stack isolates tenants when
 // the app runs as a non-superuser owner with FORCE RLS, authenticated via PAT,
 // driving the real create + read endpoints end to end.
