@@ -46,3 +46,15 @@ func From(ctx context.Context, fallback *sql.DB) Querier {
 	}
 	return fallback
 }
+
+// BeginTx starts a transaction on the tenant-pinned connection when the request
+// pinned one, or on the shared pool otherwise. Beginning on the pinned conn is
+// what lets a transaction inherit the session-level app.tenant_id (hazard H8):
+// the RLS policies then bind every write inside the tx, not just reads. Repos
+// route their WithTx through this so the choice is made in one place.
+func BeginTx(ctx context.Context, fallback *sql.DB, opts *sql.TxOptions) (*sql.Tx, error) {
+	if conn, ok := ctx.Value(ctxKey{}).(*sql.Conn); ok && conn != nil {
+		return conn.BeginTx(ctx, opts)
+	}
+	return fallback.BeginTx(ctx, opts)
+}

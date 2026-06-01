@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
@@ -39,7 +40,12 @@ var _ appbill.BillRepo = (*Repo)(nil)
 // ----- Transaction boundary -----
 
 func (r *Repo) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+	// Begin on the tenant-pinned connection when the request pinned one, so the
+	// tx inherits app.tenant_id and the RLS policies bind every write in the
+	// approval flow (bill_head/item, stock_movement/snapshot/lot, outbox), which
+	// all share this tx. Falls back to the pool when nothing is pinned
+	// (background callers, tests) — behaviour is then unchanged.
+	tx, err := dbscope.BeginTx(ctx, r.db, nil)
 	if err != nil {
 		return fmt.Errorf("bill repo: begin tx: %w", err)
 	}
@@ -105,7 +111,7 @@ func (r *Repo) NextBillNo(ctx context.Context, tx *sql.Tx, tenantID uuid.UUID, p
 	if tx != nil {
 		row = tx.QueryRowContext(ctx, q, uuid.New(), tenantID, seqPrefix)
 	} else {
-		row = r.db.QueryRowContext(ctx, q, uuid.New(), tenantID, seqPrefix)
+		row = dbscope.From(ctx, r.db).QueryRowContext(ctx, q, uuid.New(), tenantID, seqPrefix)
 	}
 	if err := row.Scan(&seq); err != nil {
 		return "", fmt.Errorf("bill repo: next bill no: %w", err)
@@ -206,7 +212,7 @@ func (r *Repo) GetBill(ctx context.Context, tenantID, billID uuid.UUID) (*domain
 		FROM tally.bill_head
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
 
-	return scanBillHead(r.db.QueryRowContext(ctx, q, billID, tenantID))
+	return scanBillHead(dbscope.From(ctx, r.db).QueryRowContext(ctx, q, billID, tenantID))
 }
 
 func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
@@ -262,7 +268,7 @@ func (r *Repo) GetBillItems(ctx context.Context, tenantID, billID uuid.UUID) ([]
 		WHERE head_id = $1 AND tenant_id = $2
 		ORDER BY line_no ASC`
 
-	rows, err := r.db.QueryContext(ctx, q, billID, tenantID)
+	rows, err := dbscope.From(ctx, r.db).QueryContext(ctx, q, billID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("bill repo: get items: %w", err)
 	}
@@ -419,9 +425,10 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 	offset := (page - 1) * size
 
 	whereClause := strings.Join(where, " AND ")
+	dbh := dbscope.From(ctx, r.db)
 	countQ := `SELECT COUNT(*) FROM tally.bill_head WHERE ` + whereClause
 	var total int64
-	if err := r.db.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
+	if err := dbh.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("bill repo: list count: %w", err)
 	}
 
@@ -435,7 +442,7 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 		ORDER BY created_at DESC
 		LIMIT $` + fmt.Sprintf("%d OFFSET $%d", idx, idx+1)
 
-	rows, err := r.db.QueryContext(ctx, q, args...)
+	rows, err := dbh.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("bill repo: list bills: %w", err)
 	}
