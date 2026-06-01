@@ -11,8 +11,8 @@ import (
 
 	"github.com/google/uuid"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/unit"
-	"github.com/shopspring/decimal"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
+	"github.com/shopspring/decimal"
 )
 
 // ErrNotFound is returned when a unit_def row is not found.

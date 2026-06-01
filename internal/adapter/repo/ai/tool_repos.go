@@ -8,8 +8,8 @@ import (
 
 	"github.com/google/uuid"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
-	"github.com/shopspring/decimal"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
+	"github.com/shopspring/decimal"
 )
 
 // SQLProductRepo implements appai.ProductRepo using PostgreSQL.

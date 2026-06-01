@@ -7,6 +7,7 @@ import type { ColumnDef } from "@tanstack/react-table"
 import { listStockSnapshots, type StockSnapshot } from "@/lib/api/stock"
 import { listProducts, type Product } from "@/lib/api/products"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { formatCNY } from "@/lib/format"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
@@ -21,8 +22,6 @@ import { cn } from "@/lib/utils"
  * Joins snapshots with the product catalogue client-side so the table can
  * display name / SKU instead of bare UUIDs.
  */
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
-
 const SELECT_CLASS =
   "h-8 rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
@@ -46,6 +45,7 @@ export default function StockPage() {
   const [error, setError] = useState<string | null>(null)
   const [warehouseFilter, setWarehouseFilter] = useState<string>("")
   const [q, setQ] = useState("")
+  const tenantId = useTenantId()
 
   const load = useCallback((signal?: AbortSignal, isCancelled?: () => boolean) => {
     setLoading(true)
@@ -54,8 +54,8 @@ export default function StockPage() {
     // failure should error; product failure should degrade silently so the
     // user still sees stock numbers (with short-id fallback).
     Promise.allSettled([
-      listStockSnapshots({ tenantId: devTenantId, limit: 200, signal, retry: 2 }),
-      listProducts({ tenantId: devTenantId, limit: 200, signal, retry: 2 }),
+      listStockSnapshots({ tenantId, limit: 200, signal, retry: 2 }),
+      listProducts({ tenantId, limit: 200, signal, retry: 2 }),
     ])
       .then(([snapRes, prodRes]) => {
         if (isCancelled?.() || signal?.aborted) return
@@ -74,7 +74,7 @@ export default function StockPage() {
         if (isCancelled?.()) return
         setLoading(false)
       })
-  }, [])
+  }, [tenantId])
 
   useAbortableEffect((signal, isCancelled) => {
     load(signal, isCancelled)

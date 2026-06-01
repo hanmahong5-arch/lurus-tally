@@ -18,9 +18,9 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 
-	replenishrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/replenish"
 	airepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/ai"
 	digestrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/digest"
+	replenishrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/replenish"
 	reportsrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/reports"
 	searchrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/search"
 	"github.com/hanmahong5-arch/lurus-tally/internal/lifecycle"
@@ -44,12 +44,12 @@ func sqlRealDB(t *testing.T) (*sql.DB, func()) {
 		t.Fatalf("sql.Open: %v", err)
 	}
 	if err := db.PingContext(ctx); err != nil {
-		db.Close()    //nolint:errcheck
+		db.Close() //nolint:errcheck
 		cleanup()
 		t.Fatalf("db ping: %v", err)
 	}
 	return db, func() {
-		db.Close()  //nolint:errcheck
+		db.Close() //nolint:errcheck
 		cleanup()
 	}
 }

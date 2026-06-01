@@ -10,8 +10,8 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/hanmahong5-arch/lurus-tally/internal/lifecycle"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // setupTestDB starts a postgres container, runs migrations, and returns a connected *sql.DB.
@@ -41,15 +41,14 @@ func setupTestDB(t *testing.T) (*sql.DB, func()) {
 // TestRLS_TenantProfile_CrossTenantInvisible verifies that RLS on tenant_profile
 // prevents a user from seeing another tenant's row.
 //
-// SKIP REASON: testcontainers-go's postgres module creates the connection user as
-// SUPERUSER, which bypasses RLS even with FORCE ROW LEVEL SECURITY (FORCE only
-// applies to table OWNER, not SUPERUSER). Production K8s connections use a
-// non-superuser role, so RLS is correctly enforced there. To enable this test,
-// either: (a) add a non-superuser role + GRANTs in test setup and SET LOCAL ROLE
-// before query, or (b) use a docker image with a separate POSTGRES_USER and
-// non-superuser app role. Deferred to V1.5 stronger RLS test infra.
+// SKIP REASON: this early sketch ran its query on the testcontainers SUPERUSER
+// connection, which bypasses RLS unconditionally — so it could never prove
+// isolation. The real, non-superuser-owner proof now lives in
+// rls_isolation_test.go (TestRLS_ForceIsolation / TestRLS_ForceFlagSet), which
+// reassigns table ownership to a NOSUPERUSER role so FORCE ROW LEVEL SECURITY is
+// the operative mechanism. This stub is kept only as a pointer to that harness.
 func TestRLS_TenantProfile_CrossTenantInvisible(t *testing.T) {
-	t.Skip("RLS bypass by superuser testcontainer connection; see comment for V1.5 fix")
+	t.Skip("superseded by TestRLS_ForceIsolation in rls_isolation_test.go (non-superuser owner harness)")
 	db, cleanup := setupTestDB(t)
 	defer cleanup()
 

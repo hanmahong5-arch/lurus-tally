@@ -43,12 +43,14 @@ func notImplemented(c *gin.Context) {
 // and respond with 501 instead of panicking.
 // authMW may be nil — in that case the /api/v1 group has no auth middleware
 // and handlers will see no sub/tenant_id in context (returns 401).
+// tenantDBMW may be nil — when nil no tenant connection is pinned (dev / no-DB).
+// It MUST run after authMW (needs tenant_id) and before idempotencyMW.
 // idempotencyMW may be nil — when nil the dedup layer is skipped (dev / no-Redis).
 // It MUST run after authMW so the tenant_id is in context.
 // The engine mode (release/debug) is controlled by GIN_MODE or gin.SetMode.
 //
 //nolint:cyclop // router wiring is intentionally long
-func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler, suph *handlersupp.Handler, wh *handlerwarehouse.Handler, exh *handlerexport.Handler, acct *handleracct.Handler, replh *handlerreplenish.Handler, reph *handlerreports.Handler, srch *handlersearch.Handler, imph *handlerimporting.Handler, digh *handlerdigest.Handler, onh *handleronboarding.Handler) *gin.Engine {
+func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler, suph *handlersupp.Handler, wh *handlerwarehouse.Handler, exh *handlerexport.Handler, acct *handleracct.Handler, replh *handlerreplenish.Handler, reph *handlerreports.Handler, srch *handlersearch.Handler, imph *handlerimporting.Handler, digh *handlerdigest.Handler, onh *handleronboarding.Handler) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
@@ -71,6 +73,9 @@ func New(h *health.Handler, authMW gin.HandlerFunc, idempotencyMW gin.HandlerFun
 	api := r.Group("/api/v1")
 	if authMW != nil {
 		api.Use(authMW)
+	}
+	if tenantDBMW != nil {
+		api.Use(tenantDBMW)
 	}
 	if idempotencyMW != nil {
 		api.Use(idempotencyMW)

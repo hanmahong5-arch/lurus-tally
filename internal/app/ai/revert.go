@@ -71,11 +71,11 @@ type PriceCapturerPort interface {
 // It is composed with the Orchestrator at the handler level; the plan store is
 // the same PlanStore used by the orchestrator.
 type Reverter struct {
-	planStore      PlanStore
-	stockReverter  StockReverterPort
-	priceReverter  PriceReverterPort
-	snapshotStore  PriceSnapshotStore
-	undoTTL        time.Duration // configurable; defaults to UndoTTLSeconds
+	planStore     PlanStore
+	stockReverter StockReverterPort
+	priceReverter PriceReverterPort
+	snapshotStore PriceSnapshotStore
+	undoTTL       time.Duration // configurable; defaults to UndoTTLSeconds
 }
 
 // NewReverter constructs a Reverter.
@@ -102,9 +102,9 @@ func (r *Reverter) WithUndoTTL(d time.Duration) *Reverter {
 
 // RevertResult summarises the outcome of a revert operation.
 type RevertResult struct {
-	PlanID       uuid.UUID `json:"plan_id"`
-	RevertedType string    `json:"reverted_type"`
-	AffectedCount int      `json:"affected_count"`
+	PlanID        uuid.UUID `json:"plan_id"`
+	RevertedType  string    `json:"reverted_type"`
+	AffectedCount int       `json:"affected_count"`
 }
 
 // RevertPlan undoes a confirmed bulk_stock_adjust or price_change plan.

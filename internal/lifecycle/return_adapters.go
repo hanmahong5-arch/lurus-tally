@@ -12,7 +12,9 @@ import (
 // package stays decoupled from app/bill internals.
 
 // importReturnCreator adapts bill.CreateReturnBillUseCase to importing.ReturnCreator.
-type importReturnCreator struct{ uc *appbill.CreateReturnBillUseCase }
+type importReturnCreator struct {
+	uc *appbill.CreateReturnBillUseCase
+}
 
 func (a importReturnCreator) Create(ctx context.Context, in appimporting.ReturnCreatorInput) (*appimporting.ReturnCreatorOutput, error) {
 	items := make([]appbill.ReturnItem, len(in.Items))
@@ -39,7 +41,9 @@ func (a importReturnCreator) Create(ctx context.Context, in appimporting.ReturnC
 }
 
 // importReturnApprover adapts bill.ApproveReturnBillUseCase to importing.ReturnApprover.
-type importReturnApprover struct{ uc *appbill.ApproveReturnBillUseCase }
+type importReturnApprover struct {
+	uc *appbill.ApproveReturnBillUseCase
+}
 
 func (a importReturnApprover) Approve(ctx context.Context, in appimporting.ReturnApproverInput) error {
 	return a.uc.Execute(ctx, appbill.ApproveReturnRequest{

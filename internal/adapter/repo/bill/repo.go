@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
@@ -39,7 +40,12 @@ var _ appbill.BillRepo = (*Repo)(nil)
 // ----- Transaction boundary -----
 
 func (r *Repo) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
-	tx, err := r.db.BeginTx(ctx, nil)
+	// Begin on the tenant-pinned connection when the request pinned one, so the
+	// tx inherits app.tenant_id and the RLS policies bind every write in the
+	// approval flow (bill_head/item, stock_movement/snapshot/lot, outbox), which
+	// all share this tx. Falls back to the pool when nothing is pinned
+	// (background callers, tests) — behaviour is then unchanged.
+	tx, err := dbscope.BeginTx(ctx, r.db, nil)
 	if err != nil {
 		return fmt.Errorf("bill repo: begin tx: %w", err)
 	}
@@ -105,7 +111,7 @@ func (r *Repo) NextBillNo(ctx context.Context, tx *sql.Tx, tenantID uuid.UUID, p
 	if tx != nil {
 		row = tx.QueryRowContext(ctx, q, uuid.New(), tenantID, seqPrefix)
 	} else {
-		row = r.db.QueryRowContext(ctx, q, uuid.New(), tenantID, seqPrefix)
+		row = dbscope.From(ctx, r.db).QueryRowContext(ctx, q, uuid.New(), tenantID, seqPrefix)
 	}
 	if err := row.Scan(&seq); err != nil {
 		return "", fmt.Errorf("bill repo: next bill no: %w", err)
@@ -121,8 +127,27 @@ func (r *Repo) CreateBill(ctx context.Context, tx *sql.Tx, head *domain.BillHead
 		INSERT INTO tally.bill_head
 			(id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 			 creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount, remark,
-			 created_at, updated_at)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`
+			 created_at, updated_at, currency, exchange_rate, amount_local)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`
+
+	// Multi-currency columns (migration 000024). Persist the rate the bill was booked
+	// at so the approval path can convert foreign-currency unit prices to base currency;
+	// before this, CreateBill omitted these columns and a DB-loaded head always carried
+	// the column default (rate 1), making the approval-time FX conversion inert. Default
+	// to domestic when a caller leaves the fields unset so the row still satisfies the
+	// currency FK and a positive rate.
+	currency := head.Currency
+	if currency == "" {
+		currency = "CNY"
+	}
+	exchangeRate := head.ExchangeRateVal
+	if exchangeRate.IsZero() || exchangeRate.IsNegative() {
+		exchangeRate = decimal.NewFromInt(1)
+	}
+	amountLocal := head.AmountLocal
+	if amountLocal.IsZero() {
+		amountLocal = head.TotalAmount
+	}
 
 	_, err := tx.ExecContext(ctx, headQ,
 		head.ID, head.TenantID, head.BillNo, string(head.BillType), string(head.SubType),
@@ -130,6 +155,7 @@ func (r *Repo) CreateBill(ctx context.Context, tx *sql.Tx, head *domain.BillHead
 		head.CreatorID, head.BillDate,
 		head.Subtotal.String(), head.ShippingFee.String(), head.TaxAmount.String(), head.TotalAmount.String(),
 		head.Remark, head.CreatedAt, head.UpdatedAt,
+		currency, exchangeRate.String(), amountLocal.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("bill repo: create head: %w", err)
@@ -168,7 +194,8 @@ func (r *Repo) GetBillForUpdate(ctx context.Context, tx *sql.Tx, tenantID, billI
 	const q = `
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at
+		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at,
+		       exchange_rate
 		FROM tally.bill_head
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
 		FOR UPDATE`
@@ -180,18 +207,19 @@ func (r *Repo) GetBill(ctx context.Context, tenantID, billID uuid.UUID) (*domain
 	const q = `
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at
+		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at,
+		       exchange_rate
 		FROM tally.bill_head
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
 
-	return scanBillHead(r.db.QueryRowContext(ctx, q, billID, tenantID))
+	return scanBillHead(dbscope.From(ctx, r.db).QueryRowContext(ctx, q, billID, tenantID))
 }
 
 func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
 	var h domain.BillHead
 	var billType, subType string
 	var status int16
-	var subtotal, shippingFee, taxAmount, totalAmount, paidAmount string
+	var subtotal, shippingFee, taxAmount, totalAmount, paidAmount, exchangeRate string
 	err := row.Scan(
 		&h.ID, &h.TenantID, &h.BillNo, &billType, &subType, &status,
 		&h.PartnerID, &h.WarehouseID,
@@ -201,6 +229,7 @@ func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
 		&h.ApprovedAt, &h.ApprovedBy,
 		&h.Revision,
 		&h.Remark, &h.CreatedAt, &h.UpdatedAt,
+		&exchangeRate,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, appbill.ErrBillNotFound
@@ -211,12 +240,24 @@ func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
 	h.BillType = domain.BillType(billType)
 	h.SubType = domain.BillSubType(subType)
 	h.Status = domain.BillStatus(status)
-	// TODO: these callers originally ignored parse errors; behaviour preserved.
-	h.Subtotal, _ = decimalutil.Parse(subtotal, "subtotal")
-	h.ShippingFee, _ = decimalutil.Parse(shippingFee, "shipping_fee")
-	h.TaxAmount, _ = decimalutil.Parse(taxAmount, "tax_amount")
-	h.TotalAmount, _ = decimalutil.Parse(totalAmount, "total_amount")
-	h.PaidAmount, _ = decimalutil.Parse(paidAmount, "paid_amount")
+	if h.Subtotal, err = decimalutil.Parse(subtotal, "subtotal"); err != nil {
+		return nil, fmt.Errorf("bill repo: scan head: %w", err)
+	}
+	if h.ShippingFee, err = decimalutil.Parse(shippingFee, "shipping_fee"); err != nil {
+		return nil, fmt.Errorf("bill repo: scan head: %w", err)
+	}
+	if h.TaxAmount, err = decimalutil.Parse(taxAmount, "tax_amount"); err != nil {
+		return nil, fmt.Errorf("bill repo: scan head: %w", err)
+	}
+	if h.TotalAmount, err = decimalutil.Parse(totalAmount, "total_amount"); err != nil {
+		return nil, fmt.Errorf("bill repo: scan head: %w", err)
+	}
+	if h.PaidAmount, err = decimalutil.Parse(paidAmount, "paid_amount"); err != nil {
+		return nil, fmt.Errorf("bill repo: scan head: %w", err)
+	}
+	if h.ExchangeRateVal, err = decimalutil.Parse(exchangeRate, "exchange_rate"); err != nil {
+		return nil, fmt.Errorf("bill repo: scan head: %w", err)
+	}
 	return &h, nil
 }
 
@@ -227,7 +268,7 @@ func (r *Repo) GetBillItems(ctx context.Context, tenantID, billID uuid.UUID) ([]
 		WHERE head_id = $1 AND tenant_id = $2
 		ORDER BY line_no ASC`
 
-	rows, err := r.db.QueryContext(ctx, q, billID, tenantID)
+	rows, err := dbscope.From(ctx, r.db).QueryContext(ctx, q, billID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("bill repo: get items: %w", err)
 	}
@@ -243,10 +284,15 @@ func (r *Repo) GetBillItems(ctx context.Context, tenantID, billID uuid.UUID) ([]
 		); err != nil {
 			return nil, fmt.Errorf("bill repo: scan item: %w", err)
 		}
-		// TODO: these callers originally ignored parse errors; behaviour preserved.
-		it.Qty, _ = decimalutil.Parse(qty, "qty")
-		it.UnitPrice, _ = decimalutil.Parse(unitPrice, "unit_price")
-		it.LineAmount, _ = decimalutil.Parse(lineAmount, "line_amount")
+		if it.Qty, err = decimalutil.Parse(qty, "qty"); err != nil {
+			return nil, fmt.Errorf("bill repo: scan item: %w", err)
+		}
+		if it.UnitPrice, err = decimalutil.Parse(unitPrice, "unit_price"); err != nil {
+			return nil, fmt.Errorf("bill repo: scan item: %w", err)
+		}
+		if it.LineAmount, err = decimalutil.Parse(lineAmount, "line_amount"); err != nil {
+			return nil, fmt.Errorf("bill repo: scan item: %w", err)
+		}
 		items = append(items, &it)
 	}
 	if err := rows.Err(); err != nil {
@@ -324,6 +370,19 @@ func (r *Repo) UpdatePaidAmount(ctx context.Context, tx *sql.Tx, tenantID, billI
 	return nil
 }
 
+// UpdateItemPurchasePrice sets bill_item.purchase_price for a single line within tx.
+// Sale approval calls this with the WAC/FIFO cost computed by the stock-out movement so
+// margin reports compare sale price against the real cost of goods sold instead of zero.
+// purchasePrice is expressed in base currency, matching the cost basis of stock movements.
+func (r *Repo) UpdateItemPurchasePrice(ctx context.Context, tx *sql.Tx, tenantID, itemID uuid.UUID, purchasePrice decimal.Decimal) error {
+	const q = `UPDATE tally.bill_item SET purchase_price = $1 WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NULL`
+	_, err := tx.ExecContext(ctx, q, purchasePrice.String(), itemID, tenantID)
+	if err != nil {
+		return fmt.Errorf("bill repo: update item purchase_price: %w", err)
+	}
+	return nil
+}
+
 func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domain.BillHead, int64, error) {
 	args := []any{f.TenantID}
 	idx := 2
@@ -366,9 +425,10 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 	offset := (page - 1) * size
 
 	whereClause := strings.Join(where, " AND ")
+	dbh := dbscope.From(ctx, r.db)
 	countQ := `SELECT COUNT(*) FROM tally.bill_head WHERE ` + whereClause
 	var total int64
-	if err := r.db.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
+	if err := dbh.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("bill repo: list count: %w", err)
 	}
 
@@ -382,7 +442,7 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 		ORDER BY created_at DESC
 		LIMIT $` + fmt.Sprintf("%d OFFSET $%d", idx, idx+1)
 
-	rows, err := r.db.QueryContext(ctx, q, args...)
+	rows, err := dbh.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("bill repo: list bills: %w", err)
 	}
@@ -409,12 +469,21 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 		h.BillType = domain.BillType(billType)
 		h.SubType = domain.BillSubType(subType)
 		h.Status = domain.BillStatus(status)
-		// TODO: these callers originally ignored parse errors; behaviour preserved.
-		h.Subtotal, _ = decimalutil.Parse(subtotal, "subtotal")
-		h.ShippingFee, _ = decimalutil.Parse(shippingFee, "shipping_fee")
-		h.TaxAmount, _ = decimalutil.Parse(taxAmount, "tax_amount")
-		h.TotalAmount, _ = decimalutil.Parse(totalAmount, "total_amount")
-		h.PaidAmount, _ = decimalutil.Parse(paidAmount, "paid_amount")
+		if h.Subtotal, err = decimalutil.Parse(subtotal, "subtotal"); err != nil {
+			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
+		}
+		if h.ShippingFee, err = decimalutil.Parse(shippingFee, "shipping_fee"); err != nil {
+			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
+		}
+		if h.TaxAmount, err = decimalutil.Parse(taxAmount, "tax_amount"); err != nil {
+			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
+		}
+		if h.TotalAmount, err = decimalutil.Parse(totalAmount, "total_amount"); err != nil {
+			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
+		}
+		if h.PaidAmount, err = decimalutil.Parse(paidAmount, "paid_amount"); err != nil {
+			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
+		}
 		bills = append(bills, h)
 	}
 	if err := rows.Err(); err != nil {

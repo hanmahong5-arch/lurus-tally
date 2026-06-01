@@ -48,6 +48,7 @@ import (
 	repoauth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/auth"
 	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
+	repodau "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dau"
 	repodigest "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/digest"
 	repooutbox "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/event_outbox"
 	repohorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/horticulture"
@@ -95,7 +96,20 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/memorusclient"
 	_ "github.com/jackc/pgx/v5/stdlib" // pgx driver for database/sql
 	"github.com/nats-io/nats.go"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/go-redis/v9"
+)
+
+// Connection-pool ceilings. Sized for a single 18200 pod against a Postgres
+// with the default max_connections=100: 50 open leaves headroom for migrations,
+// the outbox/audit workers, and operator psql sessions. Because TenantDB pins a
+// connection for the request's duration, max-open also caps concurrent
+// tenant-scoped requests; excess requests queue on the pool rather than failing.
+const (
+	dbMaxOpenConns    = 50
+	dbMaxIdleConns    = 25
+	dbConnMaxLifetime = 30 * time.Minute
+	dbConnMaxIdleTime = 5 * time.Minute
 )
 
 // App is the application root. It holds all wired dependencies and manages
@@ -128,6 +142,15 @@ func NewApp(cfg *config.Config) (*App, error) {
 	if err != nil {
 		return nil, fmt.Errorf("lifecycle: cannot open database: %w; check DATABASE_DSN", err)
 	}
+	// Bound the pool. middleware.TenantDB pins one connection for the whole
+	// request (to carry app.tenant_id for the RLS backstop), so an unbounded
+	// pool could open a connection per in-flight request and exhaust Postgres's
+	// max_connections. These ceilings cap concurrency and recycle connections so
+	// a leaked GUC can never outlive ConnMaxLifetime.
+	db.SetMaxOpenConns(dbMaxOpenConns)
+	db.SetMaxIdleConns(dbMaxIdleConns)
+	db.SetConnMaxLifetime(dbConnMaxLifetime)
+	db.SetConnMaxIdleTime(dbConnMaxIdleTime)
 
 	// Wire product use cases.
 	productRepo := repoproduct.New(db)
@@ -298,20 +321,27 @@ func NewApp(cfg *config.Config) (*App, error) {
 		l.Info("billing integration enabled")
 	}
 
-	// Wire AI assistant. Requires NEWAPI_API_KEY; when absent, AI routes return 501.
-	// rdb is hoisted so the readiness probe can ping it when AI is enabled. When
-	// AI is disabled, Redis is not opened at all and is not part of the readiness
-	// contract — degraded but bootable.
-	var (
-		aiHandler *handlerai.Handler
-		rdb       *redis.Client
-	)
-	if cfg.NewAPIKey != "" {
+	// Hoisted Redis client. Per-user DAU counting, the idempotency dedup layer,
+	// and the AI plan store all share one connection. Created whenever REDIS_URL
+	// is set (it is a required config field in production); nil only in degraded
+	// dev/test configs where REDIS_URL is blank — in that case DAU, idempotency,
+	// and AI all degrade gracefully rather than failing boot.
+	var rdb *redis.Client
+	if cfg.RedisURL != "" {
 		rdbOpts, rerr := redis.ParseURL(cfg.RedisURL)
 		if rerr != nil {
-			return nil, fmt.Errorf("lifecycle: cannot parse REDIS_URL for AI store: %w", rerr)
+			return nil, fmt.Errorf("lifecycle: cannot parse REDIS_URL: %w; check REDIS_URL", rerr)
 		}
 		rdb = redis.NewClient(rdbOpts)
+	}
+
+	// Wire AI assistant. Requires NEWAPI_API_KEY; when absent, AI routes return 501.
+	// The AI plan store reuses the hoisted Redis client above.
+	var aiHandler *handlerai.Handler
+	if cfg.NewAPIKey != "" {
+		if rdb == nil {
+			return nil, fmt.Errorf("lifecycle: AI assistant requires REDIS_URL (NEWAPI_API_KEY is set but Redis is unavailable)")
+		}
 		planTTL := time.Duration(cfg.AIPlanTTLSeconds) * time.Second
 		planStore := repoai.New(repoai.NewGoRedisAdapter(rdb), planTTL)
 
@@ -442,7 +472,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 			return pat.TenantID, pat.Scopes, nil
 		}
 
-		authMW = middleware.NewAuthMiddleware(jwksURL, issuer, tenantLookup, patResolver)
+		authMW = middleware.NewAuthMiddleware(jwksURL, issuer, cfg.ZitadelAudience, tenantLookup, patResolver)
 		l.Info("auth middleware enabled",
 			slog.String("issuer", issuer),
 			slog.String("jwks_url", jwksURL))
@@ -582,13 +612,39 @@ func NewApp(cfg *config.Config) (*App, error) {
 		repoonboarding.New(db),
 	)
 
-	r := router.New(h, authMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
+	// Per-request tenant pin. Sets app.tenant_id on a dedicated connection so the
+	// RLS policies (migration 000042) enforce isolation at the database. Mounted
+	// after auth (needs tenant_id) and before idempotency.
+	tenantDBMW := middleware.TenantDB(db)
+
+	r := router.New(h, authMW, tenantDBMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
 		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler, exportHandler, accountHandler,
 		replenishHandler, reportsHandler, searchHandler, importHandler, digestHandler, onboardingHandler)
 
+	// Per-user DAU (S0.C1). Backed by the hoisted Redis client; when Redis is
+	// absent the telemetry handler skips counting and the collector is not
+	// registered, so tally_*_dau report no data rather than a fabricated zero.
+	var dauRecorder handlertelemetry.DAURecorder
+	if rdb != nil {
+		dauStore := repodau.New(rdb)
+		dauRecorder = dauStore
+		// Expose tally_palette_invocation_dau / tally_ai_drawer_open_dau /
+		// tally_total_dau on /internal/v1/metrics (default Prometheus registry).
+		// Register (not MustRegister) and tolerate duplicate registration so
+		// repeated NewApp calls in tests don't panic.
+		dauCollector := handlermetrics.NewDAUCollector(dauStore, l)
+		if regErr := prometheus.Register(dauCollector); regErr != nil {
+			var already prometheus.AlreadyRegisteredError
+			if !errors.As(regErr, &already) {
+				l.Warn("dau collector registration failed; tally_*_dau will be absent",
+					slog.String("error", regErr.Error()))
+			}
+		}
+	}
+
 	// POST /internal/v1/telemetry/web — browser-side product telemetry → NATS
 	// PSI_TELEMETRY.web.* (S0.Q3). Bearer-gated via the same key as metrics.
-	telemetryHandler := handlertelemetry.New(natsPub, cfg.PlatformInternalKey, "anonymous")
+	telemetryHandler := handlertelemetry.New(natsPub, cfg.PlatformInternalKey, "anonymous", dauRecorder)
 	telemetryHandler.Register(r)
 
 	// POST /webhooks/shopify/orders — public (HMAC-verified) e-commerce ingest.
@@ -603,6 +659,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	if authMW != nil {
 		shopifyAdminGroup.Use(authMW)
 	}
+	shopifyAdminGroup.Use(tenantDBMW) // after auth, before idempotency (same order as the main group)
 	if idempotencyMW != nil {
 		shopifyAdminGroup.Use(idempotencyMW)
 	}

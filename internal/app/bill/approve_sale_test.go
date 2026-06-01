@@ -317,6 +317,88 @@ func TestApproveSale_TwoShortSKUs_ReturnsBatchError(t *testing.T) {
 	}
 }
 
+// costStockUC implements StockMovementExecutor and returns a snapshot whose UnitCost is the
+// configured cost of goods sold, mirroring how the WAC calculator reports the prevailing
+// average cost on an outbound movement.
+type costStockUC struct {
+	calls    []appstock.RecordMovementRequest
+	cogsCost decimal.Decimal
+}
+
+func (m *costStockUC) ExecuteInTx(_ context.Context, _ *sql.Tx, req appstock.RecordMovementRequest) (*domainstock.Snapshot, error) {
+	m.calls = append(m.calls, req)
+	return &domainstock.Snapshot{
+		TenantID:    req.TenantID,
+		ProductID:   req.ProductID,
+		WarehouseID: req.WarehouseID,
+		OnHandQty:   req.Qty,
+		UnitCost:    m.cogsCost,
+	}, nil
+}
+
+// purchasePriceRecordingRepo wraps mockBillRepo and additionally implements the optional
+// UpdateItemPurchasePrice capability, recording the value written for each item.
+type purchasePriceRecordingRepo struct {
+	*mockBillRepo
+	purchasePriceByItem map[uuid.UUID]decimal.Decimal
+}
+
+func newPurchasePriceRecordingRepo() *purchasePriceRecordingRepo {
+	return &purchasePriceRecordingRepo{
+		mockBillRepo:        newMockBillRepo(),
+		purchasePriceByItem: make(map[uuid.UUID]decimal.Decimal),
+	}
+}
+
+func (m *purchasePriceRecordingRepo) UpdateItemPurchasePrice(_ context.Context, _ *sql.Tx, _, itemID uuid.UUID, purchasePrice decimal.Decimal) error {
+	m.purchasePriceByItem[itemID] = purchasePrice
+	return nil
+}
+
+// TestApproveSale_PersistsCostOfGoodsSold verifies that approving a sale writes the real
+// WAC/FIFO unit cost returned by the stock-out movement into bill_item.purchase_price, so
+// margin reports compare the sale price against actual cost instead of zero.
+func TestApproveSale_PersistsCostOfGoodsSold(t *testing.T) {
+	repo := newPurchasePriceRecordingRepo()
+	unitRepo := newMockProductUnitRepo()
+	payRepo := newMockPaymentRepo()
+
+	cogs := decimal.NewFromFloat(6.5)
+	stockUC := &costStockUC{cogsCost: cogs}
+
+	warehouseID := uuid.New()
+	billID := seedSaleDraftBill(repo.mockBillRepo, 2, warehouseID)
+	items := repo.itemsByBillID[billID]
+	seedProductUnitFactors(unitRepo, items)
+
+	uc := appbill.NewApproveSaleUseCase(repo, stockUC, unitRepo, payRepo)
+	err := uc.Execute(context.Background(), appbill.ApproveSaleRequest{
+		TenantID:  testTenantID,
+		BillID:    billID,
+		CreatorID: testCreatorID,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if len(repo.purchasePriceByItem) != 2 {
+		t.Fatalf("purchase_price writes = %d, want 2", len(repo.purchasePriceByItem))
+	}
+	for _, it := range items {
+		got, ok := repo.purchasePriceByItem[it.ID]
+		if !ok {
+			t.Errorf("item %s: purchase_price not written", it.ID)
+			continue
+		}
+		if got.IsZero() {
+			t.Errorf("item %s: purchase_price is zero, want real cost %s", it.ID, cogs)
+		}
+		if !got.Equal(cogs) {
+			t.Errorf("item %s: purchase_price = %s, want %s", it.ID, got, cogs)
+		}
+	}
+}
+
 // TestApproveSale_AlreadyApproved_ReturnsNilIdempotent verifies that re-approving an
 // already-Approved sale bill returns nil without emitting any stock movements (B3 idempotency).
 func TestApproveSale_AlreadyApproved_ReturnsNilIdempotent(t *testing.T) {

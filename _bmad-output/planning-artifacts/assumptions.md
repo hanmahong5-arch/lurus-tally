@@ -89,8 +89,8 @@ last_updated: null
 
 > `bin/assumption-snapshot.sh` 每日 append 一行；超过 90 天 trim。
 
-| 日期 | H1 status | H1 current_value | H2 status | H2 current_value | H3 status | H3 current_value |
-|---|---|---|---|---|---|---|
+| 日期 | H1 status | H1 current_value | H2 status | H2 current_value | H3 status | H3 current_value | KS1 status | KS1 value | KS2 status | KS2 value |
+|---|---|---|---|---|---|---|---|---|---|---|
 | 2026-05-18 | pending | — | pending | — | pending | — |
 | 2026-05-20 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-05-21 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |

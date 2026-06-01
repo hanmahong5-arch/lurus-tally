@@ -16,6 +16,7 @@ import { BILL_STATUS_TONE } from "@/lib/status"
 import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { BillLineEditor, type BillLineItem } from "@/components/bill-line-editor"
 import { useConfirm } from "@/hooks/useConfirm"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { Badge } from "@/components/ui/badge"
@@ -23,8 +24,6 @@ import { Button } from "@/components/ui/button"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { Skeleton } from "@/components/ui/skeleton"
 import { formatDate, formatDateTime } from "@/lib/format"
-
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
 export default function PurchaseDetailPage() {
   const { id } = useParams<{ id: string }>()
@@ -37,11 +36,12 @@ export default function PurchaseDetailPage() {
   const [acting, setActing] = useState(false)
 
   const confirm = useConfirm()
+  const tenantId = useTenantId()
 
   const load = useCallback((signal?: AbortSignal, isCancelled?: () => boolean) => {
     setLoading(true)
     setError(null)
-    getPurchaseBill(id, devTenantId, signal)
+    getPurchaseBill(id, tenantId, signal)
       .then((data) => {
         if (isCancelled?.()) return
         setDetail(data)
@@ -54,7 +54,7 @@ export default function PurchaseDetailPage() {
         if (isCancelled?.()) return
         setLoading(false)
       })
-  }, [id])
+  }, [id, tenantId])
 
   useAbortableEffect((signal, isCancelled) => {
     load(signal, isCancelled)
@@ -66,7 +66,7 @@ export default function PurchaseDetailPage() {
     setActing(true)
     setActionError(null)
     try {
-      await approvePurchaseBill(id, devTenantId)
+      await approvePurchaseBill(id, tenantId)
       load()
     } catch (e) {
       setActionError(String(e))
@@ -86,7 +86,7 @@ export default function PurchaseDetailPage() {
       id,
       billNo,
       revert: async () => {
-        await restorePurchaseBill(id, devTenantId)
+        await restorePurchaseBill(id, tenantId)
         load()
       },
     })
@@ -94,7 +94,7 @@ export default function PurchaseDetailPage() {
     setActing(true)
     setActionError(null)
     try {
-      await cancelPurchaseBill(id, devTenantId)
+      await cancelPurchaseBill(id, tenantId)
       load()
     } catch (e) {
       globalUndoStack.pop()

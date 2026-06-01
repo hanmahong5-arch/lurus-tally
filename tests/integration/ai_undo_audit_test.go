@@ -275,7 +275,7 @@ func queryAuditRows(t *testing.T, db *sql.DB, tenantID uuid.UUID) []map[string]a
 	for rows.Next() {
 		var (
 			id, tid, actorID, action, targetKind, targetID, payloadText string
-			createdAt                                                    time.Time
+			createdAt                                                   time.Time
 		)
 		if err := rows.Scan(&id, &tid, &actorID, &action, &targetKind, &targetID, &payloadText, &createdAt); err != nil {
 			t.Fatalf("queryAuditRows scan: %v", err)

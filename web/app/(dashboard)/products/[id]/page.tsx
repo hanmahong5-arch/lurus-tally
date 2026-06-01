@@ -11,12 +11,11 @@ import {
 } from "@/lib/api/products"
 import { ProductForm } from "@/components/product-form"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { Skeleton } from "@/components/ui/skeleton"
-
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
 
 export default function ProductDetailPage() {
   const router = useRouter()
@@ -26,12 +25,13 @@ export default function ProductDetailPage() {
   const [product, setProduct] = useState<Product | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const tenantId = useTenantId()
 
   const load = useCallback((signal: AbortSignal, isCancelled: () => boolean) => {
     if (!id) return
     setLoading(true)
     setError(null)
-    getProduct(id, devTenantId, signal)
+    getProduct(id, tenantId, signal)
       .then((p) => {
         if (isCancelled()) return
         setProduct(p)
@@ -44,12 +44,12 @@ export default function ProductDetailPage() {
         if (isCancelled()) return
         setLoading(false)
       })
-  }, [id])
+  }, [id, tenantId])
 
   useAbortableEffect(load, [load])
 
   async function handleSubmit(input: CreateProductInput) {
-    await updateProduct(id, input, devTenantId)
+    await updateProduct(id, input, tenantId)
     router.push("/products")
     router.refresh()
   }
@@ -90,7 +90,7 @@ export default function ProductDetailPage() {
         initial={product}
         onSubmit={handleSubmit}
         onCancel={() => router.back()}
-        tenantId={devTenantId}
+        tenantId={tenantId}
       />
     </PageContainer>
   )

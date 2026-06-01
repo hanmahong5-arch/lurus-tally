@@ -63,6 +63,10 @@ var AllowedWebTelemetryEvents = map[string]struct{}{
 	"plan_accept_rate":             {},
 	"onboarding_first_po_exported": {},
 	"cmd_z_used":                   {},
+	// North Star WAD increment (one per purchase-draft batch). Must mirror
+	// web/lib/telemetry.ts and web/app/api/otel-events/route.ts VALID_EVENTS;
+	// absent here = backend 400-rejects the event = North Star never recorded.
+	"wad_increment": {},
 }
 
 // SubjectWebTelemetry returns the JetStream subject for a web telemetry

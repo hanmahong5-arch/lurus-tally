@@ -253,12 +253,12 @@ type SaleApprover interface {
 // ReturnCreatorInput is the input for creating a return-stock (入库-销售退货) bill.
 // Used for both cancellation reversals and partial refund lines.
 type ReturnCreatorInput struct {
-	TenantID       uuid.UUID
-	CreatorID      uuid.UUID
-	WarehouseID    *uuid.UUID
-	BillDate       time.Time
-	Remark         string // carries audit link to original bill
-	Items          []SaleLineItem
+	TenantID    uuid.UUID
+	CreatorID   uuid.UUID
+	WarehouseID *uuid.UUID
+	BillDate    time.Time
+	Remark      string // carries audit link to original bill
+	Items       []SaleLineItem
 }
 
 // ReturnCreatorOutput is returned by ReturnCreator.Create on success.

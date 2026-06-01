@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/shopspring/decimal"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
+	"github.com/shopspring/decimal"
 )
 
 // DraftBatchLine is one product + quantity to include in a batch PO draft.

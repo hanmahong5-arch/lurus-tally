@@ -24,6 +24,10 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+// testAudience is Tally's expected Zitadel client/project id used across the
+// auth middleware tests. Valid tokens must carry it in their aud claim.
+const testAudience = "tally-client-id"
+
 // generateTestRSAKey creates an in-memory RSA key pair for tests.
 func generateTestRSAKey(t *testing.T) *rsa.PrivateKey {
 	t.Helper()
@@ -117,7 +121,7 @@ func TestAuthMiddleware_NoToken_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -135,7 +139,7 @@ func TestAuthMiddleware_InvalidJWT_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -154,7 +158,7 @@ func TestAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	token := signToken(t, priv, "test-kid", "user-sub-123", "https://auth.lurus.cn",
@@ -176,13 +180,13 @@ func TestAuthMiddleware_ValidJWT_InjectsUserID(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	tenantID := uuid.New().String()
 	token := signToken(t, priv, "test-kid", "user-sub-abc", "https://auth.lurus.cn",
 		time.Now().Add(1*time.Hour),
-		map[string]any{"tally_tenant_id": tenantID})
+		map[string]any{"tally_tenant_id": tenantID, "aud": testAudience})
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -220,12 +224,12 @@ func TestAuthMiddleware_TenantLookupFallback_InjectsTenantID(t *testing.T) {
 		return expectedTenant, nil
 	}
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", lookup, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, lookup, nil)
 	engine := newEngineWithAuth(t, m)
 
 	// Token has NO tally_tenant_id claim — lookup must fill the gap.
 	token := signToken(t, priv, "test-kid", "user-sub-abc", "https://auth.lurus.cn",
-		time.Now().Add(1*time.Hour), nil)
+		time.Now().Add(1*time.Hour), map[string]any{"aud": testAudience})
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -258,11 +262,11 @@ func TestAuthMiddleware_TenantLookup_FirstTimeUser_NoTenantInjected(t *testing.T
 		return uuid.Nil, nil
 	}
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", lookup, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, lookup, nil)
 	engine := newEngineWithAuth(t, m)
 
 	token := signToken(t, priv, "test-kid", "first-time-user", "https://auth.lurus.cn",
-		time.Now().Add(1*time.Hour), nil)
+		time.Now().Add(1*time.Hour), map[string]any{"aud": testAudience})
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
@@ -286,7 +290,7 @@ func TestAuthMiddleware_WrongIssuer_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	// Token signed with correct key but wrong issuer.
@@ -300,6 +304,32 @@ func TestAuthMiddleware_WrongIssuer_Returns401(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// TestAuthMiddleware_WrongAudience_Returns401 verifies that a token correctly
+// signed by the same issuer's key but minted with a DIFFERENT audience (e.g.
+// another app on the shared Zitadel issuer) is rejected — guarding against
+// cross-app token replay.
+func TestAuthMiddleware_WrongAudience_Returns401(t *testing.T) {
+	priv := generateTestRSAKey(t)
+	jwksJSON := buildJWKS(t, priv, "test-kid")
+	srv := mockJWKSServer(t, jwksJSON)
+
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
+	engine := newEngineWithAuth(t, m)
+
+	// Valid key, valid issuer, valid expiry — but aud is for another app.
+	token := signToken(t, priv, "test-kid", "user-sub-other", "https://auth.lurus.cn",
+		time.Now().Add(1*time.Hour), map[string]any{"aud": "other-app-client-id"})
+
+	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	engine.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401 for wrong audience, got %d body=%s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -318,7 +348,7 @@ func TestAuthMiddleware_PATBearer_ResolvesTenant(t *testing.T) {
 		return wantTenant, []string{"read"}, nil
 	}
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, resolver)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, resolver)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -346,7 +376,7 @@ func TestAuthMiddleware_PATInvalid_Returns401(t *testing.T) {
 		return uuid.Nil, nil, middleware.ErrInvalidPAT
 	}
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, resolver)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, resolver)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -365,7 +395,7 @@ func TestAuthMiddleware_PATInvalid_Returns401(t *testing.T) {
 func TestAuthMiddleware_PATWithNilResolver_FallsThrough(t *testing.T) {
 	srv := mockJWKSServer(t, buildJWKS(t, generateTestRSAKey(t), "kid"))
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)

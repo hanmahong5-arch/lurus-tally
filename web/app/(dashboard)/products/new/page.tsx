@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation"
 import { ProductForm } from "@/components/product-form"
 import { createProduct, type CreateProductInput } from "@/lib/api/products"
 import { useDraft } from "@/hooks/useDraft"
+import { useTenantId } from "@/hooks/use-tenant-id"
 import { DraftBadge } from "@/components/draft/DraftBadge"
 import { DraftRestoreToast } from "@/components/draft/DraftRestoreToast"
 import { PageContainer } from "@/components/ui/page-container"
@@ -11,20 +12,17 @@ import { PageHeader } from "@/components/ui/page-header"
 
 /**
  * New product page.
- *
- * Story 2.1 TODO: replace devTenantId with tenantId from session.
  */
-const devTenantId = process.env.NEXT_PUBLIC_DEV_TENANT_ID
-
 const PRODUCT_INITIAL: Partial<CreateProductInput> = {}
 
 export default function NewProductPage() {
   const router = useRouter()
+  const tenantId = useTenantId()
 
   const draft = useDraft<Partial<CreateProductInput>>("draft:product:new", PRODUCT_INITIAL)
 
   async function handleSubmit(input: CreateProductInput) {
-    await createProduct(input, devTenantId)
+    await createProduct(input, tenantId)
     await draft.markSubmitted()
     router.push("/products")
     router.refresh()
@@ -48,7 +46,7 @@ export default function NewProductPage() {
         initial={draft.value}
         onSubmit={handleSubmit}
         onCancel={() => router.back()}
-        tenantId={devTenantId}
+        tenantId={tenantId}
         onChange={draft.setValue}
       />
     </PageContainer>

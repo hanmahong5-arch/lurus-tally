@@ -141,6 +141,45 @@ func TestIncWebTelemetry_IncrementsByEvent(t *testing.T) {
 	}
 }
 
+// TestIncPlanAccept_NormalizesLabels verifies KS2's counter keeps a bounded
+// label set: "1"/"0" pass through, everything else (missing/garbage) → "unknown".
+func TestIncPlanAccept_NormalizesLabels(t *testing.T) {
+	planAccept.Reset()
+
+	IncPlanAccept("1")
+	IncPlanAccept("1")
+	IncPlanAccept("0")
+	IncPlanAccept("")        // missing field → unknown
+	IncPlanAccept("garbage") // unexpected value → unknown
+
+	if got := testutil.ToFloat64(planAccept.WithLabelValues("1")); got != 2 {
+		t.Errorf(`tally_plan_accept_total{accepted="1"} = %v, want 2`, got)
+	}
+	if got := testutil.ToFloat64(planAccept.WithLabelValues("0")); got != 1 {
+		t.Errorf(`tally_plan_accept_total{accepted="0"} = %v, want 1`, got)
+	}
+	if got := testutil.ToFloat64(planAccept.WithLabelValues("unknown")); got != 2 {
+		t.Errorf(`tally_plan_accept_total{accepted="unknown"} = %v, want 2`, got)
+	}
+}
+
+// TestIncTenantSignup_IncrementsByProfile verifies KS1's signup denominator
+// increments per-persona.
+func TestIncTenantSignup_IncrementsByProfile(t *testing.T) {
+	tenantSignups.Reset()
+
+	IncTenantSignup("cross_border")
+	IncTenantSignup("cross_border")
+	IncTenantSignup("retail")
+
+	if got := testutil.ToFloat64(tenantSignups.WithLabelValues("cross_border")); got != 2 {
+		t.Errorf("tally_tenant_signups_total{cross_border} = %v, want 2", got)
+	}
+	if got := testutil.ToFloat64(tenantSignups.WithLabelValues("retail")); got != 1 {
+		t.Errorf("tally_tenant_signups_total{retail} = %v, want 1", got)
+	}
+}
+
 // TestSetOutboxPending_SetsGauge verifies the outbox gauge is set to the given value.
 func TestSetOutboxPending_SetsGauge(t *testing.T) {
 	outboxPendingCount.Set(0)

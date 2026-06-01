@@ -36,6 +36,11 @@ type Config struct {
 	// production ZitadelDomain MUST be set so the JWT signature is validated
 	// against the issuer's JWKS.
 	ZitadelDomain string // ZITADEL_DOMAIN: e.g. auth.lurus.cn — issuer + JWKS derived from this
+	// ZitadelAudience is Tally's own Zitadel client/project id. The JWT aud
+	// claim must contain it, so tokens minted for other apps on the shared
+	// issuer are rejected. Required whenever ZitadelDomain is set (auth enabled);
+	// when ZitadelDomain is empty it stays optional so dev clusters stay bootable.
+	ZitadelAudience string // ZITADEL_AUDIENCE: Tally's Zitadel client/project id (expected aud claim)
 
 	// Notification service — Tally can publish events to platform notification.
 	// When PlatformNotifyURL is empty it defaults to the in-cluster address.
@@ -106,6 +111,19 @@ func Load() (*Config, error) {
 		fmt.Sscanf(v, "%d", &aiPlanTTL) //nolint:errcheck
 	}
 
+	// Auth — when ZITADEL_DOMAIN is set, auth is enabled and ZITADEL_AUDIENCE
+	// MUST also be set so the JWT aud claim is enforced; without it tokens
+	// minted for other apps on the shared issuer would be accepted. When
+	// ZITADEL_DOMAIN is empty, auth is disabled (dev) and audience is optional.
+	zitadelDomain := optional("ZITADEL_DOMAIN", "")
+	zitadelAudience := optional("ZITADEL_AUDIENCE", "")
+	if zitadelDomain != "" && zitadelAudience == "" {
+		return nil, fmt.Errorf(
+			"ZITADEL_AUDIENCE is required when ZITADEL_DOMAIN is set: " +
+				"set it to Tally's Zitadel client/project id (the expected JWT aud claim)",
+		)
+	}
+
 	return &Config{
 		DatabaseDSN:     dbDSN,
 		RedisURL:        redisURL,
@@ -121,13 +139,14 @@ func Load() (*Config, error) {
 		PlatformInternalKey: optional("PLATFORM_INTERNAL_KEY", ""),
 		PlatformNotifyURL: optional("PLATFORM_NOTIFY_URL",
 			"http://notification.lurus-platform.svc:18900"),
-		ZitadelDomain:    optional("ZITADEL_DOMAIN", ""),
-		NewAPIBaseURL:    optional("NEWAPI_BASE_URL", "https://newapi.lurus.cn/v1"),
-		NewAPIKey:        optional("NEWAPI_API_KEY", ""),
-		DefaultAIModel:   optional("DEFAULT_AI_MODEL", "deepseek-v4-flash"),
-		AIPlanTTLSeconds: aiPlanTTL,
-		MemoryBaseURL:    optional("MEMORUS_BASE_URL", "http://memorus.lurus-system.svc:8880"),
-		MemoryAPIKey:     optional("MEMORUS_API_KEY", ""),
+		ZitadelDomain:        zitadelDomain,
+		ZitadelAudience:      zitadelAudience,
+		NewAPIBaseURL:        optional("NEWAPI_BASE_URL", "https://newapi.lurus.cn/v1"),
+		NewAPIKey:            optional("NEWAPI_API_KEY", ""),
+		DefaultAIModel:       optional("DEFAULT_AI_MODEL", "deepseek-v4-flash"),
+		AIPlanTTLSeconds:     aiPlanTTL,
+		MemoryBaseURL:        optional("MEMORUS_BASE_URL", "http://memorus.lurus-system.svc:8880"),
+		MemoryAPIKey:         optional("MEMORUS_API_KEY", ""),
 		ShopifyWebhookSecret: optional("SHOPIFY_WEBHOOK_SECRET", ""),
 	}, nil
 }

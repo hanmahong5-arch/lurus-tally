@@ -358,4 +358,3 @@ func (uc *UseCase) SalesTop(ctx context.Context, tenantID uuid.UUID, metric stri
 		Days:        days,
 	}, nil
 }
-

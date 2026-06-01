@@ -103,8 +103,11 @@ h2_val="n/a"
 h2_status="inconclusive"
 
 # H3: Palette DAU penetration < 0.40 → falsified. Use the lower of palette / drawer ratio.
-palette_ratio=$(prom_query '(sum(increase(tally_palette_invocation_dau[1d])) or vector(0)) / (sum(increase(tally_total_dau[1d])) or vector(1))')
-drawer_ratio=$(prom_query '(sum(increase(tally_ai_drawer_open_dau[1d])) or vector(0)) / (sum(increase(tally_total_dau[1d])) or vector(1))')
+# tally_*_dau are gauges (today's HLL cardinality recomputed each scrape), so read
+# them directly — increase() over a gauge is meaningless. Denominator falls back to
+# 1 so an absent total never divides by zero.
+palette_ratio=$(prom_query '(tally_palette_invocation_dau or vector(0)) / (tally_total_dau or vector(1))')
+drawer_ratio=$(prom_query '(tally_ai_drawer_open_dau or vector(0)) / (tally_total_dau or vector(1))')
 if [ "$palette_ratio" = "n/a" ] && [ "$drawer_ratio" = "n/a" ]; then
   h3_val="n/a"
 else
@@ -113,11 +116,53 @@ fi
 # Coarse: take palette_ratio (proxy for H3 falsification).
 h3_status=$(decide_status "$palette_ratio" "<0.40" "true")
 
+# KS1: onboarding completion rate. Numerator = first-PO-export events (the
+# roadmap's "信任动作"); denominator = brand-new tenant signups. Falsified < 0.40.
+# Honesty: the numerator falls back to 0 (signups exist but nobody exported yet
+# IS a real 0% completion), but the DENOMINATOR has no fallback — with zero
+# signups the rate is undefined, so the query yields empty → "n/a", not a
+# fabricated 0 that would masquerade as "falsified".
+#
+# DEDUP CAVEAT (S7-5): tally_web_telemetry_total{event="onboarding_first_po_exported"}
+# is a raw EVENT counter with NO tenant label (see internal/adapter/middleware/
+# metrics.go: the counter is "always unlabelled by tenant"). One tenant exporting
+# twice therefore inflates the numerator above the distinct-tenant count and can
+# push this rate above 1.0 — a completion rate > 100% is impossible and signals
+# double-counting, not over-completion. A true distinct-tenant numerator needs a
+# tenant-keyed HLL gauge (e.g. tally_onboarding_first_po_export_tenants_d14),
+# which is a backend metrics change tracked as owner-gated. Until that exists,
+# detect the impossible case below and report it as inconclusive WITH a value
+# annotation, rather than emitting a clean-looking ratio that hides the bug.
+ks1_num=$(prom_query 'sum(tally_web_telemetry_total{event="onboarding_first_po_exported"}) or vector(0)')
+ks1_den=$(prom_query 'sum(tally_tenant_signups_total)')
+ks1_val=$(prom_query '(sum(tally_web_telemetry_total{event="onboarding_first_po_exported"}) or vector(0)) / sum(tally_tenant_signups_total)')
+if [ "$ks1_val" != "n/a" ] && awk -v v="$ks1_val" 'BEGIN { exit !(v > 1.0) }'; then
+  # Ratio > 1.0 is impossible for a completion rate; the raw-event numerator
+  # has out-counted distinct signups → double-count inflation. Do NOT trust it.
+  ks1_status="inconclusive"
+  ks1_val="event-count>signups (num=${ks1_num}/den=${ks1_den}); needs distinct-tenant numerator"
+else
+  ks1_status=$(decide_status "$ks1_val" "<0.40" "true")
+fi
+
+# KS2: AI-plan adoption rate = confirmed / all decisions. Falsified < 0.20.
+# Same honesty rule: numerator (accepted="1") falls back to 0, denominator does
+# not — zero decisions → "n/a", not 0.
+ks2_val=$(prom_query '(sum(tally_plan_accept_total{accepted="1"}) or vector(0)) / sum(tally_plan_accept_total)')
+ks2_status=$(decide_status "$ks2_val" "<0.20" "true")
+
+# KS3 (90d trial → paid conversion) is intentionally NOT emitted here yet: the
+# conversion source of truth lives in lurus-platform (subscriptions), and Tally
+# has no local subscription table/handler. It also shares H1's gauge
+# (tally_trial_conversion_d90, already queried above), which a W4 nightly job
+# will populate once the platform internal-key 401 is resolved. Until then KS3
+# is honestly n/a (0 paying customers → no value exists to report).
+
 # ---------------------------------------------------------------------------
 # Compose the row and append / replace.
 # ---------------------------------------------------------------------------
 
-new_row="| $today | $h1_status | $h1_val | $h2_status | $h2_val | $h3_status | $h3_val |"
+new_row="| $today | $h1_status | $h1_val | $h2_status | $h2_val | $h3_status | $h3_val | $ks1_status | $ks1_val | $ks2_status | $ks2_val |"
 
 echo "snapshot: $new_row"
 

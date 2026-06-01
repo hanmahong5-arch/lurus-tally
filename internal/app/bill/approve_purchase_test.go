@@ -213,6 +213,64 @@ func TestApprovePurchase_InvalidUnit_RollsBackAll(t *testing.T) {
 	}
 }
 
+// TestApprovePurchase_ForeignCurrency_ConvertsUnitCostToBase verifies that a non-CNY
+// purchase bill converts each line's unit price to base currency (CNY) using the bill's
+// exchange rate before recording the stock movement, and that a base-currency bill (rate
+// unset → fall back to 1) records the price unchanged.
+func TestApprovePurchase_ForeignCurrency_ConvertsUnitCostToBase(t *testing.T) {
+	tests := []struct {
+		name         string
+		exchangeRate decimal.Decimal
+		unitPrice    decimal.Decimal
+		wantUnitCost decimal.Decimal
+	}{
+		{
+			name:         "usd_bill_converts_at_7.2",
+			exchangeRate: decimal.NewFromFloat(7.2),
+			unitPrice:    decimal.NewFromFloat(10),
+			wantUnitCost: decimal.NewFromFloat(72),
+		},
+		{
+			name:         "base_currency_rate_one_unchanged",
+			exchangeRate: decimal.NewFromInt(1),
+			unitPrice:    decimal.NewFromFloat(10),
+			wantUnitCost: decimal.NewFromFloat(10),
+		},
+		{
+			name:         "unset_rate_falls_back_to_one",
+			exchangeRate: decimal.Decimal{}, // zero/unset → guard falls back to rate 1
+			unitPrice:    decimal.NewFromFloat(10),
+			wantUnitCost: decimal.NewFromFloat(10),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := newMockBillRepo()
+			stockUC := newMockStockUC()
+			unitRepo := newMockProductUnitRepo()
+
+			warehouseID := uuid.New()
+			billID := seedDraftBill(repo, 1, warehouseID)
+			repo.billsByID[billID].ExchangeRateVal = tt.exchangeRate
+			items := repo.itemsByBillID[billID]
+			items[0].UnitPrice = tt.unitPrice
+			unitRepo.set(items[0].ProductID, *items[0].UnitID, decimal.NewFromInt(1))
+
+			uc := newApproveUC(repo, stockUC, unitRepo)
+			if err := uc.Execute(context.Background(), testTenantID, billID, uuid.New()); err != nil {
+				t.Fatalf("Execute: %v", err)
+			}
+			if len(stockUC.calls) != 1 {
+				t.Fatalf("expected 1 stock movement call, got %d", len(stockUC.calls))
+			}
+			if !stockUC.calls[0].UnitCost.Equal(tt.wantUnitCost) {
+				t.Errorf("UnitCost = %s, want %s", stockUC.calls[0].UnitCost, tt.wantUnitCost)
+			}
+		})
+	}
+}
+
 // TestApprovePurchase_WAC_CostUpdated verifies that the unit cost from the item is passed
 // correctly to the stock use case (WAC recalculation happens inside stock UC).
 func TestApprovePurchase_WAC_CostUpdated(t *testing.T) {

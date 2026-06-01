@@ -1,6 +1,10 @@
 // Package product implements the product.Repository interface using PostgreSQL via pgx/v5.
-// All queries operate within the tally schema and rely on RLS being active
-// (app.tenant_id must be set in the connection/transaction before calling these methods).
+// All queries operate within the tally schema and rely on RLS being active.
+// Each method resolves its handle through dbscope.From(ctx, r.db): when the
+// request pinned a connection with app.tenant_id set (middleware.TenantDB), the
+// query runs on it and the RLS policy enforces tenant isolation at the database;
+// otherwise it falls back to the shared pool and the explicit WHERE tenant_id
+// clause carries isolation. Either way the query body is identical.
 package product
 
 import (
@@ -13,27 +17,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/product"
 )
 
 // ErrNotFound is returned when a product does not exist or is invisible to the current tenant.
 var ErrNotFound = errors.New("product not found")
 
-// DB abstracts the minimal database/sql surface needed by this repo.
-// Both *sql.DB and *sql.Tx satisfy this interface.
-type DB interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-// Repo implements the product repository.
+// Repo implements the product repository. It retains the shared *sql.DB pool as
+// the fallback handle; per-request queries prefer the tenant-pinned connection
+// carried in context (see dbscope).
 type Repo struct {
-	db DB
+	db *sql.DB
 }
 
-// New creates a Repo backed by db.
-func New(db DB) *Repo {
+// New creates a Repo backed by the shared connection pool.
+func New(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
@@ -48,7 +47,8 @@ func (r *Repo) Create(ctx context.Context, p *domain.Product) error {
 		VALUES
 			($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`
 
-	_, err := r.db.ExecContext(ctx, q,
+	db := dbscope.From(ctx, r.db)
+	_, err := db.ExecContext(ctx, q,
 		p.ID, p.TenantID, p.CategoryID, p.Code, p.Name,
 		p.Manufacturer, p.Model, p.Spec, p.Brand,
 		p.Mnemonic, p.Color, p.ExpiryDays, p.WeightKg,
@@ -74,7 +74,8 @@ func (r *Repo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.Pro
 		FROM tally.product
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
 
-	row := r.db.QueryRowContext(ctx, q, id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	row := db.QueryRowContext(ctx, q, id, tenantID)
 	p, err := scanProduct(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -118,8 +119,10 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Product
 
 	base := "FROM tally.product WHERE " + strings.Join(where, " AND ")
 
+	db := dbscope.From(ctx, r.db)
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) "+base, args...).Scan(&total); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) "+base, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("product repo list count: %w", err)
 	}
 
@@ -130,7 +133,7 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Product
 		fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
 	args = append(args, f.Limit, f.Offset)
 
-	rows, err := r.db.QueryContext(ctx, selectSQL, args...)
+	rows, err := db.QueryContext(ctx, selectSQL, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("product repo list: %w", err)
 	}
@@ -161,7 +164,8 @@ func (r *Repo) Update(ctx context.Context, p *domain.Product) error {
 			updated_at=$20
 		WHERE id=$21 AND tenant_id=$22 AND deleted_at IS NULL`
 
-	res, err := r.db.ExecContext(ctx, q,
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, q,
 		p.CategoryID, p.Name, p.Manufacturer, p.Model, p.Spec, p.Brand,
 		p.Mnemonic, p.Color, p.ExpiryDays, p.WeightKg, p.Enabled,
 		p.EnableSerialNo, p.EnableLotNo, p.ShelfPosition, sliceToArray(p.ImgURLs),
@@ -185,7 +189,8 @@ func (r *Repo) Update(ctx context.Context, p *domain.Product) error {
 // Delete soft-deletes a product by setting deleted_at = now().
 func (r *Repo) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	const q = `UPDATE tally.product SET deleted_at = $1 WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NULL`
-	res, err := r.db.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
 	if err != nil {
 		return fmt.Errorf("product repo delete: %w", err)
 	}
@@ -208,7 +213,8 @@ func (r *Repo) Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.Pro
 		SET deleted_at = NULL, updated_at = $1
 		WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL`
 
-	res, err := r.db.ExecContext(ctx, updateQ, now, id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, updateQ, now, id, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("product repo restore: %w", err)
 	}

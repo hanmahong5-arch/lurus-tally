@@ -116,7 +116,7 @@ func TestCreateDraftBatch_ZeroQtySkipped(t *testing.T) {
 		TenantID:  tid,
 		CreatorID: uid,
 		Lines: []replenish.DraftBatchLine{
-			{ProductID: p1, SupplierID: &sid, Qty: decimal.Zero},       // must be skipped
+			{ProductID: p1, SupplierID: &sid, Qty: decimal.Zero},          // must be skipped
 			{ProductID: p2, SupplierID: &sid, Qty: decimal.NewFromInt(4)}, // kept
 		},
 	})

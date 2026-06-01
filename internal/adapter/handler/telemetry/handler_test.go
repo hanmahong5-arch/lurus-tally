@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/telemetry"
 	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
@@ -60,6 +61,25 @@ func (f *fakePublisher) PublishLowStockAlert(_ context.Context, _ string, _ adap
 }
 func (f *fakePublisher) Close() error { return nil }
 
+// fakeDAU records every Record call so tests can assert the handler forwards
+// (event, userID) exactly when a non-blank user id is present.
+type fakeDAU struct {
+	mu    sync.Mutex
+	calls []dauCall
+}
+
+type dauCall struct {
+	Event  string
+	UserID string
+}
+
+func (f *fakeDAU) Record(_ context.Context, event, userID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, dauCall{Event: event, UserID: userID})
+	return nil
+}
+
 func newRouter(h *telemetry.Handler) *gin.Engine {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
@@ -82,7 +102,7 @@ func postJSON(t *testing.T, r *gin.Engine, body any, headers map[string]string) 
 
 func TestTelemetry_AllowListedEvent_PublishesToFake(t *testing.T) {
 	pub := &fakePublisher{}
-	h := telemetry.New(pub, "", "anonymous")
+	h := telemetry.New(pub, "", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{
@@ -106,9 +126,36 @@ func TestTelemetry_AllowListedEvent_PublishesToFake(t *testing.T) {
 	}
 }
 
+// TestTelemetry_WADIncrement_PublishesToFake locks in the North Star fix:
+// before this change wad_increment was NOT in AllowedWebTelemetryEvents, so
+// the gate 400-rejected it and the North Star metric was never recorded.
+// This asserts the 400→200 behavior change via a real HTTP round-trip (the
+// assertion path is independent of the allow-list map definition).
+func TestTelemetry_WADIncrement_PublishesToFake(t *testing.T) {
+	pub := &fakePublisher{}
+	h := telemetry.New(pub, "", "anonymous", nil)
+	r := newRouter(h)
+
+	rec := postJSON(t, r, map[string]any{
+		"event":     "wad_increment",
+		"tenant_id": "t-1",
+		"metadata":  map[string]any{"draft_count": 2, "line_count": 5},
+	}, nil)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("wad_increment status = %d body = %s (regression: WAD event rejected by allow-list)", rec.Code, rec.Body.String())
+	}
+	if len(pub.calls) != 1 {
+		t.Fatalf("expected 1 publish for wad_increment, got %d", len(pub.calls))
+	}
+	if pub.calls[0].Event != "wad_increment" {
+		t.Errorf("publish event = %q, want wad_increment", pub.calls[0].Event)
+	}
+}
+
 func TestTelemetry_UnknownEvent_Returns400(t *testing.T) {
 	pub := &fakePublisher{}
-	h := telemetry.New(pub, "", "anonymous")
+	h := telemetry.New(pub, "", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{"event": "totally_bogus"}, nil)
@@ -122,7 +169,7 @@ func TestTelemetry_UnknownEvent_Returns400(t *testing.T) {
 
 func TestTelemetry_MissingTenant_FallsBackToDefault(t *testing.T) {
 	pub := &fakePublisher{}
-	h := telemetry.New(pub, "", "anonymous")
+	h := telemetry.New(pub, "", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{"event": "ai_drawer_open"}, nil)
@@ -136,7 +183,7 @@ func TestTelemetry_MissingTenant_FallsBackToDefault(t *testing.T) {
 
 func TestTelemetry_BearerAuth_RejectsBadKey(t *testing.T) {
 	pub := &fakePublisher{}
-	h := telemetry.New(pub, "real-secret", "anonymous")
+	h := telemetry.New(pub, "real-secret", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{"event": "cmd_z_used"}, map[string]string{
@@ -152,7 +199,7 @@ func TestTelemetry_BearerAuth_RejectsBadKey(t *testing.T) {
 
 func TestTelemetry_BearerAuth_AcceptsRightKey(t *testing.T) {
 	pub := &fakePublisher{}
-	h := telemetry.New(pub, "real-secret", "anonymous")
+	h := telemetry.New(pub, "real-secret", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{"event": "undo_used", "tenant_id": "t-1"}, map[string]string{
@@ -165,7 +212,7 @@ func TestTelemetry_BearerAuth_AcceptsRightKey(t *testing.T) {
 
 func TestTelemetry_PublishFailure_StillReturns200(t *testing.T) {
 	pub := &fakePublisher{publishErr: errPub}
-	h := telemetry.New(pub, "", "anonymous")
+	h := telemetry.New(pub, "", "anonymous", nil)
 	r := newRouter(h)
 
 	rec := postJSON(t, r, map[string]any{"event": "draft_restore", "tenant_id": "t-1"}, nil)
@@ -174,6 +221,106 @@ func TestTelemetry_PublishFailure_StillReturns200(t *testing.T) {
 	}
 	if rec.Header().Get("X-Telemetry-Status") != "publish-failed" {
 		t.Errorf("expected X-Telemetry-Status=publish-failed, got %q", rec.Header().Get("X-Telemetry-Status"))
+	}
+}
+
+func TestTelemetry_RecordsDAU_WhenUserIDPresent(t *testing.T) {
+	pub := &fakePublisher{}
+	rec := &fakeDAU{}
+	h := telemetry.New(pub, "", "anonymous", rec)
+	r := newRouter(h)
+
+	resp := postJSON(t, r, map[string]any{
+		"event":   "palette_invocation",
+		"user_id": "user-123",
+	}, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d body = %s", resp.Code, resp.Body.String())
+	}
+	if len(rec.calls) != 1 {
+		t.Fatalf("expected 1 DAU record, got %d", len(rec.calls))
+	}
+	if rec.calls[0].Event != "palette_invocation" || rec.calls[0].UserID != "user-123" {
+		t.Errorf("DAU record = %+v, want palette_invocation/user-123", rec.calls[0])
+	}
+}
+
+func TestTelemetry_SkipsDAU_WhenUserIDEmpty(t *testing.T) {
+	pub := &fakePublisher{}
+	rec := &fakeDAU{}
+	h := telemetry.New(pub, "", "anonymous", rec)
+	r := newRouter(h)
+
+	resp := postJSON(t, r, map[string]any{"event": "ai_drawer_open"}, nil)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d", resp.Code)
+	}
+	if len(rec.calls) != 0 {
+		t.Errorf("expected no DAU record for anonymous event, got %+v", rec.calls)
+	}
+}
+
+// planAcceptValue reads the current tally_plan_accept_total{accepted=<v>} from
+// the default registry. The middleware counter is unexported and cannot be
+// Reset() from this package, so tests compare before/after deltas instead.
+func planAcceptValue(t *testing.T, accepted string) float64 {
+	t.Helper()
+	fams, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		t.Fatalf("gather metrics: %v", err)
+	}
+	for _, mf := range fams {
+		if mf.GetName() != "tally_plan_accept_total" {
+			continue
+		}
+		for _, m := range mf.GetMetric() {
+			for _, l := range m.GetLabel() {
+				if l.GetName() == "accepted" && l.GetValue() == accepted {
+					return m.GetCounter().GetValue()
+				}
+			}
+		}
+	}
+	return 0
+}
+
+// TestTelemetry_PlanAcceptRate_IncrementsByOutcome verifies the KS2 wiring:
+// a plan_accept_rate event bumps tally_plan_accept_total under the label that
+// matches metadata.accepted, and a missing field normalizes to "unknown".
+func TestTelemetry_PlanAcceptRate_IncrementsByOutcome(t *testing.T) {
+	pub := &fakePublisher{}
+	h := telemetry.New(pub, "", "anonymous", nil)
+	r := newRouter(h)
+
+	before1 := planAcceptValue(t, "1")
+	before0 := planAcceptValue(t, "0")
+	beforeU := planAcceptValue(t, "unknown")
+
+	if rec := postJSON(t, r, map[string]any{
+		"event":    "plan_accept_rate",
+		"metadata": map[string]any{"accepted": "1"},
+	}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("accepted=1 status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec := postJSON(t, r, map[string]any{
+		"event":    "plan_accept_rate",
+		"metadata": map[string]any{"accepted": "0"},
+	}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("accepted=0 status = %d", rec.Code)
+	}
+	// No accepted field at all → unknown.
+	if rec := postJSON(t, r, map[string]any{"event": "plan_accept_rate"}, nil); rec.Code != http.StatusOK {
+		t.Fatalf("missing-accepted status = %d", rec.Code)
+	}
+
+	if got := planAcceptValue(t, "1") - before1; got != 1 {
+		t.Errorf(`accepted="1" delta = %v, want 1`, got)
+	}
+	if got := planAcceptValue(t, "0") - before0; got != 1 {
+		t.Errorf(`accepted="0" delta = %v, want 1`, got)
+	}
+	if got := planAcceptValue(t, "unknown") - beforeU; got != 1 {
+		t.Errorf(`accepted="unknown" delta = %v, want 1`, got)
 	}
 }
 
