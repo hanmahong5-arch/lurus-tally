@@ -9,6 +9,7 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 )
 
 const paymentsRowLimit = 50_000
@@ -44,7 +45,7 @@ func (uc *PaymentsExportUseCase) Execute(ctx context.Context, tenantID uuid.UUID
 		ORDER BY pay_date DESC
 		LIMIT $2`
 
-	rows, err := uc.db.QueryContext(ctx, q, tenantID, paymentsRowLimit+1)
+	rows, err := dbscope.From(ctx, uc.db).QueryContext(ctx, q, tenantID, paymentsRowLimit+1)
 	if err != nil {
 		return 0, fmt.Errorf("export payments: query: %w", err)
 	}

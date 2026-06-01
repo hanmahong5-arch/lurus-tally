@@ -12,6 +12,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"github.com/shopspring/decimal"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	reposku "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/sku"
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
 	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"
@@ -150,7 +151,7 @@ func (a *aiStockAdjuster) AdjustStockBatch(
 		return 0, err
 	}
 
-	tx, err := a.db.BeginTx(ctx, nil)
+	tx, err := dbscope.BeginTx(ctx, a.db, nil)
 	if err != nil {
 		return 0, err
 	}

@@ -12,6 +12,7 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 )
 
 // billsRowLimit caps the number of rows fetched per export to avoid OOM on very
@@ -56,7 +57,7 @@ func (uc *BillsExportUseCase) Execute(ctx context.Context, tenantID uuid.UUID, w
 		ORDER BY bill_date DESC
 		LIMIT $2`
 
-	rows, err := uc.db.QueryContext(ctx, q, tenantID, billsRowLimit+1)
+	rows, err := dbscope.From(ctx, uc.db).QueryContext(ctx, q, tenantID, billsRowLimit+1)
 	if err != nil {
 		return 0, fmt.Errorf("export bills: query: %w", err)
 	}

@@ -13,25 +13,19 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
 )
 
 const pgUniqueViolation = "23505"
 
-// DB abstracts the minimal database/sql surface required by this repo.
-type DB interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
 // Repo implements appimporting.ImportRepo.
 type Repo struct {
-	db DB
+	db *sql.DB
 }
 
 // New creates a Repo backed by db.
-func New(db DB) *Repo {
+func New(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
@@ -46,7 +40,8 @@ func (r *Repo) GetMapping(ctx context.Context, tenantID uuid.UUID, platform, pla
 		FROM tally.import_sku_map
 		WHERE tenant_id = $1 AND platform = $2 AND platform_sku = $3`
 
-	row := r.db.QueryRowContext(ctx, q, tenantID, platform, platformSKU)
+	dbh := dbscope.From(ctx, r.db)
+	row := dbh.QueryRowContext(ctx, q, tenantID, platform, platformSKU)
 	m, err := scanMapping(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -71,7 +66,8 @@ func (r *Repo) UpsertMapping(ctx context.Context, m *appimporting.SKUMapping) er
 		ON CONFLICT (tenant_id, platform, platform_sku)
 		DO UPDATE SET product_id = EXCLUDED.product_id, updated_at = EXCLUDED.updated_at`
 
-	_, err := r.db.ExecContext(ctx, q,
+	dbh := dbscope.From(ctx, r.db)
+	_, err := dbh.ExecContext(ctx, q,
 		m.ID, m.TenantID, m.Platform, m.PlatformSKU, m.ProductID, now, now,
 	)
 	if err != nil {
@@ -93,7 +89,8 @@ func (r *Repo) ListMappings(ctx context.Context, tenantID uuid.UUID, platform st
 	}
 	q += " ORDER BY platform, platform_sku"
 
-	rows, err := r.db.QueryContext(ctx, q, args...)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("import repo: list mappings: %w", err)
 	}
@@ -127,8 +124,9 @@ func (r *Repo) IsOrderSeen(ctx context.Context, tenantID uuid.UUID, platform, or
 		SELECT bill_id FROM tally.import_order_seen
 		WHERE tenant_id = $1 AND platform = $2 AND platform_order_no = $3`
 
+	dbh := dbscope.From(ctx, r.db)
 	var billID uuid.UUID
-	err := r.db.QueryRowContext(ctx, seenQuery, tenantID, platform, orderNo).Scan(&billID)
+	err := dbh.QueryRowContext(ctx, seenQuery, tenantID, platform, orderNo).Scan(&billID)
 	if err == nil {
 		return true, billID, nil
 	}
@@ -143,7 +141,7 @@ func (r *Repo) IsOrderSeen(ctx context.Context, tenantID uuid.UUID, platform, or
 		WHERE tenant_id = $1 AND remark = $2 AND deleted_at IS NULL
 		ORDER BY created_at DESC LIMIT 1`
 	remark := fmt.Sprintf("import:%s:%s", platform, orderNo)
-	err = r.db.QueryRowContext(ctx, remarkQuery, tenantID, remark).Scan(&billID)
+	err = dbh.QueryRowContext(ctx, remarkQuery, tenantID, remark).Scan(&billID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, uuid.Nil, nil
 	}
@@ -166,7 +164,8 @@ func (r *Repo) MarkOrderSeen(ctx context.Context, tenantID uuid.UUID, platform, 
 		VALUES ($1, $2, $3, $4, $5, $6)
 		ON CONFLICT (tenant_id, platform, platform_order_no) DO NOTHING`
 
-	_, err := r.db.ExecContext(ctx, q,
+	dbh := dbscope.From(ctx, r.db)
+	_, err := dbh.ExecContext(ctx, q,
 		uuid.New(), tenantID, platform, orderNo, billID, time.Now().UTC(),
 	)
 	if err != nil && !isPgUniqueViolation(err) {
@@ -183,8 +182,9 @@ func (r *Repo) IsCancelSeen(ctx context.Context, tenantID uuid.UUID, platform, o
 		FROM tally.import_order_cancel_seen
 		WHERE tenant_id = $1 AND platform = $2 AND platform_order_no = $3`
 
+	dbh := dbscope.From(ctx, r.db)
 	var origBillID, revBillID uuid.UUID
-	err := r.db.QueryRowContext(ctx, q, tenantID, platform, orderNo).Scan(&origBillID, &revBillID)
+	err := dbh.QueryRowContext(ctx, q, tenantID, platform, orderNo).Scan(&origBillID, &revBillID)
 	if err == nil {
 		return true, origBillID, revBillID, nil
 	}
@@ -203,7 +203,8 @@ func (r *Repo) MarkCancelSeen(ctx context.Context, tenantID uuid.UUID, platform,
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (tenant_id, platform, platform_order_no) DO NOTHING`
 
-	_, err := r.db.ExecContext(ctx, q,
+	dbh := dbscope.From(ctx, r.db)
+	_, err := dbh.ExecContext(ctx, q,
 		uuid.New(), tenantID, platform, orderNo, originalBillID, reversalBillID, time.Now().UTC(),
 	)
 	if err != nil && !isPgUniqueViolation(err) {
@@ -218,8 +219,9 @@ func (r *Repo) IsRefundSeen(ctx context.Context, tenantID uuid.UUID, platform, p
 		SELECT bill_id FROM tally.import_refund_seen
 		WHERE tenant_id = $1 AND platform = $2 AND platform_refund_id = $3`
 
+	dbh := dbscope.From(ctx, r.db)
 	var billID uuid.UUID
-	err := r.db.QueryRowContext(ctx, q, tenantID, platform, platformRefundID).Scan(&billID)
+	err := dbh.QueryRowContext(ctx, q, tenantID, platform, platformRefundID).Scan(&billID)
 	if err == nil {
 		return true, billID, nil
 	}
@@ -238,7 +240,8 @@ func (r *Repo) MarkRefundSeen(ctx context.Context, tenantID uuid.UUID, platform,
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (tenant_id, platform, platform_refund_id) DO NOTHING`
 
-	_, err := r.db.ExecContext(ctx, q,
+	dbh := dbscope.From(ctx, r.db)
+	_, err := dbh.ExecContext(ctx, q,
 		uuid.New(), tenantID, platform, orderNo, platformRefundID, billID, time.Now().UTC(),
 	)
 	if err != nil && !isPgUniqueViolation(err) {

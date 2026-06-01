@@ -8,23 +8,18 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
-// DB is the narrow interface the repo needs; *sql.DB satisfies it.
-type DB interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-}
-
 // SQLDigestRepo implements appdigest.DigestRepo against PostgreSQL.
 type SQLDigestRepo struct {
-	db DB
+	db *sql.DB
 }
 
 // New constructs a SQLDigestRepo.
-func New(db DB) *SQLDigestRepo {
+func New(db *sql.DB) *SQLDigestRepo {
 	return &SQLDigestRepo{db: db}
 }
 
@@ -77,7 +72,8 @@ func (r *SQLDigestRepo) ListReplenishCandidates(ctx context.Context, tenantID uu
 		WHERE s.available_qty < COALESCE(si.low_safe_qty, 0)
 		  AND COALESCE(av.avg_daily, 0) > 0`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("digest replenish candidates: %w", err)
 	}
@@ -119,8 +115,9 @@ func (r *SQLDigestRepo) CountOversell(ctx context.Context, tenantID uuid.UUID) (
 			HAVING SUM(available_qty) < 0
 		) sub`
 
+	dbh := dbscope.From(ctx, r.db)
 	var n int
-	err := r.db.QueryRowContext(ctx, q, tenantID).Scan(&n)
+	err := dbh.QueryRowContext(ctx, q, tenantID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("digest oversell count: %w", err)
 	}
@@ -150,8 +147,9 @@ func (r *SQLDigestRepo) CountDeadStock(ctx context.Context, tenantID uuid.UUID) 
 			  AND (lm.last_moved_at IS NULL OR lm.last_moved_at < now() - interval '90 days')
 		) sub`
 
+	dbh := dbscope.From(ctx, r.db)
 	var n int
-	err := r.db.QueryRowContext(ctx, q, tenantID).Scan(&n)
+	err := dbh.QueryRowContext(ctx, q, tenantID).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("digest dead stock count: %w", err)
 	}

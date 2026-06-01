@@ -9,23 +9,18 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appreplenish "github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
-// DB is the narrow database interface the repo requires.
-// *sql.DB satisfies this; tests can substitute a lighter implementation.
-type DB interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-}
-
 // SQLSuggestionRepo is the PostgreSQL-backed SuggestionRepo.
 type SQLSuggestionRepo struct {
-	db DB
+	db *sql.DB
 }
 
 // NewSQLSuggestionRepo creates a new SQLSuggestionRepo.
-func NewSQLSuggestionRepo(db DB) *SQLSuggestionRepo {
+func NewSQLSuggestionRepo(db *sql.DB) *SQLSuggestionRepo {
 	return &SQLSuggestionRepo{db: db}
 }
 
@@ -130,7 +125,8 @@ LIMIT 10000
 
 // ListSuggestions implements appreplenish.SuggestionRepo.
 func (r *SQLSuggestionRepo) ListSuggestions(ctx context.Context, tenantID uuid.UUID) ([]appreplenish.RawRow, error) {
-	rows, err := r.db.QueryContext(ctx, listSuggestionsQuery, tenantID)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, listSuggestionsQuery, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("replenish list suggestions: %w", err)
 	}

@@ -13,24 +13,18 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appsku "github.com/hanmahong5-arch/lurus-tally/internal/app/sku"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
-// DB abstracts the minimal database/sql surface needed by this repo.
-// Both *sql.DB and *sql.Tx satisfy this interface.
-type DB interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
 // Repo implements appsku.PriceRepo.
 type Repo struct {
-	db DB
+	db *sql.DB
 }
 
 // New creates a Repo backed by db.
-func New(db DB) *Repo {
+func New(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
@@ -50,7 +44,8 @@ func (r *Repo) ListDefaultSKUs(ctx context.Context, tenantID uuid.UUID, productI
 		  AND deleted_at IS NULL
 		ORDER BY product_id, is_default DESC, created_at ASC`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID, uuidArrayLiteral(productIDs))
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID, uuidArrayLiteral(productIDs))
 	if err != nil {
 		return nil, fmt.Errorf("sku repo list default: %w", err)
 	}
@@ -78,7 +73,8 @@ func (r *Repo) UpdateRetailPrice(ctx context.Context, tenantID, skuID uuid.UUID,
 		SET retail_price = $1, updated_at = $2
 		WHERE id = $3 AND tenant_id = $4 AND deleted_at IS NULL`
 
-	res, err := r.db.ExecContext(ctx, q, newPrice.String(), time.Now().UTC(), skuID, tenantID)
+	dbh := dbscope.From(ctx, r.db)
+	res, err := dbh.ExecContext(ctx, q, newPrice.String(), time.Now().UTC(), skuID, tenantID)
 	if err != nil {
 		return fmt.Errorf("sku repo update retail price: %w", err)
 	}

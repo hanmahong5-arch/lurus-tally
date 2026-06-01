@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	apphort "github.com/hanmahong5-arch/lurus-tally/internal/app/horticulture"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/horticulture"
 )
@@ -19,21 +20,15 @@ import (
 // pgUniqueViolation is the PostgreSQL error code for unique constraint violations.
 const pgUniqueViolation = "23505"
 
-// DB abstracts the minimal database/sql surface needed by this repo.
-// Both *sql.DB and *sql.Tx satisfy this interface.
-type DB interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-// Repo implements the nursery dictionary repository.
+// Repo implements the nursery dictionary repository. It retains the shared
+// *sql.DB pool as the fallback handle; per-request queries prefer the
+// tenant-pinned connection carried in context (see dbscope).
 type Repo struct {
-	db DB
+	db *sql.DB
 }
 
-// New creates a Repo backed by db.
-func New(db DB) *Repo {
+// New creates a Repo backed by the shared connection pool.
+func New(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
@@ -48,7 +43,8 @@ func (r *Repo) Create(ctx context.Context, d *domain.NurseryDict) error {
 		VALUES
 			($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`
 
-	_, err := r.db.ExecContext(ctx, q,
+	dbh := dbscope.From(ctx, r.db)
+	_, err := dbh.ExecContext(ctx, q,
 		d.ID, d.TenantID, d.Name, d.LatinName, d.Family, d.Genus,
 		string(d.Type), d.IsEvergreen,
 		sliceToArray(d.ClimateZones), intSliceToArray(d.BestSeason[:]),
@@ -76,7 +72,8 @@ func (r *Repo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.Nur
 		  AND (tenant_id = $2 OR tenant_id = '00000000-0000-0000-0000-000000000000'::uuid)
 		  AND deleted_at IS NULL`
 
-	row := r.db.QueryRowContext(ctx, q, id, tenantID)
+	dbh := dbscope.From(ctx, r.db)
+	row := dbh.QueryRowContext(ctx, q, id, tenantID)
 	d, err := scanDict(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, apphort.ErrNotFound
@@ -116,8 +113,10 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Nursery
 
 	base := "FROM tally.nursery_dict WHERE " + strings.Join(where, " AND ")
 
+	dbh := dbscope.From(ctx, r.db)
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) "+base, args...).Scan(&total); err != nil {
+	if err := dbh.QueryRowContext(ctx, "SELECT COUNT(*) "+base, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("nursery dict repo list count: %w", err)
 	}
 
@@ -127,7 +126,7 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Nursery
 		fmt.Sprintf(" ORDER BY name ASC LIMIT $%d OFFSET $%d", idx, idx+1)
 	args = append(args, f.Limit, f.Offset)
 
-	rows, err := r.db.QueryContext(ctx, selectSQL, args...)
+	rows, err := dbh.QueryContext(ctx, selectSQL, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("nursery dict repo list: %w", err)
 	}
@@ -156,7 +155,8 @@ func (r *Repo) Update(ctx context.Context, d *domain.NurseryDict) error {
 			photo_url=$11, remark=$12, updated_at=$13
 		WHERE id=$14 AND tenant_id=$15 AND deleted_at IS NULL`
 
-	res, err := r.db.ExecContext(ctx, q,
+	dbh := dbscope.From(ctx, r.db)
+	res, err := dbh.ExecContext(ctx, q,
 		d.Name, d.LatinName, d.Family, d.Genus, string(d.Type), d.IsEvergreen,
 		sliceToArray(d.ClimateZones), intSliceToArray(d.BestSeason[:]),
 		string(d.SpecTemplate), d.DefaultUnitID,
@@ -180,7 +180,8 @@ func (r *Repo) Update(ctx context.Context, d *domain.NurseryDict) error {
 // Delete soft-deletes an entry by setting deleted_at = now().
 func (r *Repo) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	const q = `UPDATE tally.nursery_dict SET deleted_at = $1 WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NULL`
-	res, err := r.db.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
+	dbh := dbscope.From(ctx, r.db)
+	res, err := dbh.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
 	if err != nil {
 		return fmt.Errorf("nursery dict repo delete: %w", err)
 	}
@@ -202,7 +203,8 @@ func (r *Repo) Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.Nur
 		SET deleted_at = NULL, updated_at = $1
 		WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL`
 
-	res, err := r.db.ExecContext(ctx, updateQ, now, id, tenantID)
+	dbh := dbscope.From(ctx, r.db)
+	res, err := dbh.ExecContext(ctx, updateQ, now, id, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("nursery dict repo restore: %w", err)
 	}

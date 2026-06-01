@@ -11,26 +11,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appsupp "github.com/hanmahong5-arch/lurus-tally/internal/app/supplier"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/supplier"
 )
 
 const pgUniqueViolation = "23505"
 
-// DB abstracts the minimal database/sql surface needed by this repo.
-type DB interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-// Repo implements the supplier repository.
+// Repo implements the supplier repository. It retains the shared *sql.DB pool as
+// the fallback handle; per-request queries prefer the tenant-pinned connection
+// carried in context (see dbscope).
 type Repo struct {
-	db DB
+	db *sql.DB
 }
 
-// New creates a Repo backed by db.
-func New(db DB) *Repo {
+// New creates a Repo backed by the shared connection pool.
+func New(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
@@ -45,7 +41,8 @@ func (r *Repo) Create(ctx context.Context, s *domain.Supplier) error {
 		VALUES
 			($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`
 
-	_, err := r.db.ExecContext(ctx, q,
+	db := dbscope.From(ctx, r.db)
+	_, err := db.ExecContext(ctx, q,
 		s.ID, s.TenantID,
 		nullableString(s.Code), s.Name,
 		nullableString(s.Contact), nullableString(s.Phone), nullableString(s.Email),
@@ -68,7 +65,8 @@ func (r *Repo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.Sup
 		FROM tally.supplier
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
 
-	row := r.db.QueryRowContext(ctx, q, id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	row := db.QueryRowContext(ctx, q, id, tenantID)
 	s, err := scanSupplier(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, appsupp.ErrNotFound
@@ -97,8 +95,10 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Supplie
 
 	base := "FROM tally.supplier WHERE " + strings.Join(where, " AND ")
 
+	db := dbscope.From(ctx, r.db)
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) "+base, args...).Scan(&total); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) "+base, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("supplier repo list count: %w", err)
 	}
 
@@ -106,7 +106,7 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Supplie
 		base + fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
 	args = append(args, f.Limit, f.Offset)
 
-	rows, err := r.db.QueryContext(ctx, selectSQL, args...)
+	rows, err := db.QueryContext(ctx, selectSQL, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("supplier repo list: %w", err)
 	}
@@ -133,7 +133,8 @@ func (r *Repo) Update(ctx context.Context, s *domain.Supplier) error {
 			code=$1, name=$2, contact=$3, phone=$4, email=$5, address=$6, remark=$7, updated_at=$8
 		WHERE id=$9 AND tenant_id=$10 AND deleted_at IS NULL`
 
-	res, err := r.db.ExecContext(ctx, q,
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, q,
 		nullableString(s.Code), s.Name,
 		nullableString(s.Contact), nullableString(s.Phone), nullableString(s.Email),
 		nullableString(s.Address), nullableString(s.Remark),
@@ -156,7 +157,8 @@ func (r *Repo) Update(ctx context.Context, s *domain.Supplier) error {
 // Delete soft-deletes a supplier.
 func (r *Repo) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	const q = `UPDATE tally.supplier SET deleted_at = $1 WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NULL`
-	res, err := r.db.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
 	if err != nil {
 		return fmt.Errorf("supplier repo delete: %w", err)
 	}
@@ -178,7 +180,8 @@ func (r *Repo) Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.Sup
 		SET deleted_at = NULL, updated_at = $1
 		WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL`
 
-	res, err := r.db.ExecContext(ctx, updateQ, now, id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, updateQ, now, id, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("supplier repo restore: %w", err)
 	}

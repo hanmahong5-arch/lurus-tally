@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appproject "github.com/hanmahong5-arch/lurus-tally/internal/app/project"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/project"
 )
@@ -18,21 +19,15 @@ import (
 // pgUniqueViolation is the PostgreSQL error code for unique constraint violations.
 const pgUniqueViolation = "23505"
 
-// DB abstracts the minimal database/sql surface needed by this repo.
-// Both *sql.DB and *sql.Tx satisfy this interface.
-type DB interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-// Repo implements the project repository.
+// Repo implements the project repository. It retains the shared *sql.DB pool as
+// the fallback handle; per-request queries prefer the tenant-pinned connection
+// carried in context (see dbscope).
 type Repo struct {
-	db DB
+	db *sql.DB
 }
 
-// New creates a Repo backed by db.
-func New(db DB) *Repo {
+// New creates a Repo backed by the shared connection pool.
+func New(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
@@ -50,7 +45,8 @@ func (r *Repo) Create(ctx context.Context, p *domain.Project) error {
 		VALUES
 			($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`
 
-	_, err := r.db.ExecContext(ctx, q,
+	db := dbscope.From(ctx, r.db)
+	_, err := db.ExecContext(ctx, q,
 		p.ID, p.TenantID, p.Code, p.Name,
 		p.CustomerID, p.ContractAmount,
 		p.StartDate, p.EndDate,
@@ -77,7 +73,8 @@ func (r *Repo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.Pro
 		FROM tally.project
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
 
-	row := r.db.QueryRowContext(ctx, q, id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	row := db.QueryRowContext(ctx, q, id, tenantID)
 	p, err := scanProject(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, appproject.ErrNotFound
@@ -117,8 +114,10 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Project
 
 	base := "FROM tally.project WHERE " + strings.Join(where, " AND ")
 
+	db := dbscope.From(ctx, r.db)
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) "+base, args...).Scan(&total); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) "+base, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("project repo list count: %w", err)
 	}
 
@@ -128,7 +127,7 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Project
 		fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
 	args = append(args, f.Limit, f.Offset)
 
-	rows, err := r.db.QueryContext(ctx, selectSQL, args...)
+	rows, err := db.QueryContext(ctx, selectSQL, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("project repo list: %w", err)
 	}
@@ -158,7 +157,8 @@ func (r *Repo) Update(ctx context.Context, p *domain.Project) error {
 			address=$8, manager=$9, remark=$10, updated_at=$11
 		WHERE id=$12 AND tenant_id=$13 AND deleted_at IS NULL`
 
-	res, err := r.db.ExecContext(ctx, q,
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, q,
 		p.Code, p.Name, p.CustomerID, p.ContractAmount,
 		p.StartDate, p.EndDate, string(p.Status),
 		nullableString(p.Address), nullableString(p.Manager), nullableString(p.Remark),
@@ -182,7 +182,8 @@ func (r *Repo) Update(ctx context.Context, p *domain.Project) error {
 // Returns appproject.ErrNotFound if 0 rows were affected.
 func (r *Repo) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	const q = `UPDATE tally.project SET deleted_at = $1 WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NULL`
-	res, err := r.db.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
 	if err != nil {
 		return fmt.Errorf("project repo delete: %w", err)
 	}
@@ -204,7 +205,8 @@ func (r *Repo) Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.Pro
 		SET deleted_at = NULL, updated_at = $1
 		WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL`
 
-	res, err := r.db.ExecContext(ctx, updateQ, now, id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, updateQ, now, id, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("project repo restore: %w", err)
 	}

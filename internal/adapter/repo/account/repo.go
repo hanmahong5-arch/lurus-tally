@@ -15,25 +15,18 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appacct "github.com/hanmahong5-arch/lurus-tally/internal/app/account"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/account"
 )
 
-// DB abstracts the database/sql surface used by all three repos so callers
-// can pass either *sql.DB or *sql.Tx.
-type DB interface {
-	QueryContext(ctx context.Context, q string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, q string, args ...any) *sql.Row
-	ExecContext(ctx context.Context, q string, args ...any) (sql.Result, error)
-}
-
 // ----- Session repository ----------------------------------------------------
 
 // SessionRepo persists tally.user_session.
-type SessionRepo struct{ db DB }
+type SessionRepo struct{ db *sql.DB }
 
 // NewSessionRepo wires the repo to db.
-func NewSessionRepo(db DB) *SessionRepo { return &SessionRepo{db: db} }
+func NewSessionRepo(db *sql.DB) *SessionRepo { return &SessionRepo{db: db} }
 
 // Compile-time interface assertion.
 var _ appacct.SessionRepo = (*SessionRepo)(nil)
@@ -50,8 +43,9 @@ func (r *SessionRepo) Upsert(ctx context.Context, s *domain.Session) error {
 		SET last_active = $4
 		WHERE tenant_id = $1 AND user_id = $2 AND user_agent = $3 AND revoked_at IS NULL
 		RETURNING id`
+	dbh := dbscope.From(ctx, r.db)
 	var existingID uuid.UUID
-	err := r.db.QueryRowContext(ctx, updateQ, s.TenantID, s.UserID, s.UserAgent, s.LastActive).Scan(&existingID)
+	err := dbh.QueryRowContext(ctx, updateQ, s.TenantID, s.UserID, s.UserAgent, s.LastActive).Scan(&existingID)
 	if err == nil {
 		s.ID = existingID
 		return nil
@@ -65,7 +59,7 @@ func (r *SessionRepo) Upsert(ctx context.Context, s *domain.Session) error {
 			(id, tenant_id, user_id, user_agent, ip_addr, created_at, last_active)
 		VALUES
 			($1, $2, $3, $4, $5, $6, $7)`
-	if _, err := r.db.ExecContext(ctx, insertQ,
+	if _, err := dbh.ExecContext(ctx, insertQ,
 		s.ID, s.TenantID, s.UserID, s.UserAgent, nullableIP(s.IPAddr), s.CreatedAt, s.LastActive,
 	); err != nil {
 		return fmt.Errorf("account repo: session insert: %w", err)
@@ -81,7 +75,7 @@ func (r *SessionRepo) List(ctx context.Context, tenantID uuid.UUID, userID strin
 		FROM tally.user_session
 		WHERE tenant_id = $1 AND user_id = $2 AND revoked_at IS NULL
 		ORDER BY last_active DESC`
-	rows, err := r.db.QueryContext(ctx, q, tenantID, userID)
+	rows, err := dbscope.From(ctx, r.db).QueryContext(ctx, q, tenantID, userID)
 	if err != nil {
 		return nil, fmt.Errorf("account repo: session list: %w", err)
 	}
@@ -118,7 +112,7 @@ func (r *SessionRepo) Revoke(ctx context.Context, tenantID, id uuid.UUID) error 
 		UPDATE tally.user_session
 		SET revoked_at = COALESCE(revoked_at, now())
 		WHERE tenant_id = $1 AND id = $2`
-	if _, err := r.db.ExecContext(ctx, q, tenantID, id); err != nil {
+	if _, err := dbscope.From(ctx, r.db).ExecContext(ctx, q, tenantID, id); err != nil {
 		return fmt.Errorf("account repo: session revoke: %w", err)
 	}
 	return nil
@@ -130,7 +124,7 @@ func (r *SessionRepo) Touch(ctx context.Context, tenantID uuid.UUID, userID, use
 		UPDATE tally.user_session
 		SET last_active = now()
 		WHERE tenant_id = $1 AND user_id = $2 AND user_agent = $3 AND revoked_at IS NULL`
-	if _, err := r.db.ExecContext(ctx, q, tenantID, userID, userAgent); err != nil {
+	if _, err := dbscope.From(ctx, r.db).ExecContext(ctx, q, tenantID, userID, userAgent); err != nil {
 		return fmt.Errorf("account repo: session touch: %w", err)
 	}
 	return nil
@@ -146,10 +140,10 @@ func nullableIP(ip net.IP) any {
 // ----- Audit repository -----------------------------------------------------
 
 // AuditRepo persists tally.account_audit_log.
-type AuditRepo struct{ db DB }
+type AuditRepo struct{ db *sql.DB }
 
 // NewAuditRepo wires the repo to db.
-func NewAuditRepo(db DB) *AuditRepo { return &AuditRepo{db: db} }
+func NewAuditRepo(db *sql.DB) *AuditRepo { return &AuditRepo{db: db} }
 
 // Compile-time interface assertion.
 var _ appacct.AuditRepo = (*AuditRepo)(nil)
@@ -165,7 +159,7 @@ func (r *AuditRepo) Append(ctx context.Context, e *domain.AuditEntry) error {
 	if len(payload) == 0 {
 		payload = []byte("{}")
 	}
-	if _, err := r.db.ExecContext(ctx, q,
+	if _, err := dbscope.From(ctx, r.db).ExecContext(ctx, q,
 		e.ID, e.TenantID, e.ActorID, e.Action,
 		nullable(e.TargetKind), nullable(e.TargetID), payload, e.CreatedAt,
 	); err != nil {
@@ -176,8 +170,9 @@ func (r *AuditRepo) Append(ctx context.Context, e *domain.AuditEntry) error {
 
 // List returns audit rows + the total count for pagination.
 func (r *AuditRepo) List(ctx context.Context, tenantID uuid.UUID, limit, offset int) ([]*domain.AuditEntry, int, error) {
+	dbh := dbscope.From(ctx, r.db)
 	var total int
-	if err := r.db.QueryRowContext(ctx,
+	if err := dbh.QueryRowContext(ctx,
 		`SELECT count(*) FROM tally.account_audit_log WHERE tenant_id = $1`, tenantID,
 	).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("account repo: audit count: %w", err)
@@ -194,7 +189,7 @@ func (r *AuditRepo) List(ctx context.Context, tenantID uuid.UUID, limit, offset 
 		WHERE tenant_id = $1
 		ORDER BY created_at DESC
 		LIMIT $2 OFFSET $3`
-	rows, err := r.db.QueryContext(ctx, q, tenantID, limit, offset)
+	rows, err := dbh.QueryContext(ctx, q, tenantID, limit, offset)
 	if err != nil {
 		return nil, 0, fmt.Errorf("account repo: audit list: %w", err)
 	}
@@ -227,10 +222,10 @@ func nullable(s string) any {
 // ----- Profile repository ---------------------------------------------------
 
 // ProfileRepo persists tally.user_profile.
-type ProfileRepo struct{ db DB }
+type ProfileRepo struct{ db *sql.DB }
 
 // NewProfileRepo wires the repo to db.
-func NewProfileRepo(db DB) *ProfileRepo { return &ProfileRepo{db: db} }
+func NewProfileRepo(db *sql.DB) *ProfileRepo { return &ProfileRepo{db: db} }
 
 // Compile-time interface assertion.
 var _ appacct.ProfileRepo = (*ProfileRepo)(nil)
@@ -246,7 +241,7 @@ func (r *ProfileRepo) Get(ctx context.Context, tenantID uuid.UUID, userID string
 		       updated_at
 		FROM tally.user_profile
 		WHERE tenant_id = $1 AND user_id = $2`
-	row := r.db.QueryRowContext(ctx, q, tenantID, userID)
+	row := dbscope.From(ctx, r.db).QueryRowContext(ctx, q, tenantID, userID)
 	p := &domain.Profile{}
 	if err := row.Scan(&p.TenantID, &p.UserID, &p.DisplayName, &p.Phone,
 		&p.AvatarContentType, &p.HasAvatar, &p.UpdatedAt); err != nil {
@@ -269,7 +264,7 @@ func (r *ProfileRepo) Upsert(ctx context.Context, tenantID uuid.UUID, userID, di
 		SET display_name = EXCLUDED.display_name,
 		    phone        = EXCLUDED.phone,
 		    updated_at   = EXCLUDED.updated_at`
-	if _, err := r.db.ExecContext(ctx, q,
+	if _, err := dbscope.From(ctx, r.db).ExecContext(ctx, q,
 		tenantID, userID, nullable(displayName), nullable(phone), time.Now().UTC(),
 	); err != nil {
 		return fmt.Errorf("account repo: profile upsert: %w", err)
@@ -288,7 +283,7 @@ func (r *ProfileRepo) SetAvatar(ctx context.Context, tenantID uuid.UUID, userID,
 		SET avatar_content_type = EXCLUDED.avatar_content_type,
 		    avatar_bytes        = EXCLUDED.avatar_bytes,
 		    updated_at          = EXCLUDED.updated_at`
-	if _, err := r.db.ExecContext(ctx, q, tenantID, userID, contentType, data, time.Now().UTC()); err != nil {
+	if _, err := dbscope.From(ctx, r.db).ExecContext(ctx, q, tenantID, userID, contentType, data, time.Now().UTC()); err != nil {
 		return fmt.Errorf("account repo: avatar upsert: %w", err)
 	}
 	return nil
@@ -302,7 +297,7 @@ func (r *ProfileRepo) GetAvatar(ctx context.Context, tenantID uuid.UUID, userID 
 		WHERE tenant_id = $1 AND user_id = $2`
 	var ct string
 	var data []byte
-	if err := r.db.QueryRowContext(ctx, q, tenantID, userID).Scan(&ct, &data); err != nil {
+	if err := dbscope.From(ctx, r.db).QueryRowContext(ctx, q, tenantID, userID).Scan(&ct, &data); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil, appacct.ErrNotFound
 		}

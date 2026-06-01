@@ -12,26 +12,22 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/app/warehouse"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/warehouse"
 )
 
 const pgUniqueViolation = "23505"
 
-// DB abstracts the minimal database/sql surface needed by this repo.
-type DB interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-// Repo implements the warehouse repository.
+// Repo implements the warehouse repository. It retains the shared *sql.DB pool as
+// the fallback handle; per-request queries prefer the tenant-pinned connection
+// carried in context (see dbscope).
 type Repo struct {
-	db DB
+	db *sql.DB
 }
 
-// New creates a Repo backed by db.
-func New(db DB) *Repo {
+// New creates a Repo backed by the shared connection pool.
+func New(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
@@ -46,7 +42,8 @@ func (r *Repo) Create(ctx context.Context, w *domain.Warehouse) error {
 		VALUES
 			($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`
 
-	_, err := r.db.ExecContext(ctx, q,
+	db := dbscope.From(ctx, r.db)
+	_, err := db.ExecContext(ctx, q,
 		w.ID, w.TenantID,
 		nullableString(w.Code), w.Name,
 		nullableString(w.Address), nullableString(w.Manager),
@@ -69,7 +66,8 @@ func (r *Repo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.War
 		FROM tally.warehouse
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
 
-	row := r.db.QueryRowContext(ctx, q, id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	row := db.QueryRowContext(ctx, q, id, tenantID)
 	w, err := scanWarehouse(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, appwarehouse.ErrNotFound
@@ -98,8 +96,10 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Warehou
 
 	base := "FROM tally.warehouse WHERE " + strings.Join(where, " AND ")
 
+	db := dbscope.From(ctx, r.db)
+
 	var total int
-	if err := r.db.QueryRowContext(ctx, "SELECT COUNT(*) "+base, args...).Scan(&total); err != nil {
+	if err := db.QueryRowContext(ctx, "SELECT COUNT(*) "+base, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("warehouse repo list count: %w", err)
 	}
 
@@ -107,7 +107,7 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Warehou
 		base + fmt.Sprintf(" ORDER BY created_at DESC LIMIT $%d OFFSET $%d", idx, idx+1)
 	args = append(args, f.Limit, f.Offset)
 
-	rows, err := r.db.QueryContext(ctx, selectSQL, args...)
+	rows, err := db.QueryContext(ctx, selectSQL, args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("warehouse repo list: %w", err)
 	}
@@ -134,7 +134,8 @@ func (r *Repo) Update(ctx context.Context, w *domain.Warehouse) error {
 			code=$1, name=$2, address=$3, manager=$4, is_default=$5, remark=$6, updated_at=$7
 		WHERE id=$8 AND tenant_id=$9 AND deleted_at IS NULL`
 
-	res, err := r.db.ExecContext(ctx, q,
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, q,
 		nullableString(w.Code), w.Name,
 		nullableString(w.Address), nullableString(w.Manager),
 		w.IsDefault, nullableString(w.Remark),
@@ -157,7 +158,8 @@ func (r *Repo) Update(ctx context.Context, w *domain.Warehouse) error {
 // Delete soft-deletes a warehouse.
 func (r *Repo) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	const q = `UPDATE tally.warehouse SET deleted_at = $1 WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NULL`
-	res, err := r.db.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
 	if err != nil {
 		return fmt.Errorf("warehouse repo delete: %w", err)
 	}
@@ -179,7 +181,8 @@ func (r *Repo) Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.War
 		SET deleted_at = NULL, updated_at = $1
 		WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL`
 
-	res, err := r.db.ExecContext(ctx, updateQ, now, id, tenantID)
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, updateQ, now, id, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("warehouse repo restore: %w", err)
 	}
@@ -204,8 +207,9 @@ func (r *Repo) DefaultWarehouseID(ctx context.Context, tenantID uuid.UUID) (uuid
 		ORDER BY is_default DESC, created_at ASC
 		LIMIT 1`
 
+	db := dbscope.From(ctx, r.db)
 	var id uuid.UUID
-	err := r.db.QueryRowContext(ctx, q, tenantID).Scan(&id)
+	err := db.QueryRowContext(ctx, q, tenantID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return uuid.Nil, appwarehouse.ErrNotFound
 	}

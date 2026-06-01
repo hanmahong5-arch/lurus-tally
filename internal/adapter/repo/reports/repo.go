@@ -10,23 +10,18 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appreports "github.com/hanmahong5-arch/lurus-tally/internal/app/reports"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
-// DB is the minimal interface over *sql.DB that the reports repo needs.
-// Using an interface keeps the repo testable without a live database.
-type DB interface {
-	QueryContext(ctx context.Context, query string, args ...interface{}) (*sql.Rows, error)
-}
-
 // SQLRepo implements appreports.Repo using PostgreSQL.
 type SQLRepo struct {
-	db DB
+	db *sql.DB
 }
 
 // New constructs a SQLRepo backed by the given DB connection.
-func New(db DB) *SQLRepo {
+func New(db *sql.DB) *SQLRepo {
 	return &SQLRepo{db: db}
 }
 
@@ -64,7 +59,8 @@ func (r *SQLRepo) ListRecentSaleLines(ctx context.Context, tenantID uuid.UUID, d
 		ORDER BY bh.bill_date DESC
 		LIMIT 10000`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID, cutoff)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("reports sale lines: %w", err)
 	}
@@ -139,7 +135,8 @@ func (r *SQLRepo) ListStockSnapshots(ctx context.Context, tenantID uuid.UUID) ([
 		ORDER BY p.name
 		LIMIT 10000`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("reports stock snapshots: %w", err)
 	}

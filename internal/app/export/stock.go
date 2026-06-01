@@ -9,6 +9,7 @@ import (
 	"log/slog"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 )
 
 const stockRowLimit = 50_000
@@ -46,7 +47,7 @@ func (uc *StockExportUseCase) Execute(ctx context.Context, tenantID uuid.UUID, w
 		ORDER BY p.code ASC NULLS LAST
 		LIMIT $2`
 
-	rows, err := uc.db.QueryContext(ctx, q, tenantID, stockRowLimit+1)
+	rows, err := dbscope.From(ctx, uc.db).QueryContext(ctx, q, tenantID, stockRowLimit+1)
 	if err != nil {
 		return 0, fmt.Errorf("export stock: query: %w", err)
 	}

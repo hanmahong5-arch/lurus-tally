@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 	"github.com/shopspring/decimal"
@@ -36,7 +37,8 @@ func (r *SQLProductRepo) SearchProducts(ctx context.Context, tenantID uuid.UUID,
 		ORDER BY name
 		LIMIT 200`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID, "%"+query+"%")
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID, "%"+query+"%")
 	if err != nil {
 		return nil, fmt.Errorf("ai product search: %w", err)
 	}
@@ -53,7 +55,8 @@ func (r *SQLProductRepo) ListAllProducts(ctx context.Context, tenantID uuid.UUID
 		ORDER BY name
 		LIMIT 5000`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("ai product list: %w", err)
 	}
@@ -131,7 +134,8 @@ func (r *SQLStockRepo) ListStockSnapshots(ctx context.Context, tenantID uuid.UUI
 		WHERE p.deleted_at IS NULL
 		ORDER BY p.name`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("ai stock snapshots: %w", err)
 	}
@@ -198,7 +202,8 @@ func (r *SQLSaleRepo) ListRecentSaleLines(ctx context.Context, tenantID uuid.UUI
 		ORDER BY bh.bill_date DESC
 		LIMIT 10000`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID, cutoff)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID, cutoff)
 	if err != nil {
 		return nil, fmt.Errorf("ai sale lines: %w", err)
 	}
@@ -246,7 +251,8 @@ func (r *SQLExchangeRateRepo) GetRate(ctx context.Context, tenantID uuid.UUID, f
 		LIMIT 1`
 
 	var rateStr string
-	err := r.db.QueryRowContext(ctx, q, tenantID, from, to).Scan(&rateStr)
+	dbh := dbscope.From(ctx, r.db)
+	err := dbh.QueryRowContext(ctx, q, tenantID, from, to).Scan(&rateStr)
 	if err != nil {
 		return decimal.Zero, fmt.Errorf("ai exchange rate %s→%s: %w", from, to, err)
 	}

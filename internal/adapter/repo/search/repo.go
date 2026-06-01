@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appsearch "github.com/hanmahong5-arch/lurus-tally/internal/app/search"
 )
 
@@ -89,7 +90,8 @@ func (r *Repo) scan(
 	pattern string,
 	limit int,
 ) ([]appsearch.EntityResult, error) {
-	rows, err := r.db.QueryContext(ctx, stmt, tenantID, pattern, limit)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, stmt, tenantID, pattern, limit)
 	if err != nil {
 		return nil, fmt.Errorf("search %s: %w", entityType, err)
 	}

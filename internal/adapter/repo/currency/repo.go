@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/currency"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
@@ -38,7 +39,8 @@ func (r *Repo) ListCurrencies(ctx context.Context) ([]domain.Currency, error) {
 		WHERE enabled = true
 		ORDER BY code`
 
-	rows, err := r.db.QueryContext(ctx, q)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q)
 	if err != nil {
 		return nil, fmt.Errorf("currency repo: list currencies: %w", err)
 	}
@@ -71,7 +73,8 @@ func (r *Repo) GetRateOn(ctx context.Context, tenantID uuid.UUID, from, to strin
 		ORDER BY effective_at DESC
 		LIMIT 1`
 
-	row := r.db.QueryRowContext(ctx, q, tenantID, from, to, date)
+	dbh := dbscope.From(ctx, r.db)
+	row := dbh.QueryRowContext(ctx, q, tenantID, from, to, date)
 	er, err := scanExchangeRate(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -91,7 +94,8 @@ func (r *Repo) SaveRate(ctx context.Context, er *domain.ExchangeRate) error {
 		ON CONFLICT (tenant_id, from_currency, to_currency, effective_at)
 		DO UPDATE SET rate = EXCLUDED.rate, source = EXCLUDED.source`
 
-	_, err := r.db.ExecContext(ctx, q,
+	dbh := dbscope.From(ctx, r.db)
+	_, err := dbh.ExecContext(ctx, q,
 		er.ID, er.TenantID, er.FromCurrency, er.ToCurrency,
 		er.Rate.String(), er.Source, er.EffectiveAt, er.CreatedAt,
 	)
@@ -112,7 +116,8 @@ func (r *Repo) ListRateHistory(ctx context.Context, tenantID uuid.UUID, from, to
 		  AND effective_at >= now() - ($4::int * interval '1 day')
 		ORDER BY effective_at ASC`
 
-	rows, err := r.db.QueryContext(ctx, q, tenantID, from, to, days)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID, from, to, days)
 	if err != nil {
 		return nil, fmt.Errorf("currency repo: list rate history: %w", err)
 	}

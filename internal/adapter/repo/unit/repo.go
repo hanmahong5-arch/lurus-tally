@@ -10,6 +10,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/unit"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 	"github.com/shopspring/decimal"
@@ -21,20 +22,15 @@ var ErrNotFound = errors.New("unit not found")
 // ErrSystemUnit is returned when a caller attempts to delete a system unit.
 var ErrSystemUnit = errors.New("system unit cannot be deleted")
 
-// DB abstracts the minimal database/sql surface needed by this repo.
-type DB interface {
-	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
-	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
-
-// Repo implements the unit repository.
+// Repo implements the unit repository. It retains the shared *sql.DB pool as the
+// fallback handle; per-request queries prefer the tenant-pinned connection
+// carried in context (see dbscope).
 type Repo struct {
-	db DB
+	db *sql.DB
 }
 
-// New creates a Repo backed by db.
-func New(db DB) *Repo {
+// New creates a Repo backed by the shared connection pool.
+func New(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
@@ -44,7 +40,8 @@ func (r *Repo) Create(ctx context.Context, u *domain.UnitDef) error {
 		INSERT INTO tally.unit_def (id, tenant_id, code, name, unit_type, is_system, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`
 
-	_, err := r.db.ExecContext(ctx, q,
+	dbh := dbscope.From(ctx, r.db)
+	_, err := dbh.ExecContext(ctx, q,
 		u.ID, u.TenantID, u.Code, u.Name, string(u.UnitType), u.IsSystem,
 		u.CreatedAt, u.UpdatedAt,
 	)
@@ -74,7 +71,8 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.UnitDef
 
 	q += " WHERE " + joinAnd(where) + " ORDER BY is_system DESC, code ASC"
 
-	rows, err := r.db.QueryContext(ctx, q, args...)
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, fmt.Errorf("unit repo list: %w", err)
 	}
@@ -105,7 +103,8 @@ func (r *Repo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.Uni
 
 	u := &domain.UnitDef{}
 	var unitType string
-	err := r.db.QueryRowContext(ctx, q, id, tenantID).
+	dbh := dbscope.From(ctx, r.db)
+	err := dbh.QueryRowContext(ctx, q, id, tenantID).
 		Scan(&u.ID, &u.TenantID, &u.Code, &u.Name, &unitType, &u.IsSystem, &u.CreatedAt, &u.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -124,7 +123,8 @@ func (r *Repo) GetConversionFactor(ctx context.Context, productID, unitID uuid.U
 	const q = `SELECT conversion_factor FROM tally.product_unit WHERE product_id = $1 AND unit_id = $2`
 
 	var factor string
-	err := r.db.QueryRowContext(ctx, q, productID, unitID).Scan(&factor)
+	dbh := dbscope.From(ctx, r.db)
+	err := dbh.QueryRowContext(ctx, q, productID, unitID).Scan(&factor)
 	if errors.Is(err, sql.ErrNoRows) {
 		return decimal.Zero, errInvalidUnitForProduct
 	}
@@ -144,7 +144,8 @@ var errInvalidUnitForProduct = fmt.Errorf("unit: unit_id is not valid for this p
 // The caller (use case) is responsible for checking is_system before calling this.
 func (r *Repo) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 	const q = `DELETE FROM tally.unit_def WHERE id = $1 AND tenant_id = $2 AND is_system = false`
-	res, err := r.db.ExecContext(ctx, q, id, tenantID)
+	dbh := dbscope.From(ctx, r.db)
+	res, err := dbh.ExecContext(ctx, q, id, tenantID)
 	if err != nil {
 		return fmt.Errorf("unit repo delete: %w", err)
 	}

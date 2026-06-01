@@ -12,20 +12,17 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-)
 
-// DB is the minimal database/sql surface this repo requires.
-type DB interface {
-	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
-}
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
+)
 
 // Repo implements DemoDeleter for the onboarding use case.
 type Repo struct {
-	db DB
+	db *sql.DB
 }
 
 // New creates a Repo backed by db.
-func New(db DB) *Repo {
+func New(db *sql.DB) *Repo {
 	return &Repo{db: db}
 }
 
@@ -39,7 +36,8 @@ func (r *Repo) DeleteDemoProducts(ctx context.Context, tenantID uuid.UUID) error
 		  AND remark = 'DEMO'
 		  AND deleted_at IS NULL`
 
-	_, err := r.db.ExecContext(ctx, q, tenantID)
+	dbh := dbscope.From(ctx, r.db)
+	_, err := dbh.ExecContext(ctx, q, tenantID)
 	if err != nil {
 		return fmt.Errorf("onboarding repo: delete demo products: %w", err)
 	}
