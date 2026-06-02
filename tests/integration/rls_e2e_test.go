@@ -71,13 +71,14 @@ func bootRLSApp(t *testing.T) (http.Handler, *sql.DB, func()) {
 		END $$;`)
 
 	cfg := &config.Config{
-		DatabaseDSN:     appDSNFrom(t, dsn), // connect as the non-superuser owner
-		GinMode:         "release",
-		LogLevel:        "warn", // surface auth-resolver warnings if this ever regresses
-		ServiceVersion:  "e2e",
-		Port:            "0",
-		ZitadelDomain:   "auth.dummy.local", // wires authMW + patResolver; JWKS fetched lazily (never, for PAT)
-		ZitadelAudience: "tally",
+		DatabaseDSN:          appDSNFrom(t, dsn), // connect as the non-superuser owner
+		GinMode:              "release",
+		LogLevel:             "warn", // surface auth-resolver warnings if this ever regresses
+		ServiceVersion:       "e2e",
+		Port:                 "0",
+		ZitadelDomain:        "auth.dummy.local", // wires authMW + patResolver; JWKS fetched lazily (never, for PAT)
+		ZitadelAudience:      "tally",
+		ShopifyWebhookSecret: rlsWebhookSecret, // enables the public webhook for the import-isolation test
 		// Redis / NATS / NewAPI / Platform deliberately empty: idempotency no-op,
 		// NATS noop, AI + billing disabled. The converted CRUD/read endpoints
 		// under test need only the DB.

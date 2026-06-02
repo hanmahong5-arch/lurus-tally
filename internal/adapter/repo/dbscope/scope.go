@@ -58,3 +58,32 @@ func BeginTx(ctx context.Context, fallback *sql.DB, opts *sql.TxOptions) (*sql.T
 	}
 	return fallback.BeginTx(ctx, opts)
 }
+
+// WithPinnedConn acquires a connection, sets app.tenant_id on it, runs fn with a
+// context carrying that connection (so dbscope.From / BeginTx inside fn use it),
+// then RESETs the GUC and releases the connection. It is the non-HTTP analogue
+// of middleware.TenantDB: for entry points that resolve their tenant OUTSIDE the
+// request-auth middleware but still need the RLS backstop -- e.g. the public
+// shopify webhook, which resolves shop->tenant itself before importing.
+//
+// A nil db or empty tenantID runs fn unpinned (on the shared pool), so callers
+// can wire it unconditionally and degrade to WHERE-only behaviour.
+func WithPinnedConn(ctx context.Context, db *sql.DB, tenantID string, fn func(context.Context) error) error {
+	if db == nil || tenantID == "" {
+		return fn(ctx)
+	}
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		// Detached context so the scrub runs even if ctx was cancelled; a broken
+		// conn is discarded by Close rather than returned tainted to the pool.
+		_, _ = conn.ExecContext(context.Background(), "RESET app.tenant_id")
+		_ = conn.Close()
+	}()
+	if _, err := conn.ExecContext(ctx, "SELECT set_config('app.tenant_id', $1, false)", tenantID); err != nil {
+		return err
+	}
+	return fn(With(ctx, conn))
+}

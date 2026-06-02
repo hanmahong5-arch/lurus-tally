@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"log/slog"
 
+	"github.com/google/uuid"
+
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/webhook"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	reposhopify "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/shopify"
 	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
 )
@@ -19,8 +22,12 @@ import (
 //  3. h.RegisterRoutes(r)   — must happen BEFORE router.New so the path lives
 //     on the root gin.Engine, not inside the auth-gated /api/v1 group.
 //
-// The shopify_shop_map table has no RLS policy (see migration 000039) so the
-// regular application DB pool can read it for cross-tenant domain lookups.
+// The shop→tenant resolution (GetByDomain) is inherently cross-tenant and runs
+// before the tenant is known, on the shared pool; shopify_shop_map's RLS policy
+// (migration 000043) keeps its empty-GUC arm permissive so that lookup works.
+// Once the tenant IS resolved, the import itself runs through WithPinner below so
+// its money/stock writes hit a connection scoped to that tenant (RLS backstop),
+// instead of the unpinned pool the public webhook would otherwise use.
 func BuildShopifyHandler(
 	db *sql.DB,
 	importUC *appimporting.ImportOrdersUseCase,
@@ -28,7 +35,15 @@ func BuildShopifyHandler(
 	log *slog.Logger,
 ) *webhook.Handler {
 	resolver := &shopifyShopResolver{repo: reposhopify.New(db)}
-	return webhook.New(secret, resolver, importUC, log)
+	return webhook.New(secret, resolver, importUC, log).WithPinner(dbscopePinner{db: db})
+}
+
+// dbscopePinner adapts dbscope.WithPinnedConn to webhook.TenantPinner so the
+// webhook handler stays free of a direct database/sql dependency.
+type dbscopePinner struct{ db *sql.DB }
+
+func (p dbscopePinner) WithPinnedConn(ctx context.Context, tenantID uuid.UUID, fn func(context.Context) error) error {
+	return dbscope.WithPinnedConn(ctx, p.db, tenantID.String(), fn)
 }
 
 // shopifyShopResolver satisfies webhook.ShopResolver.

@@ -56,11 +56,21 @@ type IngestUseCase interface {
 	IngestRefund(ctx context.Context, req appimporting.RefundRequest) (*appimporting.RefundResult, error)
 }
 
+// TenantPinner runs fn on a connection scoped to tenantID (app.tenant_id set on
+// it), so the import use case's repos hit the RLS-pinned connection rather than
+// the shared pool. The public webhook resolves its tenant itself (it bypasses
+// the auth + TenantDB middleware), so without this the import would write the
+// money/stock tables unpinned and rely solely on hand-written WHERE clauses.
+type TenantPinner interface {
+	WithPinnedConn(ctx context.Context, tenantID uuid.UUID, fn func(context.Context) error) error
+}
+
 // Handler holds the dependencies for all webhook routes.
 type Handler struct {
 	secret   string // SHOPIFY_WEBHOOK_SECRET; read once from env at build time
 	resolver ShopResolver
 	importUC IngestUseCase
+	pinner   TenantPinner // optional; nil → ingest runs on the shared pool
 	log      *slog.Logger
 }
 
@@ -74,6 +84,24 @@ func New(secret string, resolver ShopResolver, importUC IngestUseCase, log *slog
 		importUC: importUC,
 		log:      log,
 	}
+}
+
+// WithPinner attaches a TenantPinner so each verified ingest runs on a
+// connection scoped to the resolved tenant (activating the RLS backstop). It is
+// additive: a Handler built without it ingests on the shared pool, preserving
+// the previous behaviour. Returns the receiver for chaining.
+func (h *Handler) WithPinner(p TenantPinner) *Handler {
+	h.pinner = p
+	return h
+}
+
+// ingest runs fn on a tenant-pinned connection when a pinner is configured,
+// otherwise directly on ctx (shared pool).
+func (h *Handler) ingest(ctx context.Context, tenantID uuid.UUID, fn func(context.Context) error) error {
+	if h.pinner == nil {
+		return fn(ctx)
+	}
+	return h.pinner.WithPinnedConn(ctx, tenantID, fn)
 }
 
 // RegisterRoutes mounts all webhook routes onto the root engine.
@@ -185,7 +213,13 @@ func (h *Handler) handleOrdersCreate(c *gin.Context, raw []byte, mapping *ShopMa
 		return
 	}
 
-	imported, skipped, err := h.importUC.IngestSingleOrder(c.Request.Context(), req)
+	var imported appimporting.ImportedOrder
+	var skipped *appimporting.SkippedOrder
+	err = h.ingest(c.Request.Context(), mapping.TenantID, func(ctx context.Context) error {
+		var e error
+		imported, skipped, e = h.importUC.IngestSingleOrder(ctx, req)
+		return e
+	})
 	if err != nil {
 		h.log.Error("shopify webhook: ingest failed",
 			slog.String("shop", shopDomain),
@@ -238,11 +272,16 @@ func (h *Handler) handleOrderCancelled(c *gin.Context, raw []byte, mapping *Shop
 		return
 	}
 
-	result, err := h.importUC.IngestCancelOrder(c.Request.Context(), appimporting.CancelRequest{
-		TenantID:        mapping.TenantID,
-		CreatorID:       mapping.CreatorID,
-		Platform:        appimporting.PlatformShopify,
-		PlatformOrderNo: orderNo,
+	var result *appimporting.CancelResult
+	err := h.ingest(c.Request.Context(), mapping.TenantID, func(ctx context.Context) error {
+		var e error
+		result, e = h.importUC.IngestCancelOrder(ctx, appimporting.CancelRequest{
+			TenantID:        mapping.TenantID,
+			CreatorID:       mapping.CreatorID,
+			Platform:        appimporting.PlatformShopify,
+			PlatformOrderNo: orderNo,
+		})
+		return e
 	})
 	if err != nil {
 		h.log.Error("shopify webhook: cancel ingest failed",
@@ -278,7 +317,12 @@ func (h *Handler) handleRefundCreate(c *gin.Context, raw []byte, mapping *ShopMa
 		return
 	}
 
-	result, err := h.importUC.IngestRefund(c.Request.Context(), req)
+	var result *appimporting.RefundResult
+	err = h.ingest(c.Request.Context(), mapping.TenantID, func(ctx context.Context) error {
+		var e error
+		result, e = h.importUC.IngestRefund(ctx, req)
+		return e
+	})
 	if err != nil {
 		h.log.Error("shopify webhook: refund ingest failed",
 			slog.String("shop", shopDomain),
