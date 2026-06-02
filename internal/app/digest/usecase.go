@@ -14,7 +14,6 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-	"golang.org/x/sync/errgroup"
 )
 
 // ReplenishRow is one candidate product returned by the repo.
@@ -64,45 +63,26 @@ func NewWeeklySummaryUseCase(repo DigestRepo) *WeeklySummaryUseCase {
 	return &WeeklySummaryUseCase{repo: repo, coverageDays: 14}
 }
 
-// Execute runs all three aggregate queries concurrently and assembles the summary.
-// Uses errgroup.WithContext so the first failure cancels the other in-flight
-// queries — without this, a slow DB on one query keeps holding a connection
-// even when the caller has already received a failure from another (UAT-3 F05).
+// Execute runs the three aggregate queries SEQUENTIALLY and assembles the summary.
+//
+// They must be sequential, not concurrent: when middleware.TenantDB has pinned a
+// single *sql.Conn for the request (so RLS is enforced), all three reads resolve
+// to that one connection via dbscope.From — and a *sql.Conn cannot serve queries
+// concurrently (a parallel errgroup yields "driver: bad connection"). Three small
+// aggregates run serially well within the request budget. Returning on the first
+// error also means no other query is left in flight (the original errgroup's F05
+// goal), so this is strictly safer.
 func (uc *WeeklySummaryUseCase) Execute(ctx context.Context, tenantID uuid.UUID) (Summary, error) {
-	g, gctx := errgroup.WithContext(ctx)
-
-	var (
-		replRows   []ReplenishRow
-		oversellN  int
-		deadStockN int
-	)
-
-	g.Go(func() error {
-		rows, err := uc.repo.ListReplenishCandidates(gctx, tenantID)
-		if err != nil {
-			return err
-		}
-		replRows = rows
-		return nil
-	})
-	g.Go(func() error {
-		n, err := uc.repo.CountOversell(gctx, tenantID)
-		if err != nil {
-			return err
-		}
-		oversellN = n
-		return nil
-	})
-	g.Go(func() error {
-		n, err := uc.repo.CountDeadStock(gctx, tenantID)
-		if err != nil {
-			return err
-		}
-		deadStockN = n
-		return nil
-	})
-
-	if err := g.Wait(); err != nil {
+	replRows, err := uc.repo.ListReplenishCandidates(ctx, tenantID)
+	if err != nil {
+		return Summary{}, err
+	}
+	oversellN, err := uc.repo.CountOversell(ctx, tenantID)
+	if err != nil {
+		return Summary{}, err
+	}
+	deadStockN, err := uc.repo.CountDeadStock(ctx, tenantID)
+	if err != nil {
 		return Summary{}, err
 	}
 
