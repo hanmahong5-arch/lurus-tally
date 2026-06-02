@@ -65,9 +65,8 @@ const nextConfig = {
   output: "standalone",
   reactStrictMode: true,
   // Ensure standalone output places server.js at the project root (required for Docker)
-  experimental: {
-    outputFileTracingRoot: __dirname,
-  },
+  outputFileTracingRoot: __dirname,
+  experimental: {},
   // Account-center migration (Phase 1) — fold legacy entry routes into the
   // unified /account?tab=... tab nav. Non-permanent so we can iterate without
   // baking the redirect into client caches.
