@@ -42,7 +42,7 @@ const (
 
 // rlsOwnedTables are reassigned to the non-superuser role so FORCE ROW LEVEL
 // SECURITY is the operative mechanism (owner-bound RLS) when that role queries.
-var rlsOwnedTables = []string{"product", "stock_snapshot", "bill_head", "payment_head", "supplier", "project"}
+var rlsOwnedTables = []string{"product", "stock_snapshot", "bill_head", "payment_head", "supplier", "project", "warehouse", "exchange_rate"}
 
 // startRLSTestDB starts a container, runs migrations, and returns the superuser
 // DSN + an open superuser *sql.DB (for seeding) alongside cleanup.
@@ -282,11 +282,11 @@ func TestRLS_ForceFlagSet(t *testing.T) {
 	}
 }
 
-// TestRLS_StrictFlip proves migration 000045 made supplier + project strict:
-// under the non-superuser owner, an UNPINNED query (app.tenant_id unset) returns
-// ZERO rows — a forgotten pin now fails loud — while a pinned query still returns
-// exactly the current tenant's rows. (Pinned ENDPOINT reachability under the flip
-// is separately proven by TestRLS_E2E_EntityCRUDIsolation.)
+// TestRLS_StrictFlip proves the strict flips (000045 supplier/project + 000046
+// product/money/stock) actually fail loud: under the non-superuser owner an
+// UNPINNED query (app.tenant_id unset) returns ZERO rows, while a query pinned
+// to tenant A returns exactly A's single seeded row. (Pinned ENDPOINT
+// reachability under the flips is separately proven by the TestRLS_E2E_* suite.)
 func TestRLS_StrictFlip(t *testing.T) {
 	dsn, db, cleanup := startRLSTestDB(t)
 	defer cleanup()
@@ -294,15 +294,25 @@ func TestRLS_StrictFlip(t *testing.T) {
 
 	tenantA := insertTenant(t, db, ctx)
 	tenantB := insertTenant(t, db, ctx)
-	_ = insertSupplier(t, db, ctx, tenantA, "Flip Supplier A")
-	_ = insertSupplier(t, db, ctx, tenantB, "Flip Supplier B")
-	// project has no seed helper; insert inline (status must satisfy the 000029 CHECK).
-	for _, tn := range []uuid.UUID{tenantA, tenantB} {
-		mustExec(t, db, `INSERT INTO tally.project (id, tenant_id, code, name, status)
-			VALUES ($1, $2, $3, 'Flip Project', 'active')`, uuid.New(), tn, "FP-"+tn.String()[:8])
-	}
 
-	provisionAppRole(t, db) // owns supplier + project (added to rlsOwnedTables) → FORCE operative
+	// Seed exactly one row per flipped table per tenant (superuser bypasses RLS).
+	seed := func(tn uuid.UUID) {
+		tag := tn.String()[:6]
+		p := insertProduct(t, db, ctx, tn, "SF "+tag, "SF-"+tag)
+		w := insertWarehouse(t, db, ctx, tn)
+		_ = insertSupplier(t, db, ctx, tn, "SF Sup "+tag)
+		mustExec(t, db, `INSERT INTO tally.project (id, tenant_id, code, name, status)
+			VALUES ($1, $2, $3, 'SF Project', 'active')`, uuid.New(), tn, "SFP-"+tag)
+		_ = insertBillHead(t, db, ctx, tn, "入库", "采购", 0, nil, time.Now())
+		insertStockSnapshot(t, db, ctx, tn, p, w, 1, 1, 1)
+		seedPaymentHead(t, db, ctx, tn)
+		mustExec(t, db, `INSERT INTO tally.exchange_rate (id, tenant_id, from_currency, to_currency, rate, effective_at)
+			VALUES ($1, $2, 'USD', 'CNY', 6.5, now())`, uuid.New(), tn)
+	}
+	seed(tenantA)
+	seed(tenantB)
+
+	provisionAppRole(t, db) // owns all flipped tables (rlsOwnedTables) → FORCE operative
 
 	appDB, err := sql.Open("pgx", appDSNFrom(t, dsn))
 	if err != nil {
@@ -310,7 +320,12 @@ func TestRLS_StrictFlip(t *testing.T) {
 	}
 	defer appDB.Close() //nolint:errcheck
 
-	for _, tbl := range []string{"supplier", "project"} {
+	// Every flipped table: 1 row/tenant seeded, so unpinned must be 0 and pinned(A) 1.
+	flipped := []string{
+		"supplier", "project", // 000045
+		"product", "warehouse", "bill_head", "stock_snapshot", "payment_head", "exchange_rate", // 000046
+	}
+	for _, tbl := range flipped {
 		// (1) UNPINNED (GUC unset): strict policy -> 0 rows. This is the whole point
 		// of the flip — no silent reliance on a WHERE clause. Explicitly RESET the
 		// conn first so a value left by a prior pooled use can't mask the result.

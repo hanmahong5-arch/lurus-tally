@@ -314,6 +314,95 @@ func TestRLS_E2E_MoneyFlowIsolation(t *testing.T) {
 	}
 }
 
+// TestRLS_E2E_ReadPathsIsolation drives the join-heavy analytics/read endpoints
+// (reports, replenish, low-stock, weekly-summary) that read across product +
+// bill + stock. It fills the flip's coverage blind spot: under the strict policy
+// (000046) an unpinned read returns 0, so "tenant A still sees its own product
+// marker here, tenant B never does" both proves isolation AND that these read
+// paths are pinned. (Under the current empty->true policy it confirms isolation;
+// the pin guarantee is what it adds once run against the flipped schema.)
+func TestRLS_E2E_ReadPathsIsolation(t *testing.T) {
+	h, db, cleanup := bootRLSApp(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	tenantA := insertTenant(t, db, ctx)
+	tenantB := insertTenant(t, db, ctx)
+	patA := seedPAT(t, db, ctx, tenantA)
+	patB := seedPAT(t, db, ctx, tenantB)
+
+	// Marker appears in BOTH the product code and name so assertions are robust to
+	// whether a report surfaces code or name.
+	const markerA = "RPZAMARK"
+	const markerB = "RPZBMARK"
+
+	// Tenant A: product + warehouse + stock (purchase approve) + a sale
+	// (quick-checkout) so the analytics have data, plus a low safety stock so the
+	// replenish/low-stock joins produce a row.
+	prodA := createProduct(t, h, patA, markerA+"-1", markerA+" product")
+	whA := jsonField(t, postExpectCreated(t, h, patA, "/api/v1/warehouses", `{"name":"`+markerA+`-wh"}`), "id")
+	billA := jsonField(t, postExpectCreated(t, h, patA, "/api/v1/purchase-bills",
+		`{"warehouse_id":"`+whA+`","items":[{"product_id":"`+prodA+`","qty":"100.00","unit_price":"3.00"}]}`), "bill_id")
+	if st, b := doReq(t, h, http.MethodPost, "/api/v1/purchase-bills/"+billA+"/approve", patA, "{}"); st != http.StatusOK {
+		t.Fatalf("approve purchase: %d %s", st, b)
+	}
+	if _, b := doReq(t, h, http.MethodPost, "/api/v1/sale-bills/quick-checkout", patA,
+		`{"payment_method":"cash","paid_amount":"40.00","items":[{"product_id":"`+prodA+`","warehouse_id":"`+whA+`","qty":"2.00","unit_price":"20.00"}]}`); b == "" {
+		t.Fatal("quick-checkout returned empty body")
+	}
+	// Safety stock so the replenish/low-stock joins flag this product.
+	parsedWhA, err := uuid.Parse(whA)
+	if err != nil {
+		t.Fatalf("parse whA: %v", err)
+	}
+	parsedProdA, err := uuid.Parse(prodA)
+	if err != nil {
+		t.Fatalf("parse prodA: %v", err)
+	}
+	insertStockInitial(t, db, ctx, tenantA, parsedProdA, parsedWhA, 5, 999)
+
+	// Tenant B: a product only (no sales/stock), so its analytics are empty and
+	// must never surface A's marker.
+	_ = createProduct(t, h, patB, markerB+"-1", markerB+" product")
+
+	// endpoints where A definitely has data and the response names the product.
+	wantAMarker := []string{
+		"/api/v1/reports/sales-top?metric=revenue&days=30",
+		"/api/v1/stock/alerts/low-stock",
+	}
+	for _, ep := range wantAMarker {
+		stA, bodyA := doReq(t, h, http.MethodGet, ep, patA, "")
+		if stA != http.StatusOK {
+			t.Errorf("FAIL [%s] A: status %d body=%s", ep, stA, bodyA)
+		} else if !strings.Contains(bodyA, markerA) {
+			t.Errorf("FAIL [%s] A: missing own product marker (read path not pinned / empty?): %s", ep, bodyA)
+		} else {
+			t.Logf("PASS [%s] A: sees own data", ep)
+		}
+	}
+
+	// All read endpoints must be 200 for both tenants and never leak A's marker to B.
+	allReads := []string{
+		"/api/v1/reports/sales-top?metric=revenue&days=30",
+		"/api/v1/reports/gross-margin?days=30",
+		"/api/v1/reports/abc",
+		"/api/v1/reports/dead-stock?days=90",
+		"/api/v1/replenish/suggestions",
+		"/api/v1/stock/alerts/low-stock",
+		"/api/v1/weekly-summary",
+	}
+	for _, ep := range allReads {
+		stB, bodyB := doReq(t, h, http.MethodGet, ep, patB, "")
+		if stB != http.StatusOK {
+			t.Errorf("FAIL [%s] B: status %d body=%s", ep, stB, bodyB)
+		} else if strings.Contains(bodyB, markerA) {
+			t.Errorf("FAIL [%s] B: LEAKED tenant A's product marker: %s", ep, bodyB)
+		} else {
+			t.Logf("PASS [%s] B: 200, no leak of A's data", ep)
+		}
+	}
+}
+
 // jsonField extracts a top-level string field from a JSON object body.
 func jsonField(t *testing.T, body, field string) string {
 	t.Helper()
