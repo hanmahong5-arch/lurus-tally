@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"log/slog"
 	"net/http"
 
@@ -46,6 +47,13 @@ func TenantDB(db *sql.DB) gin.HandlerFunc {
 		ctx := c.Request.Context()
 		conn, err := db.Conn(ctx)
 		if err != nil {
+			if errors.Is(err, context.Canceled) {
+				// The client disconnected while we waited for a connection -- not a
+				// server fault. Abort quietly so it does not pollute the error log
+				// or the 503 (DB-unavailable) signal the genuine failure below owns.
+				c.Abort()
+				return
+			}
 			// Pool exhausted or DB down -- fail closed rather than serving the
 			// request on an unscoped connection (which would lean entirely on
 			// hand-written WHERE clauses).

@@ -43,6 +43,15 @@ func BuildShopifyHandler(
 type dbscopePinner struct{ db *sql.DB }
 
 func (p dbscopePinner) WithPinnedConn(ctx context.Context, tenantID uuid.UUID, fn func(context.Context) error) error {
+	// Degrade to unpinned on the nil tenant: dbscope.WithPinnedConn only treats
+	// an EMPTY string as "run unpinned", but uuid.Nil.String() is the non-empty
+	// all-zeros UUID, which would otherwise pin app.tenant_id to the nil tenant
+	// instead of falling back to the shared pool. Branch on the uuid.Nil sentinel
+	// here (where the typed value exists), matching middleware.TenantDB. A nil
+	// tenant still fails fast downstream via the importing use case's own guard.
+	if tenantID == uuid.Nil {
+		return fn(ctx)
+	}
 	return dbscope.WithPinnedConn(ctx, p.db, tenantID.String(), fn)
 }
 
