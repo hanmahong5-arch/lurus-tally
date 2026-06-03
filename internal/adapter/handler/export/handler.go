@@ -110,14 +110,23 @@ func (h *Handler) streamCSV(c *gin.Context, filename string, fn func(io.Writer) 
 	c.Header("Cache-Control", "no-store")
 
 	pr, pw := io.Pipe()
-	// If the client disconnects mid-stream, io.Copy below returns and the handler
-	// unwinds; closing the read end makes a blocked pw.Write in the producer
-	// goroutine return ErrClosedPipe so the goroutine cannot leak (a stranded
-	// goroutine + DB cursor per aborted export is a slow DoS on flaky links).
-	defer func() { _ = pr.Close() }()
+	// The producer goroutine runs the export query through dbscope.From, i.e. on
+	// the request-pinned *sql.Conn. middleware.TenantDB RESETs and Closes that
+	// conn the instant this handler returns, so we must NOT return while the
+	// producer is still reading rows on it (use-after-close / data race on a
+	// single conn). done is closed when the producer exits; the defer closes the
+	// read end first so a producer parked in pw.Write observes ErrClosedPipe and
+	// exits promptly (no stranded goroutine + DB cursor on flaky links), then
+	// joins it before releasing the pinned conn back to the middleware.
+	done := make(chan struct{})
+	defer func() {
+		_ = pr.Close()
+		<-done
+	}()
 
 	// Use case writes into pw; Gin reads from pr.
 	go func() {
+		defer close(done)
 		_, err := pw.Write(utf8BOM)
 		if err != nil {
 			_ = pw.CloseWithError(err)
