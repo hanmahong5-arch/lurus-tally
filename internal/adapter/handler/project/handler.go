@@ -111,6 +111,10 @@ func (h *ProjectHandler) RegisterRoutes(rg *gin.RouterGroup) {
 // List handles GET /api/v1/projects
 func (h *ProjectHandler) List(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant not identified"})
+		return
+	}
 
 	f := domain.ListFilter{
 		TenantID: tenantID,
@@ -145,6 +149,10 @@ func (h *ProjectHandler) List(c *gin.Context) {
 // Create handles POST /api/v1/projects
 func (h *ProjectHandler) Create(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant not identified"})
+		return
+	}
 
 	var req createRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -202,6 +210,10 @@ func (h *ProjectHandler) Create(c *gin.Context) {
 // GetByID handles GET /api/v1/projects/:id
 func (h *ProjectHandler) GetByID(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant not identified"})
+		return
+	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
@@ -223,6 +235,10 @@ func (h *ProjectHandler) GetByID(c *gin.Context) {
 // Update handles PUT /api/v1/projects/:id
 func (h *ProjectHandler) Update(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant not identified"})
+		return
+	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
@@ -288,6 +304,10 @@ func (h *ProjectHandler) Update(c *gin.Context) {
 // Delete handles DELETE /api/v1/projects/:id
 func (h *ProjectHandler) Delete(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant not identified"})
+		return
+	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
@@ -308,6 +328,10 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 // Restore handles POST /api/v1/projects/:id/restore
 func (h *ProjectHandler) Restore(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant not identified"})
+		return
+	}
 	id, err := uuid.Parse(c.Param("id"))
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})

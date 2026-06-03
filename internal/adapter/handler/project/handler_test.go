@@ -102,6 +102,16 @@ func makeProjectHandler(repo appproject.Repository) (*handlerproject.ProjectHand
 	)
 	r := gin.New()
 	r.Use(gin.Recovery())
+	// Inject tenant_id for tests (mirrors the auth middleware so the handlers'
+	// uuid.Nil guard sees a real tenant).
+	r.Use(func(c *gin.Context) {
+		if tid := c.GetHeader("X-Tenant-ID"); tid != "" {
+			if id, err := uuid.Parse(tid); err == nil {
+				c.Set("tenant_id", id)
+			}
+		}
+		c.Next()
+	})
 	api := r.Group("/api/v1")
 	h.RegisterRoutes(api)
 	return h, r
@@ -251,6 +261,21 @@ func TestProjectHandler_Restore_Returns200(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want 200; body: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestProjectHandler_List_NoTenant_Returns401(t *testing.T) {
+	repo := &fakeHandlerRepo{}
+	_, r := makeProjectHandler(repo)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/projects", nil)
+	// No X-Tenant-ID: post-000045 an unpinned query on project returns 0 rows,
+	// so the handler must reject rather than serve a silently-empty list.
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body: %s", w.Code, w.Body.String())
 	}
 }
 
