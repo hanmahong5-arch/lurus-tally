@@ -223,13 +223,15 @@ func TestRLS_ForceIsolation(t *testing.T) {
 		t.Logf("PASS: app.tenant_id cleared after RESET")
 	}
 
-	// (4) with the GUC cleared, the CASE short-circuit makes every row visible
-	// again (non-breaking for un-pinned paths). 3 A-rows (2 seeded + 1 control)
-	// + 1 B-row = 4.
-	if got := countConnTable(t, conn, ctx, "product"); got != 4 {
-		t.Errorf("FAIL: empty-GUC product count = %d, want 4 (CASE empty→true should show all rows)", got)
+	// (4) with the GUC cleared, product (flipped strict in 000046) fails CLOSED:
+	// its empty-GUC arm is THEN false, so a WHERE-less read sees ZERO rows. This
+	// is the Phase-3 guarantee — a forgotten/absent pin leaks nothing rather than
+	// leaning on a hand-written WHERE. (Tables still on the empty→true arm — the
+	// pre-tenant/auth/webhook set — stay non-breaking; product is no longer one.)
+	if got := countConnTable(t, conn, ctx, "product"); got != 0 {
+		t.Errorf("FAIL: empty-GUC product count = %d, want 0 (strict empty→false should fail closed)", got)
 	} else {
-		t.Logf("PASS: empty-GUC sees all rows (count=4)")
+		t.Logf("PASS: empty-GUC product fails closed (count=0)")
 	}
 }
 

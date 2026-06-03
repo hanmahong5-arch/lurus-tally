@@ -100,21 +100,26 @@ func TestRLS_WithTxInheritsPin(t *testing.T) {
 		t.Logf("PASS: pinned WithTx accepted same-tenant write")
 	}
 
-	// (c) no pin: WithTx falls back to the pool (no GUC); the CASE short-circuit
-	// makes the write pass, so isolation here depends on application code, not the
-	// DB. This is the contrast that proves (a)'s enforcement comes from the pin.
-	if err := repo.WithTx(ctx, func(tx *sql.Tx) error {
+	// (c) no pin: WithTx falls back to the pool with no GUC. Post-000046 product
+	// is strict (empty-GUC arm → false), so the DB now fails CLOSED — the write is
+	// rejected even without a hand-written WHERE. The pin still matters, shown by
+	// (a) vs (b): the SAME pinned conn rejects a tenant-B write yet accepts a
+	// tenant-A one, so the rejection tracks the pinned GUC, not a blanket lock.
+	errNoPin := repo.WithTx(ctx, func(tx *sql.Tx) error {
 		return insertProductTx(tx, ctx, tenantB, "TX-NOPIN-B")
-	}); err != nil {
-		t.Errorf("FAIL: un-pinned WithTx write errored unexpectedly: %v", err)
+	})
+	if errNoPin == nil {
+		t.Error("FAIL: un-pinned WithTx wrote a product row; post-000046 product must fail closed on empty GUC")
+	} else if !strings.Contains(errNoPin.Error(), "row-level security") {
+		t.Errorf("FAIL: un-pinned WithTx write rejected, but not by RLS: %v", errNoPin)
 	} else {
-		t.Logf("PASS: un-pinned WithTx wrote without DB-level enforcement (expected; relies on WHERE)")
+		t.Logf("PASS: un-pinned WithTx write rejected by fail-closed RLS: %v", errNoPin)
 	}
 
-	// Confirm the writes that should have landed did, via the superuser view:
-	// TX-OK-A (tenant A) + TX-NOPIN-B (tenant B) present, TX-REJECT-B absent.
+	// Confirm via the superuser view: only TX-OK-A (tenant A, pinned) landed;
+	// TX-NOPIN-B (fail-closed) and TX-REJECT-B (WITH CHECK) did not.
 	assertProductCode(t, db, ctx, "TX-OK-A", true)
-	assertProductCode(t, db, ctx, "TX-NOPIN-B", true)
+	assertProductCode(t, db, ctx, "TX-NOPIN-B", false)
 	assertProductCode(t, db, ctx, "TX-REJECT-B", false)
 }
 
