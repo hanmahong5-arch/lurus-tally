@@ -348,10 +348,11 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 //
 // Idempotency: the plan is flipped to Confirmed *before* execution, so a
 // concurrent second click sees a non-pending plan and is rejected. On execution
-// failure the plan is reverted to Pending so the user can retry — note that the
-// purchase-draft path is the only fully transactional one; bulk price/stock
-// changes are not atomic across products, so a retry after a partial failure
-// may re-apply to already-changed rows.
+// failure the plan is moved to the terminal Failed state (NOT back to Pending):
+// only the purchase-draft path is fully transactional; bulk price/stock changes
+// are not atomic across products, so a partial failure may already have changed
+// some rows and an immediate re-confirm could double-apply them. The user must
+// cancel and request a fresh suggestion.
 //
 // Returns ErrPlanNotFound when the plan is missing, ErrPlanExpired when
 // ExpiresAt has passed, or a wrapped error for any other failure.

@@ -637,7 +637,9 @@ func TestConfirmPlan_FailureRollback(t *testing.T) {
 	}
 	t.Logf("error (expected): %v", err)
 
-	// Plan status must have reverted to Pending (not stuck as Confirmed).
+	// Plan status must be the terminal Failed state (f191632f / F09+F13): a partial
+	// execution may already have side effects, so the plan is NOT reverted to
+	// Pending for retry — the user must cancel and request a fresh suggestion.
 	fetched, fetchErr := store.GetPlan(ctx, tenantID, plan.ID)
 	if fetchErr != nil {
 		t.Fatalf("GetPlan after failed confirm: %v", fetchErr)
@@ -645,10 +647,10 @@ func TestConfirmPlan_FailureRollback(t *testing.T) {
 	if fetched == nil {
 		t.Fatal("plan missing from store after failed confirm")
 	}
-	if fetched.Status != domainai.PlanStatusPending {
-		t.Errorf("plan status after rollback: got %s, want pending", fetched.Status)
+	if fetched.Status != domainai.PlanStatusFailed {
+		t.Errorf("plan status after failed confirm: got %s, want failed (terminal)", fetched.Status)
 	}
-	t.Logf("PASS rollback: plan status=%s (reverted from confirmed to pending)", fetched.Status)
+	t.Logf("PASS: plan status=%s (terminal Failed, not retryable)", fetched.Status)
 
 	// No bill rows should exist for this tenant.
 	var billCount int
