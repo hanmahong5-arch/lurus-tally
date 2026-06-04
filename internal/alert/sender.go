@@ -114,7 +114,7 @@ func (s *FeishuSender) Send(ctx context.Context, breaches []Breach) error {
 	if err != nil {
 		return fmt.Errorf("feishu: POST webhook: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		return fmt.Errorf("feishu: webhook returned HTTP %d", resp.StatusCode)
