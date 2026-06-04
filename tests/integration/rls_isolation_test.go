@@ -42,7 +42,13 @@ const (
 
 // rlsOwnedTables are reassigned to the non-superuser role so FORCE ROW LEVEL
 // SECURITY is the operative mechanism (owner-bound RLS) when that role queries.
-var rlsOwnedTables = []string{"product", "stock_snapshot", "bill_head", "payment_head", "supplier", "project", "warehouse", "exchange_rate"}
+var rlsOwnedTables = []string{
+	"product", "stock_snapshot", "bill_head", "payment_head", "supplier", "project", "warehouse", "exchange_rate",
+	// 000047 flips — owned here too so FORCE binds them when tally_app queries.
+	"partner", "product_sku", "stock_initial",
+	// unit_def — owned so FORCE binds the 000048 write-check (no is_system injection).
+	"unit_def",
+}
 
 // startRLSTestDB starts a container, runs migrations, and returns the superuser
 // DSN + an open superuser *sql.DB (for seeding) alongside cleanup.
@@ -310,6 +316,13 @@ func TestRLS_StrictFlip(t *testing.T) {
 		seedPaymentHead(t, db, ctx, tn)
 		mustExec(t, db, `INSERT INTO tally.exchange_rate (id, tenant_id, from_currency, to_currency, rate, effective_at)
 			VALUES ($1, $2, 'USD', 'CNY', 6.5, now())`, uuid.New(), tn)
+		// 000047 child-table flips: one row each (sku/stock_initial hang off the
+		// already-seeded product p / warehouse w) so unpinned must read 0.
+		_ = insertPartner(t, db, ctx, tn, "SF Partner "+tag, "supplier")
+		mustExec(t, db, `INSERT INTO tally.product_sku (id, tenant_id, product_id)
+			VALUES ($1, $2, $3)`, uuid.New(), tn, p)
+		mustExec(t, db, `INSERT INTO tally.stock_initial (id, tenant_id, product_id, warehouse_id, qty)
+			VALUES ($1, $2, $3, $4, 1)`, uuid.New(), tn, p, w)
 	}
 	seed(tenantA)
 	seed(tenantB)
@@ -326,6 +339,7 @@ func TestRLS_StrictFlip(t *testing.T) {
 	flipped := []string{
 		"supplier", "project", // 000045
 		"product", "warehouse", "bill_head", "stock_snapshot", "payment_head", "exchange_rate", // 000046
+		"partner", "product_sku", "stock_initial", // 000047
 	}
 	for _, tbl := range flipped {
 		// (1) UNPINNED (GUC unset): strict policy -> 0 rows. This is the whole point
@@ -377,6 +391,70 @@ func TestRLS_StrictFlip(t *testing.T) {
 			t.Logf("PASS [%s]: pinned to A returns only A's row", tbl)
 		}
 	}
+}
+
+// TestRLS_UnitDefNoSystemInjection proves 000048 closed the cross-tenant WRITE
+// hole on the shared unit_def table: a tenant-pinned connection may insert its OWN
+// non-system unit, but the DB REJECTS an is_system=true write (which the USING
+// `OR is_system=true` arm would otherwise expose to every tenant). Reads of the
+// migration-seeded system units still succeed under the same pin.
+func TestRLS_UnitDefNoSystemInjection(t *testing.T) {
+	dsn, db, cleanup := startRLSTestDB(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	tenantA := insertTenant(t, db, ctx)
+	provisionAppRole(t, db) // owns unit_def → FORCE operative
+
+	appDB, err := sql.Open("pgx", appDSNFrom(t, dsn))
+	if err != nil {
+		t.Fatalf("open app db: %v", err)
+	}
+	defer appDB.Close() //nolint:errcheck
+
+	conn, err := appDB.Conn(ctx)
+	if err != nil {
+		t.Fatalf("acquire conn: %v", err)
+	}
+	defer conn.Close() //nolint:errcheck
+	if _, err := conn.ExecContext(ctx,
+		"SELECT set_config('app.tenant_id', $1, false)", tenantA.String()); err != nil {
+		t.Fatalf("set GUC: %v", err)
+	}
+
+	// (1) tenant's own non-system unit: accepted (WITH CHECK tenant_id=A AND is_system=false).
+	if _, err := conn.ExecContext(ctx, `
+		INSERT INTO tally.unit_def (id, tenant_id, code, name, unit_type, is_system)
+		VALUES ($1, $2, 'UD-OK', 'Custom', 'count', false)`, uuid.New(), tenantA); err != nil {
+		t.Errorf("FAIL: tenant-own non-system unit insert rejected: %v", err)
+	} else {
+		t.Logf("PASS: tenant own non-system unit accepted")
+	}
+
+	// (2) is_system=true write from a tenant: rejected by RLS WITH CHECK (the hole).
+	_, errSys := conn.ExecContext(ctx, `
+		INSERT INTO tally.unit_def (id, tenant_id, code, name, unit_type, is_system)
+		VALUES ($1, $2, 'UD-EVIL', 'Injected', 'count', true)`, uuid.New(), tenantA)
+	if errSys == nil {
+		t.Error("FAIL: tenant wrote an is_system=true unit_def row — cross-tenant injection hole is OPEN")
+	} else if !strings.Contains(errSys.Error(), "row-level security") {
+		t.Errorf("FAIL: is_system write rejected but not by RLS: %v", errSys)
+	} else {
+		t.Logf("PASS: tenant is_system=true write rejected by RLS: %v", errSys)
+	}
+
+	// (3) seeded system units (migration 000014) stay READABLE under the tenant pin.
+	var sysVisible int
+	if err := conn.QueryRowContext(ctx,
+		"SELECT count(*) FROM tally.unit_def WHERE is_system = true").Scan(&sysVisible); err != nil {
+		t.Fatalf("count system units: %v", err)
+	}
+	if sysVisible == 0 {
+		t.Error("FAIL: tenant cannot read any seeded system unit (USING read arm broken)")
+	} else {
+		t.Logf("PASS: tenant reads %d seeded system units", sysVisible)
+	}
+	_, _ = conn.ExecContext(ctx, "RESET app.tenant_id")
 }
 
 // countTable counts all rows via a pool handle (superuser bypasses RLS).

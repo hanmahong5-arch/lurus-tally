@@ -357,6 +357,57 @@ func TestMigration_RLSPolicyShape(t *testing.T) {
 		}
 	}
 
+	// 000045 / 000046 / 000047 strict FLIP proof: these plain tenant_id tables must
+	// fail CLOSED on an unset GUC. Assert the short-circuit empty arm renders
+	// `THEN false` (never `THEN true`) on BOTH USING and WITH CHECK, so a silent
+	// revert to the permissive empty->true form is caught even for the 000047
+	// forward-declared children that have no live reader to exercise behaviorally.
+	// (unit_def is strict-flipped too but carries an `OR is_system` ELSE branch, so
+	// it is validated separately by the 000046 suite, not in this plain-form list.)
+	strictFlipped := []string{
+		"supplier", "project", // 000045
+		// 000046
+		"product", "warehouse", "exchange_rate",
+		"bill_head", "bill_item", "bill_sequence",
+		"stock_snapshot", "stock_movement", "stock_lot",
+		"payment_head", "payment_item",
+		// 000047
+		"partner", "product_sku", "stock_initial",
+		"org_user_rel", "partner_bank", "product_category", "product_attribute",
+		"unit", "warehouse_bin", "stock_serial", "finance_account", "finance_category",
+	}
+	for _, tbl := range strictFlipped {
+		var qual string
+		var withCheck sql.NullString
+		if err := db.QueryRowContext(ctx, `
+			SELECT qual, with_check FROM pg_policies
+			WHERE schemaname = 'tally' AND tablename = $1 AND policyname = 'tenant_isolation'
+		`, tbl).Scan(&qual, &withCheck); err != nil {
+			t.Errorf("FAIL [%s]: no tenant_isolation policy / scan error: %v", tbl, err)
+			continue
+		}
+		usingUp := strings.ToUpper(qual)
+		checkUp := strings.ToUpper(withCheck.String)
+		bad := false
+		// Empty-GUC arm must be false (fail closed) on read AND write.
+		if !strings.Contains(usingUp, "THEN FALSE") {
+			t.Errorf("FAIL [%s]: USING empty-GUC arm not strict (want THEN false): %s", tbl, qual)
+			bad = true
+		}
+		if !withCheck.Valid || !strings.Contains(checkUp, "THEN FALSE") {
+			t.Errorf("FAIL [%s]: WITH CHECK empty-GUC arm not strict (want THEN false): %q", tbl, withCheck.String)
+			bad = true
+		}
+		// And it must NOT still carry the permissive THEN true arm.
+		if strings.Contains(usingUp, "THEN TRUE") || strings.Contains(checkUp, "THEN TRUE") {
+			t.Errorf("FAIL [%s]: policy still permissive (THEN true present): using=%s check=%q", tbl, qual, withCheck.String)
+			bad = true
+		}
+		if !bad {
+			t.Logf("PASS [%s]: strict fail-closed (THEN false on USING + WITH CHECK)", tbl)
+		}
+	}
+
 	// personal_access_token keeps its historical policy name pat_rls (000031),
 	// converted to the short-circuit CASE form by 000044 — lock it so it cannot
 	// regress to the crash-prone OR pattern the e2e exposed.
