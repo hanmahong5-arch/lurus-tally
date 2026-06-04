@@ -55,7 +55,7 @@ func parseAssumptions(path string) ([]alert.Snapshot, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open %s: %w", path, err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	// Kill-switch thresholds (matching CLAUDE.md definitions).
 	const (

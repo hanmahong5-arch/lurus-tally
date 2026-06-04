@@ -78,12 +78,6 @@ func (uc *SearchEntitiesUseCase) Execute(ctx context.Context, req SearchRequest)
 		limit = 5
 	}
 
-	type result struct {
-		entityType EntityType
-		items      []EntityResult
-		err        error
-	}
-
 	// Run all four queries. Sequential is fine — each is a narrow ILIKE + LIMIT 5.
 	type fetch struct {
 		t  EntityType

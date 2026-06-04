@@ -82,11 +82,11 @@ func (s *FeishuSender) Send(ctx context.Context, breaches []Breach) error {
 	var sb strings.Builder
 	sb.WriteString("🚨 **Tally Kill-Switch 告警**\n\n")
 	for _, b := range breaches {
-		sb.WriteString(fmt.Sprintf(
+		_, _ = fmt.Fprintf(&sb,
 			"- **%s** 已连续 %d 天触发 (首次红: %s)\n",
 			b.SignalName, b.ConsecutiveDays,
 			b.FirstRedDate.Format(time.DateOnly),
-		))
+		)
 	}
 	sb.WriteString("\n> 任一 Kill-Switch 连红 2 周 → 立即安排 Pivot 会议\n")
 
@@ -155,11 +155,11 @@ func (s *EmailSender) Send(_ context.Context, breaches []Breach) error {
 	var sb strings.Builder
 	sb.WriteString("Tally Kill-Switch 告警\n\n")
 	for _, b := range breaches {
-		sb.WriteString(fmt.Sprintf(
+		_, _ = fmt.Fprintf(&sb,
 			"  %s: 连续 %d 天 (首次红: %s)\n",
 			b.SignalName, b.ConsecutiveDays,
 			b.FirstRedDate.Format(time.DateOnly),
-		))
+		)
 	}
 	sb.WriteString("\n任一 Kill-Switch 连红 2 周 → 立即安排 Pivot 会议\n")
 
@@ -191,7 +191,7 @@ func (s *EmailSender) Send(_ context.Context, breaches []Breach) error {
 		if err != nil {
 			return fmt.Errorf("email: smtp client: %w", err)
 		}
-		defer c.Close()
+		defer func() { _ = c.Close() }()
 		if err := c.Auth(auth); err != nil {
 			return fmt.Errorf("email: auth: %w", err)
 		}

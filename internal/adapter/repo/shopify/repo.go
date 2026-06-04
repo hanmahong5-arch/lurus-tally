@@ -98,7 +98,7 @@ func (r *ShopMapRepo) ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]S
 	if err != nil {
 		return nil, fmt.Errorf("shopify repo: list by tenant: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 
 	var out []ShopMapping
 	for rows.Next() {
