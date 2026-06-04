@@ -50,7 +50,8 @@ describe("Dev provider gate", () => {
     vi.resetModules()
     // Restore env after each test.
     delete process.env.AUTH_DEV_PROVIDER
-    delete process.env.NODE_ENV
+    // NODE_ENV is typed read-only on ProcessEnv; cast to delete it in the test.
+    delete (process.env as Record<string, string | undefined>).NODE_ENV
   })
 
   it("dev provider rejected in production", async () => {

@@ -150,7 +150,11 @@ describe("PlanCard", () => {
     // The AI write must be reversible: a matching undo entry is pushed.
     const entry = globalUndoStack.peek()
     expect(entry?.action.type).toBe("ai_purchase_draft")
-    expect(entry?.action.id).toBe("bill-789")
+    // Narrow the discriminated union: `id` only exists on the variants that carry
+    // a bill id (ai_stock_adjust / ai_price_change use planId instead).
+    if (entry?.action.type === "ai_purchase_draft") {
+      expect(entry.action.id).toBe("bill-789")
+    }
   })
 
   it("TestPlanCard_RapidDoubleClick_CallsConfirmOnce", async () => {
