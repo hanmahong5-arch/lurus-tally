@@ -39,6 +39,6 @@ patches:
       name: tally-web
 images:
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-cca5045
+    newTag: main-da39944
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-cca5045
+    newTag: main-da39944
