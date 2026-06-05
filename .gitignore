@@ -1,6 +1,7 @@
 # Binaries
 tally-backend
 tally-backend.exe
+*.exe
 /bin/*
 !/bin/*.sh
 !/bin/*.md
