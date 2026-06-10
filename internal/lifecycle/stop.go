@@ -33,5 +33,14 @@ func (a *App) Stop(ctx context.Context) error {
 	if err := llmobs.ShutdownOTelProvider(ctx); err != nil {
 		a.log.Warn("llm tracer shutdown failed", slog.String("error", err.Error()))
 	}
+
+	// Close the DB pool last, after the server stopped accepting requests and
+	// background workers drained, so no in-flight query races the close. Pool
+	// close releases pinned tenant connections and lets the process exit clean.
+	if a.db != nil {
+		if err := a.db.Close(); err != nil {
+			a.log.Warn("db close failed", slog.String("error", err.Error()))
+		}
+	}
 	return nil
 }
