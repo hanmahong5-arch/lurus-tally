@@ -672,10 +672,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	)
 	shopifyAdminHandler.RegisterRoutes(shopifyAdminGroup)
 
-	srv := &http.Server{
-		Addr:    ":" + cfg.Port,
-		Handler: r,
-	}
+	srv := newServer(":"+cfg.Port, r)
 
 	// Start the outbox drain worker in a background goroutine.
 	// It polls every 30s, publishing any pending event_outbox rows to NATS.
