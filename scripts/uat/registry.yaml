@@ -18,8 +18,8 @@ cases:
   - id: J1
     title: 新租户旅程 seed-demo→主数据 CRUD→weekly-summary→clear-demo
     script: cases/J1.sh
-    last_result: null
-    last_run: null
+    last_result: partial
+    last_run: "20260610-uat1"
     ai_calls: 0
     failed_endpoints:
       - "POST /api/v1/onboarding/seed-demo"
@@ -44,8 +44,8 @@ cases:
   - id: J2
     title: 进销存闭环 采购→审批→库存数学→快销→告警→收款→报表→CSV
     script: cases/J2.sh
-    last_result: null
-    last_run: null
+    last_result: partial
+    last_run: "20260610-uat1"
     ai_calls: 0
     failed_endpoints:
       - "POST /api/v1/payments"
@@ -71,8 +71,8 @@ cases:
   - id: J3
     title: 补货建议→批量草稿→取消(scorecard 未部署 N/A)
     script: cases/J3.sh
-    last_result: null
-    last_run: null
+    last_result: pass
+    last_run: "20260610-uat1"
     ai_calls: 0
     failed_endpoints: []
     endpoints:
@@ -88,8 +88,8 @@ cases:
   - id: J4
     title: 计费契约 overview/subscribe(不完成支付)
     script: cases/J4.sh
-    last_result: null
-    last_run: null
+    last_result: pass
+    last_run: "20260610-uat1"
     ai_calls: 0
     failed_endpoints: []
     endpoints:
@@ -98,8 +98,8 @@ cases:
   - id: J5
     title: 身份安全 401 族+PAT 生命周期+跨租户 RLS+account center
     script: cases/J5.sh
-    last_result: null
-    last_run: null
+    last_result: pass
+    last_run: "20260610-uat1"
     ai_calls: 0
     failed_endpoints: []
     endpoints:
@@ -123,8 +123,8 @@ cases:
   - id: J6
     title: 订单导入+Shopify 绑定+webhook 契约(secret 未配+FE 边缘拦截)
     script: cases/J6.sh
-    last_result: null
-    last_run: null
+    last_result: pass
+    last_run: "20260610-uat1"
     ai_calls: 0
     failed_endpoints: []
     endpoints:
@@ -141,9 +141,9 @@ cases:
   - id: J7
     title: AI 助手 chat→plan→confirm→revert→cancel(≤3 LLM 调用)
     script: cases/J7.sh
-    last_result: null
-    last_run: null
-    ai_calls: 0
+    last_result: pass
+    last_run: "20260610-uat1"
+    ai_calls: 2
     failed_endpoints: []
     endpoints:
       - "POST /api/v1/ai/chat"
@@ -157,8 +157,8 @@ cases:
   - id: J8
     title: 边界 幂等重放头+limit cap+CSV+search+分页+畸形输入
     script: cases/J8.sh
-    last_result: null
-    last_run: null
+    last_result: pass
+    last_run: "20260610-uat1"
     ai_calls: 0
     failed_endpoints: []
     endpoints:
@@ -175,8 +175,8 @@ cases:
   - id: B1
     title: 广度扫 其余端点 每端点成功+错误双路径
     script: cases/B1-breadth.sh
-    last_result: null
-    last_run: null
+    last_result: pass
+    last_run: "20260610-uat1"
     ai_calls: 0
     failed_endpoints: []
     endpoints:

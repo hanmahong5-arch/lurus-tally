@@ -70,7 +70,7 @@ fi
 # --- Step 4: unit create + read back (list — no GET /units/:id route) --------
 http unit-create POST /api/v1/units \
   -H 'Content-Type: application/json' \
-  -d "{\"code\":\"${P}-UNIT\",\"name\":\"${P}-box\",\"unit_type\":\"count\"}"
+  -d "{\"code\":\"${P}-U\",\"name\":\"${P}-box\",\"unit_type\":\"count\"}"
 expect_status 201
 UNIT_ID=$(body_json -r '.id')
 check "unit create returned uuid id" \
@@ -79,7 +79,7 @@ check "unit create returned uuid id" \
 http unit-list GET /api/v1/units
 expect_status 200
 check "unit round-trip via list: code+name" \
-  jq -e --arg id "$UNIT_ID" --arg c "${P}-UNIT" --arg n "${P}-box" \
+  jq -e --arg id "$UNIT_ID" --arg c "${P}-U" --arg n "${P}-box" \
     '.items | map(select(.id == $id)) | length == 1 and .[0].code == $c and .[0].name == $n' \
     "$HTTP_BODY_FILE"
 

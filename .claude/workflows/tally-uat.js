@@ -140,8 +140,9 @@ MEASUREMENT MUST NOT SHARE A SOURCE WITH THE CLAIM:
 2. Independent read-only re-probe: source scripts/uat/.uat.env and curl (GET only) the resources each case claims to have created/mutated — e.g. GET the created product by id, re-run the cross-tenant read with the OTHER tenant's PAT, re-fetch a stock snapshot and check the math. Your own probe result wins over both the tester and the evidence file when they disagree.
 3. A claim with no evidence file = verdict fabricated-unproven for that case.
 4. Classify every failing check: product-bug | env | test-bug | pre-existing. For pre-existing, compare against the 5 known findings in _uat-reports/UAT-REPORT.md (S-01..S-05). For product-bug include a one-line curl repro.
-5. Case verdict: pass only when every check passed AND evidence is genuine AND your re-probes corroborate. partial when the case ran soundly but keeps deliberate RED checks on real product bugs (name the affected endpoints). blocked when the case could not run for environmental reasons.
-READ-ONLY: you may not run case scripts, write files, or mutate any data (GET requests only; no POST/PUT/DELETE).
+5. Case verdict — use the registry taxonomy directly: pass only when every check passed AND evidence is genuine AND your re-probes corroborate. partial when the case ran soundly but keeps deliberate RED checks on real product bugs (name the affected endpoints in claimed_vs_audited). fail when execution or evidence is unsound (including fabricated-unproven). blocked when the case could not run for environmental reasons.
+6. Durable transport (verdicts must survive prompt truncation): write your final verdict JSON verbatim to _uat-reports/evidence/${RUN_ID}/.audit/${shard.key}.json. This file is the ONLY write you are allowed.
+READ-ONLY otherwise: you may not run case scripts, mutate any data, or write any other file (GET requests only; no POST/PUT/DELETE against the API).
 ${SAFETY}`
 
 const backendResults = await pipeline(
@@ -178,7 +179,7 @@ ${SAFETY}`,
     exec: feExec,
     audit: await agent(
       `Adversarial audit of a Playwright STAGE run. Repo C:\\Users\\Anita\\Desktop\\lurus\\2b-svc-psi. Tester claims (UNTRUSTED): ${String(feExec).slice(0, 3000)}
-Verify: web/playwright-report-uat-stage and web/test-results-uat exist with artifacts consistent with the claims (trace zips, results). Open the HTML report's JSON or list result dirs. Classify failures (product-bug|env|test-bug|pre-existing). Verdict per spec file. READ-ONLY.`,
+Verify: web/playwright-report-uat-stage and web/test-results-uat exist with artifacts consistent with the claims (trace zips, results). Open the HTML report's JSON or list result dirs. Classify failures (product-bug|env|test-bug|pre-existing). Verdict per spec file. Write your verdict verbatim to _uat-reports/evidence/${RUN_ID}/.audit/frontend.json (the only write allowed); otherwise READ-ONLY.`,
       { label: 'audit:frontend', phase: 'Supervise' },
     ),
   }
@@ -189,11 +190,26 @@ Verify: web/playwright-report-uat-stage and web/test-results-uat exist with arti
 // ---------------------------------------------------------------------------
 phase('Report')
 const audited = backendResults.filter(Boolean)
+
+// Hard gate: every executed case must carry an audit verdict. A prior run
+// silently lost 4/9 verdicts to prompt truncation; never reach the report
+// phase with unaudited executions again.
+{
+  const auditedIds = new Set(
+    audited.flatMap(r => ((r.audit && r.audit.cases) || []).map(c => c.id)),
+  )
+  const missing = BACKEND_SHARDS.flatMap(s => s.cases)
+    .filter(c => !auditedIds.has(c) && !auditedIds.has(c.replace('-breadth', '')) && !auditedIds.has(c + '-breadth'))
+  if (missing.length) {
+    throw new Error('audit verdicts missing for executed cases: ' + missing.join(', ') +
+      ' — re-run the Supervise shards (verdict files: _uat-reports/evidence/' + RUN_ID + '/.audit/)')
+  }
+}
 const report = await agent(
   `You are the UAT reporter for run ${RUN_ID}. Repo C:\\Users\\Anita\\Desktop\\lurus\\2b-svc-psi (Git Bash, jq available).
 
-AUDITED RESULTS (authoritative — these are post-supervision verdicts, use them, not the testers' claims):
-${JSON.stringify({ backend: audited, frontend: feResult ? { exec: String(feResult.exec).slice(0, 1500), audit: feResult.audit } : 'skipped' }).slice(0, 12000)}
+AUDITED RESULTS (authoritative — post-supervision verdicts, use them, not the testers' claims). The durable copies live in _uat-reports/evidence/${RUN_ID}/.audit/*.json — READ THOSE FILES FIRST; the inline JSON below is a convenience copy and may be truncated:
+${JSON.stringify({ backend: audited, frontend: feResult ? { exec: String(feResult.exec).slice(0, 1500), audit: feResult.audit } : 'skipped' }).slice(0, 30000)}
 
 DO, in order:
 1. Update scripts/uat/registry.yaml: for each case set last_result to the AUDITED verdict, last_run: "${RUN_ID}", and ai_calls for J7 from _uat-reports/evidence/${RUN_ID}/.ai_calls (0 if absent). Verdict mapping: all checks green => pass; ran to completion but kept deliberate RED checks on real product bugs => partial AND list the affected endpoint lines under that case's failed_endpoints; execution/evidence unsound or fabricated-unproven => fail; could not run => blocked. Keep the file's field order (id,title,script,last_result,last_run,ai_calls,failed_endpoints,endpoints) — coverage.sh parses it positionally. Do not invent endpoints entries.
