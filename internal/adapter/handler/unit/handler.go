@@ -11,6 +11,7 @@ import (
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
 	appunit "github.com/hanmahong5-arch/lurus-tally/internal/app/unit"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/unit"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // Handler groups all unit CRUD Gin handlers.
@@ -79,7 +80,7 @@ func (h *Handler) List(c *gin.Context) {
 
 	units, err := h.list.Execute(c.Request.Context(), filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": units})
@@ -109,7 +110,7 @@ func (h *Handler) Delete(c *gin.Context) {
 				"error": "system unit cannot be deleted: only tenant-custom units may be deleted",
 			})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			httperr.WriteInternal(c, err)
 		}
 		return
 	}

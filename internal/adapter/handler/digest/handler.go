@@ -23,6 +23,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // WeeklySummaryUseCase is the surface the handler calls.
@@ -76,7 +77,7 @@ func (h *Handler) GetWeeklySummary(c *gin.Context) {
 
 	summary, err := h.uc.Execute(c.Request.Context(), tenantID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 

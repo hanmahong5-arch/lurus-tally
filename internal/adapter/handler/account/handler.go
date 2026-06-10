@@ -14,6 +14,7 @@ import (
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appacct "github.com/hanmahong5-arch/lurus-tally/internal/app/account"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // Handler groups the account-center Gin handlers.
@@ -74,7 +75,7 @@ func (h *Handler) ListSessions(c *gin.Context) {
 	}
 	sessions, err := h.listSessions.Execute(c.Request.Context(), tenantID, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	type item struct {
@@ -116,7 +117,7 @@ func (h *Handler) RevokeSession(c *gin.Context) {
 		return
 	}
 	if err := h.revokeSession.Execute(c.Request.Context(), tenantID, id); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -133,7 +134,7 @@ func (h *Handler) ListAuditLog(c *gin.Context) {
 	offset := atoiDefault(c.Query("offset"), 0)
 	entries, total, err := h.listAudit.Execute(c.Request.Context(), tenantID, limit, offset)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	type item struct {
@@ -167,7 +168,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 	}
 	p, err := h.getProfile.Execute(c.Request.Context(), tenantID, userID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{
@@ -233,7 +234,7 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 
 	data, err := io.ReadAll(io.LimitReader(f, int64(appacct.AvatarSizeMax)+1))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	ct := fh.Header.Get("Content-Type")
@@ -247,7 +248,7 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 		case errors.Is(err, appacct.ErrAvatarUnsupported):
 			c.JSON(http.StatusUnsupportedMediaType, gin.H{"error": "avatar_unsupported", "detail": err.Error()})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+			httperr.WriteInternal(c, err)
 		}
 		return
 	}
@@ -269,7 +270,7 @@ func (h *Handler) DownloadAvatar(c *gin.Context) {
 			c.Status(http.StatusNotFound)
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.Header("Cache-Control", "private, max-age=60")
