@@ -4,6 +4,7 @@
 //
 //	GET  /api/v1/replenish/suggestions?weeks=2
 //	POST /api/v1/replenish/draft-batch
+//	GET  /api/v1/replenish/scorecard
 package replenish
 
 import (
@@ -30,10 +31,16 @@ type CreateDraftBatchUseCase interface {
 	Execute(ctx context.Context, req appreplenish.DraftBatchRequest) (*appreplenish.DraftBatchOutput, error)
 }
 
+// GetScorecardUseCase is the surface the handler calls for GET scorecard.
+type GetScorecardUseCase interface {
+	Execute(ctx context.Context, tenantID uuid.UUID) (*appreplenish.Scorecard, error)
+}
+
 // Handler groups replenishment HTTP endpoints.
 type Handler struct {
-	uc    ListSuggestionsUseCase
-	batch CreateDraftBatchUseCase // nil when not wired (returns 501)
+	uc        ListSuggestionsUseCase
+	batch     CreateDraftBatchUseCase // nil when not wired (returns 501)
+	scorecard GetScorecardUseCase     // nil when not wired (returns 501)
 }
 
 // New constructs a Handler with only the suggestions use case.
@@ -47,10 +54,17 @@ func NewWithBatch(uc ListSuggestionsUseCase, batch CreateDraftBatchUseCase) *Han
 	return &Handler{uc: uc, batch: batch}
 }
 
+// WithScorecard wires the scorecard use case (F3). nil keeps the route at 501.
+func (h *Handler) WithScorecard(sc GetScorecardUseCase) *Handler {
+	h.scorecard = sc
+	return h
+}
+
 // RegisterRoutes mounts replenishment endpoints onto the given router group.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/replenish/suggestions", h.GetSuggestions)
 	rg.POST("/replenish/draft-batch", h.PostDraftBatch)
+	rg.GET("/replenish/scorecard", h.GetScorecard)
 }
 
 // suggestionResp is the JSON shape of a single suggestion row.
@@ -252,6 +266,46 @@ func (h *Handler) PostDraftBatch(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"drafts": results,
 		"count":  len(results),
+	})
+}
+
+// ----- Scorecard -----
+
+// scorecardResp is the response body for GET /api/v1/replenish/scorecard.
+type scorecardResp struct {
+	WindowDays       int     `json:"window_days"`
+	SuggestionsCount int     `json:"suggestions_count"`
+	AdoptedCount     int     `json:"adopted_count"`
+	AdoptionRate     float64 `json:"adoption_rate"`
+	StockoutMisses   int     `json:"stockout_misses"`
+}
+
+// GetScorecard handles GET /api/v1/replenish/scorecard — the 28-day
+// suggestion track record (adoption rate + stockout misses).
+func (h *Handler) GetScorecard(c *gin.Context) {
+	if h.scorecard == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "not_implemented", "detail": "scorecard not configured"})
+		return
+	}
+
+	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "tenant_id required"})
+		return
+	}
+
+	sc, err := h.scorecard.Execute(c.Request.Context(), tenantID)
+	if err != nil {
+		httperr.WriteInternal(c, err)
+		return
+	}
+
+	c.JSON(http.StatusOK, scorecardResp{
+		WindowDays:       sc.WindowDays,
+		SuggestionsCount: sc.SuggestionsCount,
+		AdoptedCount:     sc.AdoptedCount,
+		AdoptionRate:     sc.AdoptionRate,
+		StockoutMisses:   sc.StockoutMisses,
 	})
 }
 

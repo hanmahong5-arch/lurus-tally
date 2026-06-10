@@ -8,6 +8,7 @@ package replenish
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"math"
 	"sort"
 
@@ -82,14 +83,47 @@ type RawRow struct {
 	LastPurchasePrice *decimal.Decimal // most recent approved purchase price in CNY; nil = no purchase history
 }
 
+// SnapshotRow is one row of today's suggestion snapshot persisted to the
+// result ledger (F3). Only actionable rows (SuggestedQty > 0) are recorded —
+// "nothing to order" is not a suggestion the user could have adopted, so
+// logging it would inflate the scorecard denominator.
+type SnapshotRow struct {
+	ProductID      uuid.UUID
+	SuggestedQty   decimal.Decimal
+	AvailableQty   decimal.Decimal
+	AvgDailySales  decimal.Decimal
+	LeadTimeDays   int
+	LeadTimeSource string
+	DaysOfSupply   decimal.Decimal
+}
+
+// SnapshotLedger persists today's suggestion rows so the scorecard can later
+// report adoption and stockout misses. Implemented by the SQL repo as one
+// multi-row upsert; adopted rows are immutable at the SQL level.
+type SnapshotLedger interface {
+	UpsertSnapshots(ctx context.Context, tenantID uuid.UUID, rows []SnapshotRow) error
+}
+
 // ListSuggestionsUseCase computes weekly replenishment suggestions.
 type ListSuggestionsUseCase struct {
-	repo SuggestionRepo
+	repo   SuggestionRepo
+	ledger SnapshotLedger // optional — nil keeps the read path ledger-free
+	log    *slog.Logger
 }
 
 // NewListSuggestionsUseCase constructs the use case with its required repo.
 func NewListSuggestionsUseCase(repo SuggestionRepo) *ListSuggestionsUseCase {
-	return &ListSuggestionsUseCase{repo: repo}
+	return &ListSuggestionsUseCase{repo: repo, log: slog.Default()}
+}
+
+// WithLedger enables the best-effort F3 result ledger. A nil logger falls
+// back to slog.Default so ledger failures are never silently dropped.
+func (uc *ListSuggestionsUseCase) WithLedger(ledger SnapshotLedger, log *slog.Logger) *ListSuggestionsUseCase {
+	uc.ledger = ledger
+	if log != nil {
+		uc.log = log
+	}
+	return uc
 }
 
 const defaultWeeks = 2
@@ -243,6 +277,36 @@ func (uc *ListSuggestionsUseCase) Execute(ctx context.Context, tenantID uuid.UUI
 	sort.Slice(out, func(i, j int) bool {
 		return out[i].UrgencyScore.LessThan(out[j].UrgencyScore)
 	})
+
+	// Best-effort F3 ledger write: record today's actionable rows so the
+	// scorecard can later report adoption and misses. Runs SEQUENTIALLY after
+	// the read on the same request-pinned connection (dbscope) — never a
+	// goroutine — and a failure only logs: the suggestions read must not
+	// break because trust bookkeeping did.
+	if uc.ledger != nil {
+		snaps := make([]SnapshotRow, 0, len(out))
+		for _, s := range out {
+			if !s.SuggestedQty.IsPositive() {
+				continue
+			}
+			snaps = append(snaps, SnapshotRow{
+				ProductID:      s.ProductID,
+				SuggestedQty:   s.SuggestedQty,
+				AvailableQty:   s.AvailableQty,
+				AvgDailySales:  s.AvgDailySales,
+				LeadTimeDays:   s.LeadTimeDays,
+				LeadTimeSource: s.LeadTimeSource,
+				DaysOfSupply:   s.UrgencyScore, // days-of-supply IS the urgency score
+			})
+		}
+		if len(snaps) > 0 {
+			if lerr := uc.ledger.UpsertSnapshots(ctx, tenantID, snaps); lerr != nil {
+				uc.log.Warn("replenish: suggestion ledger upsert failed",
+					slog.String("tenant_id", tenantID.String()),
+					slog.String("error", lerr.Error()))
+			}
+		}
+	}
 
 	return out, nil
 }

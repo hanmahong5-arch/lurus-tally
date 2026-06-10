@@ -258,6 +258,107 @@ func TestReplenishHandler_GetSuggestions_SerializesForecastAndLearningFields(t *
 	}
 }
 
+// stubScorecardUC is a test double for GetScorecardUseCase.
+type stubScorecardUC struct {
+	out *appreplenish.Scorecard
+	err error
+}
+
+func (s *stubScorecardUC) Execute(_ context.Context, _ uuid.UUID) (*appreplenish.Scorecard, error) {
+	return s.out, s.err
+}
+
+// TestReplenishHandler_GetScorecard_HappyPath_SerializesFields verifies the
+// JSON contract of GET /replenish/scorecard.
+func TestReplenishHandler_GetScorecard_HappyPath_SerializesFields(t *testing.T) {
+	h := handlerreplenish.New(&stubUseCase{}).WithScorecard(&stubScorecardUC{out: &appreplenish.Scorecard{
+		WindowDays:       28,
+		SuggestionsCount: 8,
+		AdoptedCount:     4,
+		AdoptionRate:     0.5,
+		StockoutMisses:   2,
+	}})
+	e := newTestEngine(h, uuid.New())
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/replenish/scorecard", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	var resp struct {
+		WindowDays       int     `json:"window_days"`
+		SuggestionsCount int     `json:"suggestions_count"`
+		AdoptedCount     int     `json:"adopted_count"`
+		AdoptionRate     float64 `json:"adoption_rate"`
+		StockoutMisses   int     `json:"stockout_misses"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	checks := []struct {
+		name string
+		got  any
+		want any
+	}{
+		{"window_days", resp.WindowDays, 28},
+		{"suggestions_count", resp.SuggestionsCount, 8},
+		{"adopted_count", resp.AdoptedCount, 4},
+		{"adoption_rate", resp.AdoptionRate, 0.5},
+		{"stockout_misses", resp.StockoutMisses, 2},
+	}
+	for _, c := range checks {
+		if c.got != c.want {
+			t.Errorf("%s = %v, want %v", c.name, c.got, c.want)
+		}
+	}
+}
+
+// TestReplenishHandler_GetScorecard_NoTenant_Returns401 verifies auth guard.
+func TestReplenishHandler_GetScorecard_NoTenant_Returns401(t *testing.T) {
+	h := handlerreplenish.New(&stubUseCase{}).WithScorecard(&stubScorecardUC{out: &appreplenish.Scorecard{}})
+	e := newTestEngine(h, uuid.Nil)
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/replenish/scorecard", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("expected 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestReplenishHandler_GetScorecard_UsecaseError_Returns500 verifies 5xx goes
+// through httperr (generic body, no raw error leak).
+func TestReplenishHandler_GetScorecard_UsecaseError_Returns500(t *testing.T) {
+	h := handlerreplenish.New(&stubUseCase{}).WithScorecard(&stubScorecardUC{err: context.DeadlineExceeded})
+	e := newTestEngine(h, uuid.New())
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/replenish/scorecard", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestReplenishHandler_GetScorecard_NotWired_Returns501 verifies the route
+// degrades gracefully when the use case is not configured.
+func TestReplenishHandler_GetScorecard_NotWired_Returns501(t *testing.T) {
+	h := handlerreplenish.New(&stubUseCase{}) // no WithScorecard
+	e := newTestEngine(h, uuid.New())
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/replenish/scorecard", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNotImplemented {
+		t.Errorf("expected 501, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 // TestReplenishHandler_GetSuggestions_OmitsLastPriceWhenNil verifies the
 // last_purchase_price key is absent (omitempty) when there is no history.
 func TestReplenishHandler_GetSuggestions_OmitsLastPriceWhenNil(t *testing.T) {
