@@ -47,6 +47,10 @@ type AuditEntry struct {
 	TargetID   string
 	Payload    []byte // marshalled JSON
 	CreatedAt  time.Time
+	// EventID is the source NATS envelope id when the entry originates from the
+	// audit subscriber; empty for synchronous (non-event) writes. It is the
+	// dedup key against at-least-once redelivery — see migration 000049.
+	EventID string
 }
 
 // Profile is the editable per-user record. DisplayName here overrides the
