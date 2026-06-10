@@ -42,6 +42,24 @@ export async function listReplenishSuggestions(
   return apiFetch(`/replenish/suggestions?${usp.toString()}`, { tenantId, signal })
 }
 
+// ----- Scorecard -----
+
+export interface ReplenishScorecard {
+  window_days: number
+  suggestions_count: number
+  adopted_count: number
+  adoption_rate: number
+  stockout_misses: number
+}
+
+/** GET /api/v1/replenish/scorecard — 28-day suggestion track record. */
+export async function fetchScorecard(
+  tenantId?: string,
+  signal?: AbortSignal
+): Promise<ReplenishScorecard> {
+  return apiFetch("/replenish/scorecard", { tenantId, signal })
+}
+
 // ----- Draft-batch -----
 
 export interface DraftBatchLine {
