@@ -15,13 +15,24 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httpx"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmgateway"
+)
+
+const (
+	// chatMaxAttempts bounds the explicit retry of the non-streaming chat call.
+	// Total attempts = 1 + 2 retries. The streaming path is deliberately NOT
+	// retried (partial chunks may already have reached the caller).
+	chatMaxAttempts  = 3
+	chatRetryBase    = 200 * time.Millisecond
+	chatRetryMaxWait = 3 * time.Second
 )
 
 const (
@@ -78,6 +89,15 @@ type ChatRequest struct {
 	Thinking  *struct {
 		Type string `json:"type"`
 	} `json:"thinking,omitempty"`
+	// StreamOptions asks the gateway to emit a final usage chunk on streaming
+	// responses so the streaming path can record token spend like the
+	// non-streaming one. Omitted (nil) for non-streaming requests.
+	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
+}
+
+// StreamOptions is the OpenAI-compatible stream_options object.
+type StreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // ChatResponse is the non-streaming response body.
@@ -202,11 +222,52 @@ func (c *Client) buildRequest(model string, messages []Message, tools []Tool, st
 		// trap 3: never send tools + response_format together (not applicable here since we
 		// never send response_format in this path, but document the invariant).
 	}
+	if stream {
+		// Ask for usage on the terminal stream chunk so doStream can record
+		// spend. Gateways that ignore this simply omit the chunk — no regression.
+		req.StreamOptions = &StreamOptions{IncludeUsage: true}
+	}
 	return req
 }
 
-// doChat performs a non-streaming request and returns the parsed response.
+// doChat performs a non-streaming request with bounded retry. It is safe to
+// retry because the call is atomic: a failed attempt produced no usable
+// completion and was not billed, so re-sending cannot double a charge or emit
+// duplicate output. Retry fires only when classifyAPIError marks the error
+// Retryable (429 / 5xx with a structured error body) — consuming the
+// previously-unused LLMError.Retryable flag.
 func (c *Client) doChat(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
+	var lastErr error
+	for attempt := 0; attempt < chatMaxAttempts; attempt++ {
+		if attempt > 0 {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(httpx.Backoff(attempt, chatRetryBase, chatRetryMaxWait)):
+			}
+		}
+		resp, err := c.doChatOnce(ctx, req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !chatErrorRetryable(err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+// chatErrorRetryable reports whether a doChatOnce error is a transient API error
+// worth replaying. Conservative on purpose: only a classified-retryable
+// LLMError qualifies. Raw transport errors are left for the caller to handle.
+func chatErrorRetryable(err error) bool {
+	var le *LLMError
+	return errors.As(err, &le) && le.Retryable
+}
+
+// doChatOnce performs a single non-streaming request and returns the parsed response.
+func (c *Client) doChatOnce(ctx context.Context, req ChatRequest) (*ChatResponse, error) {
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, fmt.Errorf("llmclient: marshal request: %w", err)
@@ -279,6 +340,10 @@ func (c *Client) doStream(ctx context.Context, req ChatRequest, onDelta func(Str
 		return fmt.Errorf("llmclient: stream HTTP %d: %s", resp.StatusCode, string(errBody))
 	}
 
+	// usage is carried only on the terminal chunk (when stream_options.
+	// include_usage is honoured); capture it so we can record spend at the end,
+	// matching the non-streaming path.
+	var usage *Usage
 	scanner := bufio.NewScanner(resp.Body)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -298,9 +363,13 @@ func (c *Client) doStream(ctx context.Context, req ChatRequest, onDelta func(Str
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
+			Usage *Usage `json:"usage"`
 		}
 		if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 			continue // skip malformed chunks
+		}
+		if chunk.Usage != nil {
+			usage = chunk.Usage
 		}
 		if len(chunk.Choices) > 0 {
 			onDelta(StreamDelta{
@@ -312,6 +381,11 @@ func (c *Client) doStream(ctx context.Context, req ChatRequest, onDelta func(Str
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("llmclient: reading SSE stream: %w", err)
+	}
+	// Record token spend on the streaming path too (parity with doChat :247).
+	// No-op when the gateway did not emit a usage chunk.
+	if usage != nil {
+		llmgateway.RecordUsage(ctx, req.Model, usage.PromptTokens, usage.CompletionTokens)
 	}
 	return nil
 }

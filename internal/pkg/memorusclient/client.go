@@ -23,6 +23,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httpx"
 )
 
 const defaultTimeout = 3 * time.Second
@@ -80,7 +82,14 @@ func New(cfg Config) (*Client, error) {
 	return &Client{
 		baseURL: cfg.BaseURL,
 		apiKey:  cfg.APIKey,
-		http:    &http.Client{Timeout: timeout},
+		http: &http.Client{
+			Timeout: timeout,
+			// Resilient transport: idempotent GET searches retry on 429/5xx with
+			// backoff; the POST that adds a memory is single-shot (never replayed,
+			// so a retry cannot duplicate a memory). A circuit breaker fast-fails
+			// when memorus is down so AI requests degrade instead of stalling.
+			Transport: httpx.New(http.DefaultTransport, httpx.DefaultConfig()),
+		},
 	}, nil
 }
 
