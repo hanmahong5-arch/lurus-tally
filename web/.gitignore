@@ -7,3 +7,7 @@ tests/e2e/.auth/
 .env*.local
 next-env.d.ts
 tsconfig.tsbuildinfo
+
+# STAGE UAT runner artifacts (storageState carries a session token)
+test-results-uat/
+playwright-report-uat-stage/
