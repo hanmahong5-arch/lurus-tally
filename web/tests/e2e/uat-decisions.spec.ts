@@ -27,6 +27,17 @@ import fs from "fs"
 const BACKEND = "http://localhost:18200"
 const FE = "http://localhost:3030"
 
+// REAL mode (UAT_REAL=1, set by uat-stage.config.ts): backend calls go through
+// the session-authenticated FE proxy (/api/proxy/*) — the `request` fixture
+// carries the NextAuth storageState cookie and relative URLs resolve against
+// baseURL. When UAT_REAL is unset the direct-backend path is 100% unchanged.
+const REAL = process.env.UAT_REAL === "1"
+
+/** Resolves a backend /api/v1 path: direct in local mode, via FE proxy in REAL mode. */
+function api(p: string): string {
+  return REAL ? p.replace("/api/v1/", "/api/proxy/") : `${BACKEND}${p}`
+}
+
 /**
  * Fixed tenant UUID for all UAT seeding. Must match the tenant row in the
  * test database. If the backend returns 401 on seeding calls it means the
@@ -50,6 +61,10 @@ fs.mkdirSync(SCREEN_DIR, { recursive: true })
 
 /** Auth headers sent on every direct backend call. */
 function tenantHeaders(): Record<string, string> {
+  if (REAL) {
+    // FE proxy injects the Bearer PAT; tenant is derived from it server-side.
+    return { "Content-Type": "application/json" }
+  }
   return { "X-Tenant-ID": TEST_TENANT_ID, "Content-Type": "application/json" }
 }
 
@@ -63,7 +78,7 @@ async function createProduct(
   name: string,
   unitPrice = "100.00",
 ): Promise<string> {
-  const res = await request.post(`${BACKEND}/api/v1/products`, {
+  const res = await request.post(api("/api/v1/products"), {
     headers: tenantHeaders(),
     data: { code, name, unit_price: unitPrice, remark: "uat-seed" },
   })
@@ -88,7 +103,7 @@ async function seedStock(
   qty: number,
 ): Promise<void> {
   // Create a purchase bill to seed stock
-  const billRes = await request.post(`${BACKEND}/api/v1/purchase-bills`, {
+  const billRes = await request.post(api("/api/v1/purchase-bills"), {
     headers: tenantHeaders(),
     data: {
       warehouse_id: TEST_WAREHOUSE_ID,
@@ -124,7 +139,7 @@ async function seedOversell(
   productId: string,
   qty: number,
 ): Promise<void> {
-  const res = await request.post(`${BACKEND}/api/v1/sale-bills`, {
+  const res = await request.post(api("/api/v1/sale-bills"), {
     headers: tenantHeaders(),
     data: {
       warehouse_id: TEST_WAREHOUSE_ID,
@@ -194,7 +209,7 @@ test("replenish_batch_generates_drafts", async ({ request, page }) => {
   }
 
   // ── Backend: verify suggestions endpoint ──────────────────────────────────
-  const suggestRes = await request.get(`${BACKEND}/api/v1/replenish/suggestions?weeks=2`, {
+  const suggestRes = await request.get(api("/api/v1/replenish/suggestions?weeks=2"), {
     headers: tenantHeaders(),
   })
 
@@ -327,8 +342,8 @@ test("imports_csv_amazon_dryrun_then_real", async ({ request, page }) => {
   // Hints tell the importer which product to map this SKU to
   previewForm.append("hints", JSON.stringify([{ platform_sku: code, product_id: productId }]))
 
-  const previewRes = await request.post(`${BACKEND}/api/v1/imports/orders?preview=true`, {
-    headers: { "X-Tenant-ID": TEST_TENANT_ID },
+  const previewRes = await request.post(api("/api/v1/imports/orders?preview=true"), {
+    headers: REAL ? {} : { "X-Tenant-ID": TEST_TENANT_ID },
     multipart: {
       platform: "amazon",
       warehouse: TEST_WAREHOUSE_ID,
@@ -362,8 +377,8 @@ test("imports_csv_amazon_dryrun_then_real", async ({ request, page }) => {
   }
 
   // ── Real import ───────────────────────────────────────────────────────────
-  const realRes = await request.post(`${BACKEND}/api/v1/imports/orders`, {
-    headers: { "X-Tenant-ID": TEST_TENANT_ID },
+  const realRes = await request.post(api("/api/v1/imports/orders"), {
+    headers: REAL ? {} : { "X-Tenant-ID": TEST_TENANT_ID },
     multipart: {
       platform: "amazon",
       warehouse: TEST_WAREHOUSE_ID,
@@ -394,8 +409,8 @@ test("imports_csv_amazon_dryrun_then_real", async ({ request, page }) => {
 
   // ── Idempotency: re-upload same CSV ──────────────────────────────────────
   if (realStatus === 201 || realStatus === 200) {
-    const idempotentRes = await request.post(`${BACKEND}/api/v1/imports/orders`, {
-      headers: { "X-Tenant-ID": TEST_TENANT_ID },
+    const idempotentRes = await request.post(api("/api/v1/imports/orders"), {
+      headers: REAL ? {} : { "X-Tenant-ID": TEST_TENANT_ID },
       multipart: {
         platform: "amazon",
         warehouse: TEST_WAREHOUSE_ID,
@@ -445,7 +460,7 @@ test("reports_four_blocks_render", async ({ request, page }) => {
   ]
 
   for (const ep of endpoints) {
-    const res = await request.get(`${BACKEND}${ep.path}`, { headers: tenantHeaders() })
+    const res = await request.get(api(ep.path), { headers: tenantHeaders() })
     const status = res.status()
     console.log(`[uat] reports: GET ${ep.path} → ${status}`)
 
@@ -562,7 +577,7 @@ test("monday_card_shows_signals", async ({ request, page }) => {
   )
 
   // ── Backend: verify weekly-summary endpoint ───────────────────────────────
-  const summaryRes = await request.get(`${BACKEND}/api/v1/weekly-summary`, {
+  const summaryRes = await request.get(api("/api/v1/weekly-summary"), {
     headers: tenantHeaders(),
   })
 
