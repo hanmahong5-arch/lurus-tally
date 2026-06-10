@@ -53,6 +53,23 @@ type SupplierNameResolver interface {
 	NameByID(ctx context.Context, tenantID, supplierID uuid.UUID) (string, error)
 }
 
+// ProductSupplier identifies one (product, preferred supplier) pair for batch
+// price lookup. Defined here (not in the repo adapter) so the dependency keeps
+// pointing adapter → app. SupplierID is nil for the no-supplier group.
+type ProductSupplier struct {
+	ProductID  uuid.UUID
+	SupplierID *uuid.UUID
+}
+
+// PriceLookup resolves the most recent approved purchase price (already
+// converted to CNY) for a set of pairs in ONE batch query — never per-product.
+// The result is keyed by product only: within a single draft batch each
+// product belongs to exactly one supplier group, so the product ID is a
+// sufficient key and spares callers a composite-key type.
+type PriceLookup interface {
+	LastPurchasePrices(ctx context.Context, tenantID uuid.UUID, pairs []ProductSupplier) (map[uuid.UUID]decimal.Decimal, error)
+}
+
 // CreateDraftBatchUseCase groups selected replenishment lines by supplier and
 // creates one purchase draft per group.
 //
@@ -64,12 +81,20 @@ type SupplierNameResolver interface {
 type CreateDraftBatchUseCase struct {
 	creator  PurchaseDraftCreator
 	resolver SupplierNameResolver // may be nil — names will be empty
+	prices   PriceLookup          // may be nil — drafts keep zero unit prices
 }
 
 // NewCreateDraftBatchUseCase constructs the use case.
 // resolver may be nil; supplier names will then be omitted from results.
 func NewCreateDraftBatchUseCase(creator PurchaseDraftCreator, resolver SupplierNameResolver) *CreateDraftBatchUseCase {
 	return &CreateDraftBatchUseCase{creator: creator, resolver: resolver}
+}
+
+// WithPriceLookup enables last-purchase-price backfill on created draft lines.
+// nil keeps today's behavior (every line at decimal.Zero, filled in manually).
+func (uc *CreateDraftBatchUseCase) WithPriceLookup(pl PriceLookup) *CreateDraftBatchUseCase {
+	uc.prices = pl
+	return uc
 }
 
 // Execute groups lines by supplier, creates one draft per group, and returns
@@ -114,6 +139,26 @@ func (uc *CreateDraftBatchUseCase) Execute(ctx context.Context, req DraftBatchRe
 		remark = "补货建议批量草稿"
 	}
 
+	// One batch price fetch for all (product, supplier) pairs up front — a
+	// single query on the request-pinned connection, never per group or per
+	// product. With no PriceLookup wired the map stays nil and every line
+	// falls back to zero (today's behavior).
+	var prices map[uuid.UUID]decimal.Decimal
+	if uc.prices != nil {
+		pairs := make([]ProductSupplier, 0, len(req.Lines))
+		for _, k := range keys {
+			g := groups[k]
+			for _, l := range g.lines {
+				pairs = append(pairs, ProductSupplier{ProductID: l.ProductID, SupplierID: g.supplierID})
+			}
+		}
+		var perr error
+		prices, perr = uc.prices.LastPurchasePrices(ctx, req.TenantID, pairs)
+		if perr != nil {
+			return nil, fmt.Errorf("replenish batch draft: last purchase prices: %w", perr)
+		}
+	}
+
 	now := time.Now().UTC()
 	out := &DraftBatchOutput{Drafts: make([]DraftResult, 0, len(keys))}
 
@@ -121,11 +166,15 @@ func (uc *CreateDraftBatchUseCase) Execute(ctx context.Context, req DraftBatchRe
 		g := groups[k]
 		items := make([]appbill.CreatePurchaseItemInput, 0, len(g.lines))
 		for i, l := range g.lines {
+			unitPrice := decimal.Zero // draft — price filled in manually before approval
+			if p, ok := prices[l.ProductID]; ok {
+				unitPrice = p
+			}
 			items = append(items, appbill.CreatePurchaseItemInput{
 				ProductID: l.ProductID,
 				LineNo:    i + 1,
 				Qty:       l.Qty,
-				UnitPrice: decimal.Zero, // draft — price filled in manually before approval
+				UnitPrice: unitPrice,
 			})
 		}
 

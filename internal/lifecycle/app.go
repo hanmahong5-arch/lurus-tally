@@ -576,16 +576,18 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 	// Swarm batch handlers — replenishment (Req 3), reports (Req 10), entity
 	// search (Req 6), multi-platform import (Req 5).
+	replenishRepo := reporepl.NewSQLSuggestionRepo(db)
 	replenishHandler := handlerreplenish.NewWithBatch(
-		appreplenish.NewListSuggestionsUseCase(reporepl.NewSQLSuggestionRepo(db)),
+		appreplenish.NewListSuggestionsUseCase(replenishRepo),
 		// Draft-batch: groups suggestions by supplier and creates one purchase
 		// draft per group. Supplier name resolver is nil — names are resolved
 		// client-side from the suggestions list, avoiding an extra round-trip.
-		// TODO(P1 #4): wire SupplierNameResolver when per-supplier pricing lands.
+		// PriceLookup backfills draft line prices from the latest approved
+		// purchase bill (same-supplier preferred) in one batch query (W1.F1).
 		appreplenish.NewCreateDraftBatchUseCase(
 			appbill.NewCreatePurchaseDraftUseCase(billRepo),
 			nil, // no server-side name resolution needed (client has the names)
-		),
+		).WithPriceLookup(replenishRepo),
 	)
 	reportsHandler := handlerreports.New(appreports.New(reporeports.New(db)))
 	searchHandler := handlersearch.New(appsearch.NewSearchEntitiesUseCase(reposearch.New(db)))

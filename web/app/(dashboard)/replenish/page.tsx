@@ -237,10 +237,19 @@ export default function ReplenishPage() {
       header: "提前期",
       meta: { align: "right" },
       cell: ({ row }) => {
-        const lt = row.original.lead_time_days
+        const r = row.original
+        const lt = r.lead_time_days
         return (
-          <span className="tabular-nums text-muted-foreground">
-            {lt != null ? `${lt}天` : "—"}
+          <span className="inline-flex items-center justify-end gap-1">
+            <span className="tabular-nums text-muted-foreground">
+              {lt != null ? `${lt}天` : "—"}
+            </span>
+            {r.lead_time_source === "learned" && (
+              // Learned from actual arrivals — tooltip carries the full reason.
+              <span title={r.reason} className="cursor-help">
+                <Badge tone="ok">实测</Badge>
+              </span>
+            )}
           </span>
         )
       },

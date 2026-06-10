@@ -22,6 +22,10 @@ export interface ReplenishSuggestion {
   rop: string
   safety_stock: string
   reason: string
+  // Learning-driven fields (F1/F2) — optional: older backends omit them.
+  last_purchase_price?: string
+  lead_time_source?: "learned" | "configured" | "default"
+  lead_time_samples?: number
 }
 
 export interface ListSuggestionsParams {
