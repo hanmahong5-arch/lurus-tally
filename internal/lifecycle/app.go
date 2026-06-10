@@ -578,17 +578,20 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// search (Req 6), multi-platform import (Req 5).
 	replenishRepo := reporepl.NewSQLSuggestionRepo(db)
 	replenishHandler := handlerreplenish.NewWithBatch(
-		appreplenish.NewListSuggestionsUseCase(replenishRepo),
+		// Suggestions read upserts today's actionable rows into the result
+		// ledger (W2.F3) best-effort — a ledger failure never fails the read.
+		appreplenish.NewListSuggestionsUseCase(replenishRepo).WithLedger(replenishRepo, l),
 		// Draft-batch: groups suggestions by supplier and creates one purchase
 		// draft per group. Supplier name resolver is nil — names are resolved
 		// client-side from the suggestions list, avoiding an extra round-trip.
 		// PriceLookup backfills draft line prices from the latest approved
 		// purchase bill (same-supplier preferred) in one batch query (W1.F1).
+		// AdoptionMarker stamps ledger rows adopted per created draft (W2.F3).
 		appreplenish.NewCreateDraftBatchUseCase(
 			appbill.NewCreatePurchaseDraftUseCase(billRepo),
 			nil, // no server-side name resolution needed (client has the names)
-		).WithPriceLookup(replenishRepo),
-	)
+		).WithPriceLookup(replenishRepo).WithAdoptionMarker(replenishRepo, l),
+	).WithScorecard(appreplenish.NewGetScorecardUseCase(replenishRepo))
 	reportsHandler := handlerreports.New(appreports.New(reporeports.New(db)))
 	searchHandler := handlersearch.New(appsearch.NewSearchEntitiesUseCase(reposearch.New(db)))
 	importUC := appimporting.NewImportOrdersUseCase(

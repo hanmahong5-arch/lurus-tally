@@ -48,6 +48,8 @@ var rlsOwnedTables = []string{
 	"partner", "product_sku", "stock_initial",
 	// unit_def — owned so FORCE binds the 000048 write-check (no is_system injection).
 	"unit_def",
+	// 000050 ledger — strict from birth; owned so FORCE binds it too.
+	"replenish_suggestion_log",
 }
 
 // startRLSTestDB starts a container, runs migrations, and returns the superuser
@@ -323,6 +325,9 @@ func TestRLS_StrictFlip(t *testing.T) {
 			VALUES ($1, $2, $3)`, uuid.New(), tn, p)
 		mustExec(t, db, `INSERT INTO tally.stock_initial (id, tenant_id, product_id, warehouse_id, qty)
 			VALUES ($1, $2, $3, $4, 1)`, uuid.New(), tn, p, w)
+		// 000050: suggestion ledger row so unpinned must read 0.
+		mustExec(t, db, `INSERT INTO tally.replenish_suggestion_log (tenant_id, product_id, suggested_on, suggested_qty)
+			VALUES ($1, $2, CURRENT_DATE, 5)`, tn, p)
 	}
 	seed(tenantA)
 	seed(tenantB)
@@ -340,6 +345,7 @@ func TestRLS_StrictFlip(t *testing.T) {
 		"supplier", "project", // 000045
 		"product", "warehouse", "bill_head", "stock_snapshot", "payment_head", "exchange_rate", // 000046
 		"partner", "product_sku", "stock_initial", // 000047
+		"replenish_suggestion_log", // 000050
 	}
 	for _, tbl := range flipped {
 		// (1) UNPINNED (GUC unset): strict policy -> 0 rows. This is the whole point

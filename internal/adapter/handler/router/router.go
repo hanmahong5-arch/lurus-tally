@@ -295,6 +295,7 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 		} else {
 			api.GET("/replenish/suggestions", notImplemented)
 			api.POST("/replenish/draft-batch", notImplemented)
+			api.GET("/replenish/scorecard", notImplemented)
 		}
 
 		// Reports — surfaced AI analytics (Req 10).
