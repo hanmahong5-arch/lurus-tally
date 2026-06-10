@@ -25,7 +25,9 @@ PFX="UAT-${RUN_ID}-B1"
 # Entity NAMES carry the full UAT-${RUN_ID}- prefix (safety rule); CODE columns
 # are width-limited in the schema (unit.code VARCHAR(20), project VARCHAR(50))
 # so codes use a short run-derived token instead of the raw RUN_ID.
-SHORT=$(printf '%s' "$RUN_ID" | cksum | cut -d' ' -f1)
+# The epoch seconds are mixed in so that a re-run with the same RUN_ID still
+# generates unique codes (avoiding 409 duplicate-key conflicts).
+SHORT=$(printf '%s-%s' "$RUN_ID" "$(date +%s)" | cksum | cut -d' ' -f1)
 BOGUS_UUID="00000000-0000-0000-0000-00000000dead"
 JSON=(-H 'Content-Type: application/json')
 
@@ -127,7 +129,7 @@ expect_status 400
 #   POST /api/v1/nursery-dict/:id/restore
 ###############################################################################
 http dict-create POST /api/v1/nursery-dict "${JSON[@]}" \
-  -d "{\"name\":\"${PFX}-dict\",\"latin_name\":\"Uatus testus\",\"family\":\"Testaceae\",\"genus\":\"Uatus\",\"type\":\"shrub\",\"is_evergreen\":true,\"climate_zones\":[\"7\"],\"best_season\":[3,5],\"remark\":\"UAT breadth fixture\"}"
+  -d "{\"name\":\"${PFX}-${SHORT}-dict\",\"latin_name\":\"Uatus testus\",\"family\":\"Testaceae\",\"genus\":\"Uatus\",\"type\":\"shrub\",\"is_evergreen\":true,\"climate_zones\":[\"7\"],\"best_season\":[3,5],\"remark\":\"UAT breadth fixture\"}"
 expect_status 201
 DICT_ID=$(body_json -r '.id // empty')
 check "dict create returned id" [ -n "$DICT_ID" ]
@@ -138,7 +140,7 @@ expect_status 200
 http dict-get GET "/api/v1/nursery-dict/$DICT_ID"
 expect_status 200
 check "dict get name round-trips" \
-  bash -c "jq -e --arg n '${PFX}-dict' '.name == \$n' '$HTTP_BODY_FILE' >/dev/null"
+  bash -c "jq -e --arg n '${PFX}-${SHORT}-dict' '.name == \$n' '$HTTP_BODY_FILE' >/dev/null"
 
 http dict-update PUT "/api/v1/nursery-dict/$DICT_ID" "${JSON[@]}" \
   -d '{"remark":"UAT breadth fixture (updated)"}'
@@ -205,7 +207,7 @@ expect_status 400
 #   POST /api/v1/suppliers is the fixture step.
 ###############################################################################
 http supp-create POST /api/v1/suppliers "${JSON[@]}" \
-  -d "{\"code\":\"UB1-${SHORT}-SUP\",\"name\":\"${PFX}-supplier\",\"contact\":\"UAT bot\",\"remark\":\"UAT breadth fixture\"}"
+  -d "{\"code\":\"UB1-${SHORT}-SUP\",\"name\":\"${PFX}-${SHORT}-supplier\",\"contact\":\"UAT bot\",\"remark\":\"UAT breadth fixture\"}"
 expect_status 201
 SUPP_ID=$(body_json -r '.id // empty')
 check "supplier create returned id" [ -n "$SUPP_ID" ]
@@ -237,13 +239,13 @@ expect_status 400
 #   WH1 stays alive as the bill fixture; WH2 runs the delete/restore cycle.
 ###############################################################################
 http wh-create POST /api/v1/warehouses "${JSON[@]}" \
-  -d "{\"code\":\"UB1-${SHORT}-WH\",\"name\":\"${PFX}-warehouse\",\"remark\":\"UAT breadth fixture\"}"
+  -d "{\"code\":\"UB1-${SHORT}-WH\",\"name\":\"${PFX}-${SHORT}-warehouse\",\"remark\":\"UAT breadth fixture\"}"
 expect_status 201
 WH_ID=$(body_json -r '.id // empty')
 check "warehouse create returned id" [ -n "$WH_ID" ]
 
 http wh-create2 POST /api/v1/warehouses "${JSON[@]}" \
-  -d "{\"code\":\"UB1-${SHORT}-WH2\",\"name\":\"${PFX}-warehouse-del\"}"
+  -d "{\"code\":\"UB1-${SHORT}-WH2\",\"name\":\"${PFX}-${SHORT}-warehouse-del\"}"
 expect_status 201
 WH2_ID=$(body_json -r '.id // empty')
 
@@ -368,7 +370,7 @@ expect_status 501
 http sbill-get GET "/api/v1/sale-bills/$SBILL_ID"
 expect_status 200
 check "sale bill GET :id round-trips bill_id" \
-  bash -c "jq -e --arg id '$SBILL_ID' '(.bill_id // .id) == \$id' '$HTTP_BODY_FILE' >/dev/null"
+  bash -c "jq -e --arg id '$SBILL_ID' '(.head.id // .bill_id // .id) == \$id' '$HTTP_BODY_FILE' >/dev/null"
 
 http sbill-get-bogus GET "/api/v1/sale-bills/$BOGUS_UUID"
 expect_status 404
