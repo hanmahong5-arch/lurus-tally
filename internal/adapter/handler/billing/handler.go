@@ -11,6 +11,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 )
 
@@ -161,5 +162,5 @@ func writePlatformError(c *gin.Context, err error) {
 			return
 		}
 	}
-	c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+	httperr.WriteInternal(c, err)
 }

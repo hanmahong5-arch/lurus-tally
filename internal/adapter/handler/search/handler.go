@@ -10,6 +10,7 @@ import (
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appsearch "github.com/hanmahong5-arch/lurus-tally/internal/app/search"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 const (
@@ -55,7 +56,7 @@ func (h *Handler) Search(c *gin.Context) {
 
 	resp, err := h.uc.Execute(c.Request.Context(), req)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 

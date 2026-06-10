@@ -12,6 +12,7 @@ import (
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
 	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/product"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // Handler groups all product CRUD Gin handlers.
@@ -146,7 +147,7 @@ func (h *Handler) List(c *gin.Context) {
 
 	out, err := h.list.Execute(c.Request.Context(), filter)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out.Items, "total": out.Total})
@@ -172,7 +173,7 @@ func (h *Handler) GetByID(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, p)
@@ -274,7 +275,7 @@ func (h *Handler) Delete(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "product not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -301,7 +302,7 @@ func (h *Handler) Restore(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "product not found or already active"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, p)

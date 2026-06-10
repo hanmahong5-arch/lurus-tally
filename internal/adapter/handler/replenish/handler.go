@@ -17,6 +17,7 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appreplenish "github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // ListSuggestionsUseCase is the surface the handler calls for GET suggestions.
@@ -87,7 +88,7 @@ func (h *Handler) GetSuggestions(c *gin.Context) {
 
 	rows, err := h.uc.Execute(c.Request.Context(), tenantID, weeks)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 
@@ -205,7 +206,7 @@ func (h *Handler) PostDraftBatch(c *gin.Context) {
 		Remark:    "补货建议批量草稿",
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 
