@@ -66,6 +66,17 @@ type suggestionResp struct {
 	SupplierID    *string `json:"supplier_id,omitempty"`
 	SupplierName  string  `json:"supplier_name,omitempty"`
 	UrgencyScore  string  `json:"urgency_score"`
+	// Forecast fields — the web client declared these long before the handler
+	// serialized them; keep the JSON names aligned with web/lib/api/replenish.ts.
+	LeadTimeDays int    `json:"lead_time_days"`
+	InTransit    string `json:"in_transit"`
+	ROP          string `json:"rop"`
+	SafetyStock  string `json:"safety_stock"`
+	Reason       string `json:"reason"`
+	// Learning fields (F1/F2).
+	LastPurchasePrice *string `json:"last_purchase_price,omitempty"`
+	LeadTimeSource    string  `json:"lead_time_source"`
+	LeadTimeSamples   int     `json:"lead_time_samples"`
 }
 
 // GetSuggestions handles GET /api/v1/replenish/suggestions
@@ -105,10 +116,23 @@ func (h *Handler) GetSuggestions(c *gin.Context) {
 			EstAmountCNY:  r.EstAmountCNY.String(),
 			SupplierName:  r.SupplierName,
 			UrgencyScore:  r.UrgencyScore.String(),
+
+			LeadTimeDays: r.LeadTimeDays,
+			InTransit:    r.InTransit.String(),
+			ROP:          r.ROP.String(),
+			SafetyStock:  r.SafetyStock.String(),
+			Reason:       r.Reason,
+
+			LeadTimeSource:  r.LeadTimeSource,
+			LeadTimeSamples: r.LeadTimeSamples,
 		}
 		if r.SupplierID != nil {
 			s := r.SupplierID.String()
 			resp.SupplierID = &s
+		}
+		if r.LastPurchasePrice != nil {
+			p := r.LastPurchasePrice.String()
+			resp.LastPurchasePrice = &p
 		}
 		items = append(items, resp)
 	}
