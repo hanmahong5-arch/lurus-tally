@@ -3,8 +3,6 @@ package router
 
 import (
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	handleracct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/account"
@@ -39,19 +37,7 @@ const (
 	// own MaxBytesReader (e.g. the Shopify webhook); the avatar upload
 	// (200 KiB) and JSON endpoints sit far below this.
 	maxRequestBodyBytes = 10 << 20
-	// requestTimeout bounds processing of non-streaming requests so a stuck
-	// handler cannot pin a connection forever.
-	requestTimeout = 30 * time.Second
 )
-
-// isStreamingRoute reports whether the matched route streams its response and
-// therefore must NOT be wrapped by the buffering Timeout middleware: the SSE
-// chat endpoint (POST /api/v1/ai/chat) and the CSV exports (*.csv), which write
-// incrementally via io.Copy.
-func isStreamingRoute(c *gin.Context) bool {
-	p := c.FullPath()
-	return p == "/api/v1/ai/chat" || strings.HasSuffix(p, ".csv")
-}
 
 // notImplemented is a placeholder handler returned when a handler struct is nil.
 // This allows the router to register routes for integration testing even when
@@ -77,10 +63,13 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
 	r.Use(middleware.RequestMetrics())
-	// Resource bounds (T0 hardening): cap request body size and per-request
-	// processing time. Timeout skips streaming routes it cannot buffer.
+	// Resource bound (T0 hardening): cap request body size. NOTE: the per-request
+	// Timeout middleware was pulled from this release — its goroutine-driven
+	// c.Next() shares gin.Context.index with the parent chain (unexported; not
+	// fixable via the exported API), which is a real -race. It will land again
+	// once redesigned (server-level write deadline, or a context-isolated
+	// runner). Source preserved in git history (commit cdddd1e6).
 	r.Use(middleware.BodyLimit(maxRequestBodyBytes))
-	r.Use(middleware.Timeout(requestTimeout, isStreamingRoute))
 
 	internal := r.Group("/internal/v1/tally")
 	{
