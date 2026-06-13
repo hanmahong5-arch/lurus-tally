@@ -37,7 +37,7 @@ func Timeout(d time.Duration, skip func(*gin.Context) bool) gin.HandlerFunc {
 		defer cancel()
 		c.Request = c.Request.WithContext(ctx)
 
-		tw := &timeoutWriter{ResponseWriter: c.Writer}
+		tw := &timeoutWriter{ResponseWriter: c.Writer, header: make(http.Header)}
 		c.Writer = tw
 
 		done := make(chan struct{})
@@ -67,12 +67,16 @@ func Timeout(d time.Duration, skip func(*gin.Context) bool) gin.HandlerFunc {
 			tw.flush()
 			c.Writer = tw.ResponseWriter
 		case <-ctx.Done():
-			// Do NOT touch c.Writer here: the handler goroutine may still be
-			// running and reading it. markTimedOut makes its late writes no-ops;
-			// we write the 504 straight to the underlying writer.
+			// Do NOT touch c (writer, index, keys) here: the handler goroutine
+			// may still be running and reading it. markTimedOut makes its late
+			// writes no-ops; we write the 504 straight to the underlying writer,
+			// whose header map is distinct from the handler's (see timeoutWriter).
+			// We deliberately do NOT call c.Abort(): that mutates c.index, which
+			// the detached handler goroutine is concurrently advancing in
+			// c.Next() — a data race for no benefit (the handler is already
+			// detached and its output is discarded).
 			tw.markTimedOut()
 			writeTimeoutResponse(tw.ResponseWriter)
-			c.Abort()
 		}
 	}
 }
@@ -91,11 +95,28 @@ func writeTimeoutResponse(w gin.ResponseWriter) {
 type timeoutWriter struct {
 	gin.ResponseWriter
 
+	// header is a PRIVATE header map owned by the handler goroutine. Without it,
+	// timeoutWriter would inherit Header() from the embedded gin.ResponseWriter,
+	// so a handler's late c.JSON() (which sets Content-Type via Header()) would
+	// write the real socket's header map concurrently with the timeout path
+	// writing the 504 to that same map — a data race. Isolating headers here
+	// means the two paths touch different maps; flush() copies these onto the
+	// real writer on the success path only.
+	header http.Header
+
 	mu       sync.Mutex
 	body     bytes.Buffer
 	code     int
 	written  bool
 	timedOut bool
+}
+
+// Header returns the private, handler-owned header map. It is touched only by
+// the handler goroutine while the request runs, then read by flush() after the
+// handler returns (close(done) establishes happens-before), so it needs no lock
+// and never races the timeout goroutine's writes to the real ResponseWriter.
+func (w *timeoutWriter) Header() http.Header {
+	return w.header
 }
 
 func (w *timeoutWriter) Write(b []byte) (int, error) {
@@ -185,6 +206,13 @@ func (w *timeoutWriter) flush() {
 	defer w.mu.Unlock()
 	if w.timedOut || !w.written {
 		return
+	}
+	// Copy the handler's buffered headers onto the real writer before the status
+	// line. Safe: the handler goroutine has returned, so nothing else touches
+	// either map.
+	dst := w.ResponseWriter.Header()
+	for k, vv := range w.header {
+		dst[k] = vv
 	}
 	w.ResponseWriter.WriteHeader(w.code)
 	if w.body.Len() > 0 {

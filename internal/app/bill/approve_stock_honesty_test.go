@@ -231,14 +231,22 @@ func (r *serializingRepo) WithTx(ctx context.Context, fn func(tx *sql.Tx) error)
 	return r.mockBillRepo.WithTx(ctx, fn)
 }
 
-// GetBill is the pre-lock idempotency probe that runs OUTSIDE WithTx. It reads
-// the shared *BillHead that WithTx may mutate, so it must take the same mutex
-// to stay -race clean. This does not change the use case's logic; it only makes
-// the in-memory mock's shared state access well-defined under concurrency.
+// GetBill is the pre-lock idempotency probe that runs OUTSIDE WithTx. The use
+// case reads the returned head's Status AFTER this call returns (i.e. after the
+// mutex is released, approve_purchase.go:65), so returning the shared *BillHead
+// pointer races a concurrent in-tx UpdateBillStatus mutating the same struct.
+// A real DB hands back an independent row snapshot per query; model that by
+// returning a copy taken under the lock. This keeps the mock's shared state
+// access well-defined under -race without changing the use case's logic.
 func (r *serializingRepo) GetBill(ctx context.Context, tenantID, billID uuid.UUID) (*domain.BillHead, error) {
 	r.txMu.Lock()
 	defer r.txMu.Unlock()
-	return r.mockBillRepo.GetBill(ctx, tenantID, billID)
+	h, err := r.mockBillRepo.GetBill(ctx, tenantID, billID)
+	if err != nil || h == nil {
+		return h, err
+	}
+	snapshot := *h
+	return &snapshot, nil
 }
 
 // TestApprovePurchase_ConcurrentSameBill_Idempotent locks "并发同单": two
