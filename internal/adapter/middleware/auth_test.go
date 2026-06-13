@@ -340,12 +340,12 @@ func TestAuthMiddleware_PATBearer_ResolvesTenant(t *testing.T) {
 	wantTenant := uuid.MustParse("00000000-0000-0000-0000-000000000abc")
 
 	called := false
-	resolver := func(_ context.Context, bearer string) (uuid.UUID, []string, error) {
+	resolver := func(_ context.Context, bearer string) (uuid.UUID, error) {
 		called = true
 		if !strings.HasPrefix(bearer, "tally_pat_") {
 			t.Errorf("resolver got non-PAT bearer: %q", bearer)
 		}
-		return wantTenant, []string{"read"}, nil
+		return wantTenant, nil
 	}
 
 	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, resolver)
@@ -372,8 +372,8 @@ func TestAuthMiddleware_PATBearer_ResolvesTenant(t *testing.T) {
 func TestAuthMiddleware_PATInvalid_Returns401(t *testing.T) {
 	srv := mockJWKSServer(t, buildJWKS(t, generateTestRSAKey(t), "kid"))
 
-	resolver := func(_ context.Context, _ string) (uuid.UUID, []string, error) {
-		return uuid.Nil, nil, middleware.ErrInvalidPAT
+	resolver := func(_ context.Context, _ string) (uuid.UUID, error) {
+		return uuid.Nil, middleware.ErrInvalidPAT
 	}
 
 	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, resolver)

@@ -24,11 +24,11 @@ import (
 var ErrInvalidPAT = errors.New("auth: invalid PAT")
 
 // PATResolver looks up + verifies a tally_pat_ bearer token. On success it
-// returns the tenant_id the token belongs to and the granted scopes. On
-// ErrInvalidPAT the middleware emits a quiet 401; on any other non-nil error
-// the middleware logs the error and emits 401 (treating it as auth failure
-// rather than 500 to avoid leaking internal state).
-type PATResolver func(ctx context.Context, bearer string) (tenantID uuid.UUID, scopes []string, err error)
+// returns the tenant_id the token belongs to. On ErrInvalidPAT the middleware
+// emits a quiet 401; on any other non-nil error the middleware logs the error
+// and emits 401 (treating it as auth failure rather than 500 to avoid leaking
+// internal state).
+type PATResolver func(ctx context.Context, bearer string) (tenantID uuid.UUID, err error)
 
 const (
 	// CtxKeyZitadelSub is the Gin context key where AuthMiddleware injects the Zitadel sub claim.
@@ -87,7 +87,7 @@ func NewAuthMiddleware(jwksURL, expectedIssuer, expectedAudience string, tenantL
 		// the JWKS path, so PATs (no signing keys involved) are cheap and
 		// don't depend on Zitadel being reachable.
 		if patResolver != nil && strings.HasPrefix(rawToken, domainauth.Scheme) {
-			tenantID, _, err := patResolver(c.Request.Context(), rawToken)
+			tenantID, err := patResolver(c.Request.Context(), rawToken)
 			if err != nil {
 				if !errors.Is(err, ErrInvalidPAT) {
 					slog.Warn("auth middleware: PAT resolver error",

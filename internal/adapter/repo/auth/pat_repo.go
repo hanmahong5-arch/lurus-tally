@@ -10,7 +10,6 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
-	"github.com/lib/pq"
 
 	appauth "github.com/hanmahong5-arch/lurus-tally/internal/app/auth"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/auth"
@@ -38,12 +37,12 @@ var _ appauth.Repository = (*Repo)(nil)
 func (r *Repo) Create(ctx context.Context, p *domain.PAT) error {
 	const q = `
 		INSERT INTO tally.personal_access_token
-			(id, tenant_id, name, prefix, hash, scopes, created_at, expires_at)
+			(id, tenant_id, name, prefix, hash, created_at, expires_at)
 		VALUES
-			($1, $2, $3, $4, $5, $6, $7, $8)`
+			($1, $2, $3, $4, $5, $6, $7)`
 	_, err := r.db.ExecContext(ctx, q,
 		p.ID, p.TenantID, p.Name, p.Prefix, p.Hash,
-		pq.Array(p.Scopes), p.CreatedAt, p.ExpiresAt,
+		p.CreatedAt, p.ExpiresAt,
 	)
 	if err != nil {
 		return fmt.Errorf("auth repo: create pat: %w", err)
@@ -53,7 +52,7 @@ func (r *Repo) Create(ctx context.Context, p *domain.PAT) error {
 
 func (r *Repo) GetByPrefix(ctx context.Context, prefix string) (*domain.PAT, error) {
 	const q = `
-		SELECT id, tenant_id, name, prefix, hash, scopes,
+		SELECT id, tenant_id, name, prefix, hash,
 		       created_at, expires_at, last_used_at, revoked_at
 		FROM tally.personal_access_token
 		WHERE prefix = $1`
@@ -63,7 +62,7 @@ func (r *Repo) GetByPrefix(ctx context.Context, prefix string) (*domain.PAT, err
 
 func (r *Repo) ListByTenant(ctx context.Context, tenantID uuid.UUID) ([]*domain.PAT, error) {
 	const q = `
-		SELECT id, tenant_id, name, prefix, hash, scopes,
+		SELECT id, tenant_id, name, prefix, hash,
 		       created_at, expires_at, last_used_at, revoked_at
 		FROM tally.personal_access_token
 		WHERE tenant_id = $1 AND revoked_at IS NULL
@@ -120,9 +119,8 @@ type scanRow func(dest ...any) error
 
 func scanPAT(scan scanRow) (*domain.PAT, error) {
 	var p domain.PAT
-	var scopes pq.StringArray
 	err := scan(
-		&p.ID, &p.TenantID, &p.Name, &p.Prefix, &p.Hash, &scopes,
+		&p.ID, &p.TenantID, &p.Name, &p.Prefix, &p.Hash,
 		&p.CreatedAt, &p.ExpiresAt, &p.LastUsedAt, &p.RevokedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -131,6 +129,5 @@ func scanPAT(scan scanRow) (*domain.PAT, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth repo: scan pat: %w", err)
 	}
-	p.Scopes = []string(scopes)
 	return &p, nil
 }
