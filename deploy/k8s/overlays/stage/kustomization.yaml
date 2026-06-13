@@ -47,11 +47,13 @@ patches:
       kind: Service
       name: tally-web
 images:
-  # Backend bumped to the edge-hardening line (unified-billing Wave 2 +
-  # replenish v2 + hardening). Web stays on da39944 — the only web change
-  # (dev-provider accessToken passthrough) is inert on STAGE (AUTH_DEV_PROVIDER
-  # unset), so no web redeploy is warranted.
+  # Backend bumped to main-da76ee4 (PR #8): per-request timeout restored as a
+  # race-free context-deadline middleware + a pre-existing AI orchestrator test
+  # race fixed. Prior line main-2e99cf6 (unified-billing Wave 2 + replenish v2 +
+  # hardening). Web stays on da39944 — the only web change (dev-provider
+  # accessToken passthrough) is inert on STAGE (AUTH_DEV_PROVIDER unset), so no
+  # web redeploy is warranted.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-2e99cf6
+    newTag: main-da76ee4
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
     newTag: main-da39944
