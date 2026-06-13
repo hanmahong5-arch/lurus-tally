@@ -66,6 +66,7 @@ import (
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
 	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/usagereport"
 	appacct "github.com/hanmahong5-arch/lurus-tally/internal/app/account"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
 	appauth "github.com/hanmahong5-arch/lurus-tally/internal/app/auth"
@@ -115,13 +116,14 @@ const (
 // App is the application root. It holds all wired dependencies and manages
 // the HTTP server lifecycle. No global variables; all state lives here.
 type App struct {
-	cfg        *config.Config
-	log        *slog.Logger
-	engine     *gin.Engine
-	srv        *http.Server
-	db         *sql.DB
-	stopOutbox context.CancelFunc // cancels the outbox worker goroutine on Stop
-	auditSub   *adapternats.AuditSubscriber
+	cfg           *config.Config
+	log           *slog.Logger
+	engine        *gin.Engine
+	srv           *http.Server
+	db            *sql.DB
+	stopOutbox    context.CancelFunc // cancels the outbox worker goroutine on Stop
+	auditSub      *adapternats.AuditSubscriber
+	usageReporter *usagereport.Reporter // nil when AI or platform integration is off
 }
 
 // NewApp wires all dependencies together and returns a ready-to-start App.
@@ -338,6 +340,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// Wire AI assistant. Requires NEWAPI_API_KEY; when absent, AI routes return 501.
 	// The AI plan store reuses the hoisted Redis client above.
 	var aiHandler *handlerai.Handler
+	var usageReporter *usagereport.Reporter
 	if cfg.NewAPIKey != "" {
 		if rdb == nil {
 			return nil, fmt.Errorf("lifecycle: AI assistant requires REDIS_URL (NEWAPI_API_KEY is set but Redis is unavailable)")
@@ -409,6 +412,24 @@ func NewApp(cfg *config.Config) (*App, error) {
 		aiHandler = handlerai.NewWithLimiter(orchestrator, limiter).WithReverter(reverter)
 		// Attach LLM span tracer (env LANGFUSE_* → OTLP exporter; missing → no-op).
 		WireTracer(orchestrator, BuildTracer(cfg))
+
+		// Unified-billing Wave 2 (shadow): fan LLM token usage out to platform's
+		// metering ingest. Only when platform is wired — without a key the
+		// reporter has nowhere to post, so we leave the sink unset and the AI
+		// path is unchanged. The reporter is fail-open: a platform outage or an
+		// unprovisioned tenant never blocks or errors a chat response.
+		if platClient != nil {
+			usageReporter = usagereport.New(
+				platClient,
+				repotenant.NewTenantRepo(db),
+				usagereport.Config{Logger: l},
+			)
+			usageReporter.Start()
+			llmgateway.SetUsageSink(usageReporter)
+			l.Info("LLM usage reporter enabled (unified-billing shadow)",
+				slog.String("product_id", usagereport.ProductID))
+		}
+
 		l.Info("AI assistant enabled",
 			slog.String("model", cfg.DefaultAIModel),
 			slog.String("newapi_url", cfg.NewAPIBaseURL),
@@ -713,13 +734,14 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}
 
 	return &App{
-		cfg:        cfg,
-		log:        l,
-		engine:     r,
-		srv:        srv,
-		db:         db,
-		stopOutbox: outboxCancel,
-		auditSub:   auditSub,
+		cfg:           cfg,
+		log:           l,
+		engine:        r,
+		srv:           srv,
+		db:            db,
+		stopOutbox:    outboxCancel,
+		auditSub:      auditSub,
+		usageReporter: usageReporter,
 	}, nil
 }
 

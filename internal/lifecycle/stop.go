@@ -29,6 +29,13 @@ func (a *App) Stop(ctx context.Context) error {
 	}
 	a.log.Info("server stopped", slog.String("addr", a.srv.Addr))
 
+	// Drain the LLM usage reporter after the server stops accepting requests
+	// (so all in-flight chats have enqueued their events) but BEFORE the DB
+	// pool closes (the reporter resolves tenant→account via the DB).
+	if a.usageReporter != nil {
+		a.usageReporter.Stop(ctx)
+	}
+
 	// Flush any buffered LLM trace spans (no-op when tracer is no-op).
 	if err := llmobs.ShutdownOTelProvider(ctx); err != nil {
 		a.log.Warn("llm tracer shutdown failed", slog.String("error", err.Error()))
