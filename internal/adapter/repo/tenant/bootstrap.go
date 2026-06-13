@@ -31,6 +31,10 @@ type BootstrapStore interface {
 	GetMappingBySub(ctx context.Context, sub string) (*domain.UserIdentityMapping, error)
 	GetProfileByTenantID(ctx context.Context, tenantID uuid.UUID) (*domain.TenantProfile, error)
 	Bootstrap(ctx context.Context, in BootstrapInput) error
+	// SetPlatformAccountID pins the lurus-platform account id (resolved at
+	// onboarding via UpsertAccount) onto the tenant registry row so the LLM
+	// usage reporter can attribute spend without a hot-path round-trip.
+	SetPlatformAccountID(ctx context.Context, tenantID uuid.UUID, accountID int64) error
 }
 
 // SQLBootstrapStore is the *sql.DB-backed implementation.
@@ -51,6 +55,20 @@ func (s *SQLBootstrapStore) GetMappingBySub(ctx context.Context, sub string) (*d
 // GetProfileByTenantID delegates to ProfileRepo using the underlying *sql.DB.
 func (s *SQLBootstrapStore) GetProfileByTenantID(ctx context.Context, tenantID uuid.UUID) (*domain.TenantProfile, error) {
 	return NewProfileRepo(s.db).GetByTenantID(ctx, tenantID)
+}
+
+// SetPlatformAccountID updates tally.tenant.platform_account_id for one tenant.
+// tally.tenant is the tenant registry (keyed by id, no tenant_id column, outside
+// the RLS-scoped tables), so a plain UPDATE with no app.tenant_id pin is correct
+// — and is what lets the post-onboarding heal path and any future reconcile run
+// outside a request scope. Idempotent: re-writing the same id is a no-op write.
+func (s *SQLBootstrapStore) SetPlatformAccountID(ctx context.Context, tenantID uuid.UUID, accountID int64) error {
+	if _, err := s.db.ExecContext(ctx,
+		`UPDATE tally.tenant SET platform_account_id = $1, updated_at = now() WHERE id = $2`,
+		accountID, tenantID); err != nil {
+		return fmt.Errorf("set platform_account_id: %w", err)
+	}
+	return nil
 }
 
 // Bootstrap atomically creates tenant + mapping + profile rows.
