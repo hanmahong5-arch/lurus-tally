@@ -3,6 +3,7 @@ package replenish_test
 import (
 	"context"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -251,5 +252,129 @@ func TestForecast_Reason_NonEmpty(t *testing.T) {
 	}
 	if out[0].Reason == "" {
 		t.Error("Reason must not be empty")
+	}
+}
+
+// TestListSuggestions_Execute_LeadTimeThreeStates exercises the lead-time
+// resolution matrix: learned (≥2 samples) > configured (≠7) > default (=7).
+func TestListSuggestions_Execute_LeadTimeThreeStates(t *testing.T) {
+	cases := []struct {
+		name        string
+		configured  int
+		learnedDays float64
+		samples     int
+		wantDays    int
+		wantSource  string
+	}{
+		{"learned_overrides_default", 7, 12.4, 3, 12, replenish.LeadTimeSourceLearned},
+		{"learned_overrides_configured", 15, 4.6, 2, 5, replenish.LeadTimeSourceLearned},
+		{"learned_subday_floors_at_one", 7, 0.6, 2, 1, replenish.LeadTimeSourceLearned},
+		{"one_sample_not_enough_configured_wins", 10, 3.0, 1, 10, replenish.LeadTimeSourceConfigured},
+		{"no_samples_configured", 10, 0, 0, 10, replenish.LeadTimeSourceConfigured},
+		// 7 is the NOT NULL DEFAULT — a user-typed 7 is indistinguishable, so "default".
+		{"no_samples_seven_is_default", 7, 0, 0, 7, replenish.LeadTimeSourceDefault},
+		{"zero_configured_falls_back_to_default", 0, 0, 0, 7, replenish.LeadTimeSourceDefault},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := []replenish.RawRow{
+				{
+					ProductID:       uuid.New(),
+					ProductName:     "LT " + tc.name,
+					ProductCode:     "LT",
+					AvailableQty:    d("0"),
+					AvgDailySales:   d("5"),
+					UnitCost:        d("10"),
+					LeadTimeDays:    tc.configured,
+					LearnedLeadDays: tc.learnedDays,
+					LeadTimeSamples: tc.samples,
+				},
+			}
+			uc := replenish.NewListSuggestionsUseCase(&stubRepo{rows: rows})
+			out, err := uc.Execute(context.Background(), uuid.New(), 2)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			r := out[0]
+			if r.LeadTimeDays != tc.wantDays {
+				t.Errorf("LeadTimeDays = %d, want %d", r.LeadTimeDays, tc.wantDays)
+			}
+			if r.LeadTimeSource != tc.wantSource {
+				t.Errorf("LeadTimeSource = %q, want %q", r.LeadTimeSource, tc.wantSource)
+			}
+		})
+	}
+}
+
+// TestListSuggestions_Execute_EstAmountPrefersLastPrice verifies EstAmountCNY
+// uses the last approved purchase price when present and positive, otherwise
+// the WAC unit cost.
+func TestListSuggestions_Execute_EstAmountPrefersLastPrice(t *testing.T) {
+	lastPrice := d("8")
+	zeroPrice := d("0")
+	cases := []struct {
+		name      string
+		lastPrice *decimal.Decimal
+		wantUnit  decimal.Decimal
+	}{
+		{"nil_last_price_uses_wac", nil, d("10")},
+		{"positive_last_price_preferred", &lastPrice, d("8")},
+		{"zero_last_price_falls_back_to_wac", &zeroPrice, d("10")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := []replenish.RawRow{
+				{
+					ProductID:         uuid.New(),
+					ProductName:       "Price " + tc.name,
+					ProductCode:       "PR",
+					AvailableQty:      d("0"),
+					AvgDailySales:     d("5"),
+					UnitCost:          d("10"),
+					LeadTimeDays:      7,
+					LastPurchasePrice: tc.lastPrice,
+				},
+			}
+			uc := replenish.NewListSuggestionsUseCase(&stubRepo{rows: rows})
+			out, err := uc.Execute(context.Background(), uuid.New(), 2)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			r := out[0]
+			want := r.SuggestedQty.Mul(tc.wantUnit)
+			if !r.EstAmountCNY.Equal(want) {
+				t.Errorf("EstAmountCNY = %s, want %s (qty=%s unit=%s)", r.EstAmountCNY, want, r.SuggestedQty, tc.wantUnit)
+			}
+		})
+	}
+}
+
+// TestListSuggestions_Execute_LearnedReasonAppended verifies the learned
+// lead-time explanation is appended to the reason string.
+func TestListSuggestions_Execute_LearnedReasonAppended(t *testing.T) {
+	rows := []replenish.RawRow{
+		{
+			ProductID:       uuid.New(),
+			ProductName:     "Reason",
+			ProductCode:     "RS",
+			AvailableQty:    d("0"),
+			AvgDailySales:   d("5"),
+			UnitCost:        d("10"),
+			LeadTimeDays:    7,
+			LearnedLeadDays: 12.4,
+			LeadTimeSamples: 3,
+		},
+	}
+	uc := replenish.NewListSuggestionsUseCase(&stubRepo{rows: rows})
+	out, err := uc.Execute(context.Background(), uuid.New(), 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "基于最近3次实际到货,中位交期12天"
+	if !strings.Contains(out[0].Reason, want) {
+		t.Errorf("Reason = %q, want it to contain %q", out[0].Reason, want)
+	}
+	if out[0].LeadTimeSamples != 3 {
+		t.Errorf("LeadTimeSamples = %d, want 3", out[0].LeadTimeSamples)
 	}
 }

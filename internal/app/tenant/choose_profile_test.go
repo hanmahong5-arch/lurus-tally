@@ -44,13 +44,16 @@ type stubBootstrapStore struct {
 	mu          sync.Mutex
 	mappings    map[string]*domain.UserIdentityMapping // sub → mapping
 	profiles    map[uuid.UUID]*domain.TenantProfile    // tenant_id → profile
+	accountIDs  map[uuid.UUID]int64                    // tenant_id → platform account id
+	setAcctErr  error                                  // injectable for SetPlatformAccountID failure
 	bootstrapEr error                                  // injectable for failure cases
 }
 
 func newStubBootstrapStore() *stubBootstrapStore {
 	return &stubBootstrapStore{
-		mappings: make(map[string]*domain.UserIdentityMapping),
-		profiles: make(map[uuid.UUID]*domain.TenantProfile),
+		mappings:   make(map[string]*domain.UserIdentityMapping),
+		profiles:   make(map[uuid.UUID]*domain.TenantProfile),
+		accountIDs: make(map[uuid.UUID]int64),
 	}
 }
 
@@ -64,6 +67,16 @@ func (s *stubBootstrapStore) GetProfileByTenantID(_ context.Context, tenantID uu
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.profiles[tenantID], nil
+}
+
+func (s *stubBootstrapStore) SetPlatformAccountID(_ context.Context, tenantID uuid.UUID, accountID int64) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.setAcctErr != nil {
+		return s.setAcctErr
+	}
+	s.accountIDs[tenantID] = accountID
+	return nil
 }
 
 func (s *stubBootstrapStore) Bootstrap(_ context.Context, in repoTenant.BootstrapInput) error {
@@ -234,6 +247,62 @@ func TestChooseProfile_FreshUser_UpsertsPlatformAccount(t *testing.T) {
 	got := upserter.calls[0]
 	if got.ZitadelSub != "sub-platform-001" || got.Email != "bob@example.com" || got.DisplayName != "Bob" {
 		t.Errorf("upsert payload mismatch: %+v", got)
+	}
+
+	// Wave 2: the returned account id (stub yields 42) must be pinned to the
+	// freshly-created tenant so the LLM usage reporter can attribute spend.
+	mapping := store.mappings["sub-platform-001"]
+	if mapping == nil {
+		t.Fatal("expected mapping for the onboarded sub")
+	}
+	if store.accountIDs[mapping.TenantID] != 42 {
+		t.Errorf("expected platform account 42 pinned to tenant %s, got %d",
+			mapping.TenantID, store.accountIDs[mapping.TenantID])
+	}
+}
+
+// TestChooseProfile_ReturningUser_BackfillsPlatformAccountID verifies the
+// idempotent heal path pins the account id too, so tenants onboarded before
+// migration 000051 get back-filled on their next login.
+func TestChooseProfile_ReturningUser_BackfillsPlatformAccountID(t *testing.T) {
+	store := newStubBootstrapStore()
+	upserter := &stubUpserter{}
+	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
+	in := appTenant.ChooseProfileInput{ZitadelSub: "sub-heal-051", ProfileType: "retail"}
+
+	if _, err := uc.Execute(context.Background(), in); err != nil {
+		t.Fatalf("first call failed: %v", err)
+	}
+	tenantID := store.mappings["sub-heal-051"].TenantID
+	// Simulate a pre-Wave-2 tenant whose account id was never persisted.
+	store.mu.Lock()
+	delete(store.accountIDs, tenantID)
+	store.mu.Unlock()
+
+	if _, err := uc.Execute(context.Background(), in); err != nil {
+		t.Fatalf("returning-user call failed: %v", err)
+	}
+	if store.accountIDs[tenantID] != 42 {
+		t.Errorf("expected heal path to back-fill account 42, got %d", store.accountIDs[tenantID])
+	}
+}
+
+// TestChooseProfile_PersistAccountIDFailure_DoesNotBlock verifies a failed
+// account-id write is non-blocking — onboarding still returns the profile.
+func TestChooseProfile_PersistAccountIDFailure_DoesNotBlock(t *testing.T) {
+	store := newStubBootstrapStore()
+	store.setAcctErr = errors.New("update tenant: connection reset")
+	upserter := &stubUpserter{}
+	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
+
+	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub: "sub-persist-fail", ProfileType: "retail",
+	})
+	if err != nil {
+		t.Fatalf("account-id persist failure must not block onboarding: %v", err)
+	}
+	if p == nil {
+		t.Fatal("expected a profile despite persist failure")
 	}
 }
 

@@ -99,8 +99,10 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 			// Idempotent: same choice, return existing profile (no error).
 			// Heal path: re-run platform upsert in case a previous call failed
 			// (network blip, platform rolling upgrade) and left tally with a
-			// local tenant but no platform account. Upsert is idempotent.
-			uc.upsertPlatformAccount(ctx, in)
+			// local tenant but no platform account. Upsert is idempotent. This
+			// also back-fills platform_account_id for tenants onboarded before
+			// Wave 2 (the column was added in migration 000051).
+			uc.upsertPlatformAccount(ctx, mapping.TenantID, in)
 			return existing, nil
 		}
 		// Different choice → conflict (caller decides whether to ignore or surface).
@@ -141,7 +143,7 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 	// subscription / VIP records exist from the very first login. Failure
 	// is non-blocking — the user has a working tally tenant either way and
 	// the next /tenant/profile call (idempotent path above) will heal.
-	uc.upsertPlatformAccount(ctx, in)
+	uc.upsertPlatformAccount(ctx, tenantID, in)
 
 	return created, nil
 }
@@ -156,7 +158,7 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 // or phone-OTP logins) we synthesize a placeholder so platform still owns a
 // canonical account row. The placeholder will be overwritten on a future
 // call once the user adds a real email and signs in again.
-func (uc *ChooseProfileUseCase) upsertPlatformAccount(ctx context.Context, in ChooseProfileInput) {
+func (uc *ChooseProfileUseCase) upsertPlatformAccount(ctx context.Context, tenantID uuid.UUID, in ChooseProfileInput) {
 	if uc.upserter == nil {
 		// Platform integration disabled (PLATFORM_INTERNAL_KEY unset). Same
 		// behaviour as billing handler — degrade gracefully.
@@ -183,6 +185,19 @@ func (uc *ChooseProfileUseCase) upsertPlatformAccount(ctx context.Context, in Ch
 	uc.logger.Info("platform account upserted",
 		slog.String("zitadel_sub", in.ZitadelSub),
 		slog.Int64("account_id", acc.ID))
+
+	// Pin the account id on the tenant so the LLM usage reporter can attribute
+	// spend (unified-billing Wave 2). Non-blocking: a failed write just means
+	// the next onboarding/login heals it; usage events for an unpinned tenant
+	// are skipped in shadow rather than misattributed.
+	if acc.ID > 0 {
+		if err := uc.store.SetPlatformAccountID(ctx, tenantID, acc.ID); err != nil {
+			uc.logger.Warn("persist platform account_id failed (non-blocking)",
+				slog.String("tenant_id", tenantID.String()),
+				slog.Int64("account_id", acc.ID),
+				slog.String("error", err.Error()))
+		}
+	}
 }
 
 // deriveTenantName produces a sensible default name for the tenant row when

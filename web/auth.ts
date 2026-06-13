@@ -109,11 +109,17 @@ function devCredentialsProvider() {
     credentials: {
       email: { label: "Email", type: "email" },
       tenantId: { label: "Tenant ID", type: "text" },
+      // Optional backend bearer (e.g. a PAT) for STAGE UAT: when present the
+      // session carries it as accessToken so the /api/proxy/* route forwards
+      // real authenticated requests instead of having no token at all.
+      accessToken: { label: "Backend access token", type: "password" },
     },
     async authorize(raw) {
       const email = typeof raw?.email === "string" && raw.email ? raw.email : "dev@tally.test"
       const tenantId =
         typeof raw?.tenantId === "string" && raw.tenantId ? raw.tenantId : DEV_TENANT_ID
+      const accessToken =
+        typeof raw?.accessToken === "string" && raw.accessToken ? raw.accessToken : undefined
 
       return {
         // Fixed, predictable values so E2E assertions are deterministic.
@@ -122,6 +128,7 @@ function devCredentialsProvider() {
         name: "Dev User",
         // Extra fields stored in the JWT via the jwt() callback below.
         devTenantId: tenantId,
+        devAccessToken: accessToken,
       }
     },
   })
@@ -154,7 +161,9 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // Dev/E2E offline path: Credentials provider sign-in.
       // The `user` object from authorize() carries devTenantId; we detect this
       // path by the absence of an OIDC account object.
-      const devUser = user as (typeof user & { devTenantId?: string }) | undefined
+      const devUser = user as
+        | (typeof user & { devTenantId?: string; devAccessToken?: string })
+        | undefined
       if (devUser?.devTenantId !== undefined) {
         t.sub = typeof user?.id === "string" ? user.id : DEV_USER_ID
         t.tenantId = devUser.devTenantId
@@ -163,8 +172,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         t.role = "owner"
         t.isOwner = true
         t.profileFetchedAt = Date.now()
-        // No accessToken — dev sessions are offline; the session callback
-        // will leave accessToken undefined which is safe for E2E use.
+        // Offline dev sessions normally carry no accessToken. STAGE UAT may
+        // hand the dev provider a backend bearer (PAT) — pass it through so
+        // /api/proxy/* forwards authenticated requests. This branch only runs
+        // when devTenantId is set, i.e. never on the Zitadel sign-in path,
+        // and the provider itself is absent in production (double gate above).
+        if (typeof devUser.devAccessToken === "string") {
+          t.accessToken = devUser.devAccessToken
+        }
         return token
       }
 

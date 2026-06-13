@@ -23,6 +23,12 @@ export interface WeeklySummary {
   dead_stock: {
     count: number
   }
+  // Last week's suggestion track record — optional: older backends omit it.
+  suggestion_scorecard?: {
+    suggested: number
+    adopted: number
+    missed_stockout: number
+  }
   generated_at: string
 }
 

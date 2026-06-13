@@ -22,10 +22,17 @@ interface MondayCardProps {
 export function MondayCard({ summary }: MondayCardProps) {
   if (!summary) return null
 
-  const { replenish, oversell, dead_stock } = summary
+  const { replenish, oversell, dead_stock, suggestion_scorecard } = summary
+
+  // Optional on older backends — treat a missing object as "no track record".
+  const scorecardSuggested = suggestion_scorecard?.suggested ?? 0
 
   // Only render the card when at least one signal is non-zero.
-  const hasSignal = replenish.count > 0 || oversell.count > 0 || dead_stock.count > 0
+  const hasSignal =
+    replenish.count > 0 ||
+    oversell.count > 0 ||
+    dead_stock.count > 0 ||
+    scorecardSuggested > 0
   if (!hasSignal) return null
 
   const amountDisplay = Number(replenish.amount_cny).toLocaleString("zh-CN", {
@@ -73,6 +80,30 @@ export function MondayCard({ summary }: MondayCardProps) {
               </div>
               <Link
                 href="/stock"
+                className={buttonVariants({ size: "sm", variant: "outline" })}
+              >
+                查看
+              </Link>
+            </li>
+          )}
+
+          {suggestion_scorecard && scorecardSuggested > 0 && (
+            <li className="flex items-center justify-between py-2.5 gap-3">
+              <div className="flex items-center gap-2 min-w-0">
+                <Badge
+                  tone={suggestion_scorecard.missed_stockout > 0 ? "err" : "ok"}
+                  className="shrink-0"
+                >
+                  {suggestion_scorecard.adopted}/{scorecardSuggested}
+                </Badge>
+                <span className="text-sm">
+                  上周建议补货 {scorecardSuggested} 项 &middot; 已采纳{" "}
+                  {suggestion_scorecard.adopted} 项 &middot; 未采纳断货{" "}
+                  {suggestion_scorecard.missed_stockout} 项
+                </span>
+              </div>
+              <Link
+                href="/replenish"
                 className={buttonVariants({ size: "sm", variant: "outline" })}
               >
                 查看

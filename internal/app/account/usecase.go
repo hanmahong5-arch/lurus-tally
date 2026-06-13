@@ -127,6 +127,10 @@ type AppendInput struct {
 	TargetKind string
 	TargetID   string
 	Payload    any
+	// EventID is the originating NATS envelope id. Set by the audit subscriber
+	// so redelivered events dedupe to a single row (migration 000049); empty
+	// for synchronous writes, which keep their previous insert-always behaviour.
+	EventID string
 }
 
 // Execute marshals payload and persists the row.
@@ -153,6 +157,7 @@ func (uc *AppendAuditLog) Execute(ctx context.Context, in AppendInput) error {
 		TargetID:   in.TargetID,
 		Payload:    raw,
 		CreatedAt:  time.Now().UTC(),
+		EventID:    in.EventID,
 	})
 }
 
