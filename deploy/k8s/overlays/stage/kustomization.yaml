@@ -47,13 +47,12 @@ patches:
       kind: Service
       name: tally-web
 images:
-  # Backend bumped to main-5f127f5 (PR #9): startup auth fast-fail
-  # (TALLY_DEV_MODE gate) + pagination offset cap + bounded async memory write.
-  # Prior lines: main-da76ee4 (PR #8 request-timeout restored), main-2e99cf6
-  # (unified-billing Wave 2). Web stays on da39944 — the only web change
-  # (dev-provider accessToken passthrough) is inert on STAGE (AUTH_DEV_PROVIDER
-  # unset), so no web redeploy is warranted.
+  # Backend bumped to main-46b0a4d (Hardening Wave 2, PRs #10+#11): require
+  # Idempotency-Key on the 5 high-risk write routes + drop vestigial PAT scopes
+  # (migration 000052 runs on boot → head 52). PR #12 (test backfill) carries no
+  # runtime change. Prior: main-5f127f5 (#9 startup bounds), main-da76ee4 (#8
+  # request-timeout). Web stays on da39944 — no web change in this wave.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-5f127f5
+    newTag: main-46b0a4d
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
     newTag: main-da39944
