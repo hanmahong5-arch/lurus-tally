@@ -124,6 +124,21 @@ func Load() (*Config, error) {
 		)
 	}
 
+	// Auth-boundary fast-fail. An empty ZITADEL_DOMAIN disables JWT validation
+	// entirely — the /api/v1 group then serves every business endpoint
+	// UNAUTHENTICATED (it trusts dev headers). That is only safe in local
+	// development, and only when the operator opts in explicitly: a missing or
+	// mistyped ZITADEL_DOMAIN in a stage/prod manifest must never silently strip
+	// the auth boundary. Require TALLY_DEV_MODE=true to run without auth.
+	devMode := optional("TALLY_DEV_MODE", "") == "true"
+	if zitadelDomain == "" && !devMode {
+		return nil, fmt.Errorf(
+			"ZITADEL_DOMAIN is required: with it unset the entire /api/v1 surface runs " +
+				"UNAUTHENTICATED. Set ZITADEL_DOMAIN (and ZITADEL_AUDIENCE) to enable JWT auth, " +
+				"or set TALLY_DEV_MODE=true to explicitly run without auth in local development",
+		)
+	}
+
 	return &Config{
 		DatabaseDSN:     dbDSN,
 		RedisURL:        redisURL,

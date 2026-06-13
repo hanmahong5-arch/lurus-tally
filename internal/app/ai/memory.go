@@ -12,10 +12,17 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/memorusclient"
 )
+
+// asyncMemoryWriteTimeout bounds a fire-and-forget memory write. It is detached
+// from the request context (which ends when the HTTP response is sent) but must
+// still be bounded so a hung memorus connection cannot pin the goroutine and its
+// connection indefinitely.
+const asyncMemoryWriteTimeout = 5 * time.Second
 
 // MemoryClient is the interface the orchestrator uses for memory operations.
 // memorusclient.Client satisfies this interface; tests supply a mock.
@@ -83,8 +90,10 @@ func AsyncWriteMemory(mc MemoryClient, userID string, summary string, meta map[s
 	}
 	go func() {
 		defer func() { _ = recover() }()
-		// Use a background context so the HTTP response lifecycle does not cancel this.
-		ctx := context.Background()
+		// Detach from the request lifecycle (which ends when the HTTP response is
+		// sent) but bound the write so a hung memorus cannot leak the goroutine.
+		ctx, cancel := context.WithTimeout(context.Background(), asyncMemoryWriteTimeout)
+		defer cancel()
 		_, _ = mc.Add(ctx, userID, summary, meta)
 	}()
 }
