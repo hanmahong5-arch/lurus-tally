@@ -12,6 +12,7 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // Handler groups payment Gin handlers.
@@ -122,7 +123,7 @@ func (h *Handler) List(c *gin.Context) {
 
 	payments, err := h.listUC.Execute(c.Request.Context(), tenantID, billID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": payments})

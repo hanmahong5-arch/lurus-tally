@@ -13,6 +13,7 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/app/warehouse"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/warehouse"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // WarehouseDTO is the wire representation of a warehouse.
@@ -111,7 +112,7 @@ func (h *Handler) List(c *gin.Context) {
 
 	items, total, err := h.list.Execute(c.Request.Context(), f)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 
@@ -177,7 +178,7 @@ func (h *Handler) GetByID(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, toDTO(w))
@@ -239,7 +240,7 @@ func (h *Handler) Delete(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -264,7 +265,7 @@ func (h *Handler) Restore(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, toDTO(w))

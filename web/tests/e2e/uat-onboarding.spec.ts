@@ -36,6 +36,15 @@ import fs from "fs"
 const SCREEN_DIR = path.resolve(__dirname, "../../test-results/uat-onboarding/screenshots")
 fs.mkdirSync(SCREEN_DIR, { recursive: true })
 
+// REAL mode (UAT_REAL=1, set by uat-stage.config.ts): a real NextAuth session
+// exists via storageState and /api/proxy/* forwards to the STAGE backend, so
+// NO route stubs are installed and data-dependent assertions are relaxed to
+// structural ones. When UAT_REAL is unset, the stub path is 100% unchanged.
+const REAL = process.env.UAT_REAL === "1"
+
+/** Wizard step waits get a longer budget when real STAGE round-trips occur. */
+const STEP_TIMEOUT = REAL ? 60_000 : 15_000
+
 /** Maximum wall-clock ms for the happy path. Kill-switch #1 = < 10 min. */
 const MAX_WALL_MS = 600_000
 
@@ -166,6 +175,11 @@ const purchaseBillStub = {
  *   /api/otel-events            → 200 ok (telemetry capture handled separately)
  */
 async function installMocks(page: Page, profileType: string): Promise<void> {
+  if (REAL) {
+    // Real session + real proxy → no stubs at all. Requests hit STAGE.
+    return
+  }
+
   const session = fakeSession(profileType)
 
   // NextAuth session
@@ -258,7 +272,7 @@ async function runHappyPath(
   // heading to appear; if we land on /login instead, the test will fail here
   // with a clear message.
   const wizardStep1 = page.getByRole("heading", { name: /第 1 步：种入示例数据/i })
-  await expect(wizardStep1).toBeVisible({ timeout: 15_000 })
+  await expect(wizardStep1).toBeVisible({ timeout: STEP_TIMEOUT })
 
   await page.screenshot({ path: path.join(SCREEN_DIR, `${label}-01-wizard-seed.png`) })
 
@@ -269,7 +283,7 @@ async function runHappyPath(
 
   // Step 3: wait for step to advance to "replenish" — wizard shows a "前往查看补货建议" button
   const goReplenishBtn = page.getByRole("button", { name: /前往查看补货建议/i })
-  await expect(goReplenishBtn).toBeVisible({ timeout: 15_000 })
+  await expect(goReplenishBtn).toBeVisible({ timeout: STEP_TIMEOUT })
 
   await page.screenshot({ path: path.join(SCREEN_DIR, `${label}-02-wizard-replenish.png`) })
 
@@ -278,6 +292,37 @@ async function runHappyPath(
   await page.waitForURL(/\/replenish/, { timeout: 30_000 })
 
   await page.screenshot({ path: path.join(SCREEN_DIR, `${label}-03-replenish-page.png`) })
+
+  if (REAL) {
+    // Real STAGE data — row contents are non-deterministic. Assert structurally:
+    // either at least one selectable suggestion row OR the empty state renders.
+    const anyRowCheckbox = page
+      .locator('input[type="checkbox"][aria-label^="选择"]')
+      .first()
+    const emptyState = page.getByText(/暂无补货建议/).first()
+    await expect(anyRowCheckbox.or(emptyState)).toBeVisible({ timeout: STEP_TIMEOUT })
+    await page.screenshot({ path: path.join(SCREEN_DIR, `${label}-04-replenish-real.png`) })
+
+    const hasRow = await anyRowCheckbox.isVisible().catch(() => false)
+    if (hasRow) {
+      await anyRowCheckbox.check()
+      const generateBtn = page.getByRole("button", { name: /生成采购草稿/i })
+      await expect(generateBtn).toBeEnabled({ timeout: 5_000 })
+      await generateBtn.click()
+      // Structural toast assertion — a toast appears (success or error text
+      // varies with real data; failures still surface as missing toast).
+      await expect(
+        page.locator("[data-sonner-toaster] [data-sonner-toast]").first()
+      ).toBeVisible({ timeout: STEP_TIMEOUT })
+      await page.screenshot({ path: path.join(SCREEN_DIR, `${label}-05-po-created-real.png`) })
+    } else {
+      console.warn(
+        `[${label}] REAL mode: no suggestion rows on STAGE — draft generation step ` +
+          "skipped (replenish page render asserted structurally)."
+      )
+    }
+    return Date.now() - t0
+  }
 
   // Step 5: assert at least one SKU row is visible
   // The replenish page uses a DataTable; rows contain product_name text.
@@ -362,6 +407,11 @@ test.describe("onboarding E2E — kill-switch #1", () => {
   // -------------------------------------------------------------------------
 
   test("step_telemetry_events_fire", async ({ page }) => {
+    test.skip(
+      REAL,
+      "Relies on the stubbed deterministic flow + route-fulfilled event capture; " +
+        "telemetry against STAGE is covered indirectly by the happy-path runs.",
+    )
     test.setTimeout(120_000)
 
     /**
@@ -434,6 +484,11 @@ test.describe("onboarding E2E — kill-switch #1", () => {
   // -------------------------------------------------------------------------
 
   test("error_recovery_seed_fails", async ({ page }) => {
+    test.skip(
+      REAL,
+      "Requires injecting a stubbed 500 from seed-demo — server faults cannot be " +
+        "injected against the real STAGE backend without route stubs.",
+    )
     test.setTimeout(60_000)
 
     await installMocks(page, "retail")

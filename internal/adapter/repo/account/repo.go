@@ -148,20 +148,24 @@ func NewAuditRepo(db *sql.DB) *AuditRepo { return &AuditRepo{db: db} }
 // Compile-time interface assertion.
 var _ appacct.AuditRepo = (*AuditRepo)(nil)
 
-// Append inserts one audit row.
+// Append inserts one audit row. When EventID is set, the insert is idempotent
+// against at-least-once event redelivery: ON CONFLICT (event_id) DO NOTHING
+// keeps the row count at one no matter how often JetStream redelivers. A NULL
+// event_id (synchronous writes) never conflicts, so those rows always insert.
 func (r *AuditRepo) Append(ctx context.Context, e *domain.AuditEntry) error {
 	const q = `
 		INSERT INTO tally.account_audit_log
-			(id, tenant_id, actor_id, action, target_kind, target_id, payload, created_at)
+			(id, tenant_id, actor_id, action, target_kind, target_id, payload, created_at, event_id)
 		VALUES
-			($1, $2, $3, $4, $5, $6, $7::jsonb, $8)`
+			($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+		ON CONFLICT (event_id) DO NOTHING`
 	payload := e.Payload
 	if len(payload) == 0 {
 		payload = []byte("{}")
 	}
 	if _, err := dbscope.From(ctx, r.db).ExecContext(ctx, q,
 		e.ID, e.TenantID, e.ActorID, e.Action,
-		nullable(e.TargetKind), nullable(e.TargetID), payload, e.CreatedAt,
+		nullable(e.TargetKind), nullable(e.TargetID), payload, e.CreatedAt, nullable(e.EventID),
 	); err != nil {
 		return fmt.Errorf("account repo: audit append: %w", err)
 	}

@@ -31,6 +31,14 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 )
 
+const (
+	// maxRequestBodyBytes is a generous global backstop (10 MiB) against
+	// pathological request bodies. Routes needing a tighter bound keep their
+	// own MaxBytesReader (e.g. the Shopify webhook); the avatar upload
+	// (200 KiB) and JSON endpoints sit far below this.
+	maxRequestBodyBytes = 10 << 20
+)
+
 // notImplemented is a placeholder handler returned when a handler struct is nil.
 // This allows the router to register routes for integration testing even when
 // handler dependencies (DB) are not available.
@@ -55,6 +63,13 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
 	r.Use(middleware.RequestMetrics())
+	// Resource bound (T0 hardening): cap request body size. NOTE: the per-request
+	// Timeout middleware was pulled from this release — its goroutine-driven
+	// c.Next() shares gin.Context.index with the parent chain (unexported; not
+	// fixable via the exported API), which is a real -race. It will land again
+	// once redesigned (server-level write deadline, or a context-isolated
+	// runner). Source preserved in git history (commit cdddd1e6).
+	r.Use(middleware.BodyLimit(maxRequestBodyBytes))
 
 	internal := r.Group("/internal/v1/tally")
 	{
@@ -269,6 +284,7 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 		} else {
 			api.GET("/replenish/suggestions", notImplemented)
 			api.POST("/replenish/draft-batch", notImplemented)
+			api.GET("/replenish/scorecard", notImplemented)
 		}
 
 		// Reports — surfaced AI analytics (Req 10).

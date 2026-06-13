@@ -15,6 +15,7 @@ import (
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // Handler groups all purchase bill Gin handlers.
@@ -117,7 +118,7 @@ func (h *Handler) Create(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, errResp("validation_error", err.Error(), ""))
 			return
 		}
-		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"bill_id": out.BillID, "bill_no": out.BillNo})
@@ -170,7 +171,7 @@ func (h *Handler) Update(c *gin.Context) {
 			c.JSON(http.StatusUnprocessableEntity, errResp("invalid_bill_status", err.Error(), "only draft bills can be updated"))
 			return
 		}
-		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, head)
@@ -211,7 +212,7 @@ func (h *Handler) Approve(c *gin.Context) {
 			c.JSON(http.StatusUnprocessableEntity, errResp("invalid_unit_for_product", err.Error(), "check unit configuration for each product"))
 			return
 		}
-		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "approved"})
@@ -243,7 +244,7 @@ func (h *Handler) Cancel(c *gin.Context) {
 			})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "cancelled"})
@@ -277,7 +278,7 @@ func (h *Handler) RestorePurchase(c *gin.Context) {
 			))
 			return
 		}
-		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "draft"})
@@ -313,7 +314,7 @@ func (h *Handler) List(c *gin.Context) {
 
 	out, err := h.list.Execute(c.Request.Context(), f)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": out.Items, "total": out.Total})
@@ -338,7 +339,7 @@ func (h *Handler) Get(c *gin.Context) {
 			c.JSON(http.StatusNotFound, errResp("bill_not_found", "bill not found", ""))
 			return
 		}
-		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
+		httperr.WriteInternal(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"head": out.Head, "items": out.Items})
