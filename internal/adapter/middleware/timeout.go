@@ -37,7 +37,7 @@ func Timeout(d time.Duration, skip func(*gin.Context) bool) gin.HandlerFunc {
 		defer cancel()
 		c.Request = c.Request.WithContext(ctx)
 
-		tw := &timeoutWriter{ResponseWriter: c.Writer, header: make(http.Header)}
+		tw := &timeoutWriter{ResponseWriter: c.Writer}
 		c.Writer = tw
 
 		done := make(chan struct{})
@@ -91,29 +91,11 @@ func writeTimeoutResponse(w gin.ResponseWriter) {
 type timeoutWriter struct {
 	gin.ResponseWriter
 
-	// header is a PRIVATE header map owned by the handler goroutine. The
-	// embedded gin.ResponseWriter's own header map is the real socket's; if we
-	// let the handler write straight to it (the default, since we don't buffer
-	// Header()), a late handler write races the timeout path writing the 504 to
-	// that same map. Isolating headers here means the handler and the timeout
-	// path touch different maps — no race — and flush() copies these onto the
-	// real writer only on the success path.
-	header http.Header
-
 	mu       sync.Mutex
 	body     bytes.Buffer
 	code     int
 	written  bool
 	timedOut bool
-}
-
-// Header returns the private, handler-owned header map. It is touched only by
-// the handler goroutine while the request runs, then read by flush() after the
-// handler has returned (close(done) establishes the happens-before), so it
-// needs no lock and never races the timeout goroutine's writes to the real
-// ResponseWriter.
-func (w *timeoutWriter) Header() http.Header {
-	return w.header
 }
 
 func (w *timeoutWriter) Write(b []byte) (int, error) {
@@ -203,13 +185,6 @@ func (w *timeoutWriter) flush() {
 	defer w.mu.Unlock()
 	if w.timedOut || !w.written {
 		return
-	}
-	// Copy the handler's buffered headers onto the real writer before the status
-	// line. Safe here: the handler goroutine has returned, so nothing else
-	// touches either map.
-	dst := w.ResponseWriter.Header()
-	for k, vv := range w.header {
-		dst[k] = vv
 	}
 	w.ResponseWriter.WriteHeader(w.code)
 	if w.body.Len() > 0 {
