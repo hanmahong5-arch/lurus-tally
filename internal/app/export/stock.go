@@ -18,16 +18,19 @@ var stockHeader = []string{"商品编码", "商品名", "仓库", "在库", "单
 
 // StockExportUseCase streams stock_snapshot rows joined with product info as CSV.
 type StockExportUseCase struct {
-	db  *sql.DB
-	log *slog.Logger
+	db       *sql.DB
+	log      *slog.Logger
+	rowLimit int
 }
 
-// NewStockExportUseCase creates a StockExportUseCase.
-func NewStockExportUseCase(db *sql.DB, log *slog.Logger) *StockExportUseCase {
+// NewStockExportUseCase creates a StockExportUseCase. Pass WithRowLimit to
+// override the default cap (stockRowLimit).
+func NewStockExportUseCase(db *sql.DB, log *slog.Logger, opts ...Option) *StockExportUseCase {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &StockExportUseCase{db: db, log: log}
+	o := resolve(stockRowLimit, opts)
+	return &StockExportUseCase{db: db, log: log, rowLimit: o.rowLimit}
 }
 
 // Execute fetches stock snapshot rows for tenantID and writes CSV to w.
@@ -47,7 +50,7 @@ func (uc *StockExportUseCase) Execute(ctx context.Context, tenantID uuid.UUID, w
 		ORDER BY p.code ASC NULLS LAST
 		LIMIT $2`
 
-	rows, err := dbscope.From(ctx, uc.db).QueryContext(ctx, q, tenantID, stockRowLimit+1)
+	rows, err := dbscope.From(ctx, uc.db).QueryContext(ctx, q, tenantID, uc.rowLimit+1)
 	if err != nil {
 		return 0, fmt.Errorf("export stock: query: %w", err)
 	}
@@ -64,11 +67,11 @@ func (uc *StockExportUseCase) Execute(ctx context.Context, tenantID uuid.UUID, w
 		if err := rows.Scan(&code, &name, &warehouseID, &onHandQty, &unitCost); err != nil {
 			return count, fmt.Errorf("export stock: scan row: %w", err)
 		}
-		if count == stockRowLimit {
+		if count == uc.rowLimit {
 			uc.log.Warn("export stock: result truncated at row limit",
 				slog.String("tenant_id", tenantID.String()),
-				slog.Int("limit", stockRowLimit))
-			if err := cw.Write([]string{"[截断]", fmt.Sprintf("数据超过 %d 行限制", stockRowLimit), "", "", ""}); err != nil {
+				slog.Int("limit", uc.rowLimit))
+			if err := cw.Write([]string{"[截断]", fmt.Sprintf("数据超过 %d 行限制", uc.rowLimit), "", "", ""}); err != nil {
 				return count, fmt.Errorf("export stock: write truncation note: %w", err)
 			}
 			break

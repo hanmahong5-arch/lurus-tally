@@ -18,16 +18,19 @@ var paymentsHeader = []string{"单号", "收付款方", "金额", "方式", "时
 
 // PaymentsExportUseCase streams payment_head rows for a tenant as CSV.
 type PaymentsExportUseCase struct {
-	db  *sql.DB
-	log *slog.Logger
+	db       *sql.DB
+	log      *slog.Logger
+	rowLimit int
 }
 
-// NewPaymentsExportUseCase creates a PaymentsExportUseCase.
-func NewPaymentsExportUseCase(db *sql.DB, log *slog.Logger) *PaymentsExportUseCase {
+// NewPaymentsExportUseCase creates a PaymentsExportUseCase. Pass WithRowLimit to
+// override the default cap (paymentsRowLimit).
+func NewPaymentsExportUseCase(db *sql.DB, log *slog.Logger, opts ...Option) *PaymentsExportUseCase {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &PaymentsExportUseCase{db: db, log: log}
+	o := resolve(paymentsRowLimit, opts)
+	return &PaymentsExportUseCase{db: db, log: log, rowLimit: o.rowLimit}
 }
 
 // Execute fetches payment rows for tenantID and writes CSV to w.
@@ -45,7 +48,7 @@ func (uc *PaymentsExportUseCase) Execute(ctx context.Context, tenantID uuid.UUID
 		ORDER BY pay_date DESC
 		LIMIT $2`
 
-	rows, err := dbscope.From(ctx, uc.db).QueryContext(ctx, q, tenantID, paymentsRowLimit+1)
+	rows, err := dbscope.From(ctx, uc.db).QueryContext(ctx, q, tenantID, uc.rowLimit+1)
 	if err != nil {
 		return 0, fmt.Errorf("export payments: query: %w", err)
 	}
@@ -63,20 +66,16 @@ func (uc *PaymentsExportUseCase) Execute(ctx context.Context, tenantID uuid.UUID
 		if err := rows.Scan(&billNo, &partnerID, &amount, &payType, &payDate); err != nil {
 			return count, fmt.Errorf("export payments: scan row: %w", err)
 		}
-		if count == paymentsRowLimit {
+		if count == uc.rowLimit {
 			uc.log.Warn("export payments: result truncated at row limit",
 				slog.String("tenant_id", tenantID.String()),
-				slog.Int("limit", paymentsRowLimit))
-			if err := cw.Write([]string{"[截断]", fmt.Sprintf("数据超过 %d 行限制", paymentsRowLimit), "", "", ""}); err != nil {
+				slog.Int("limit", uc.rowLimit))
+			if err := cw.Write([]string{"[截断]", fmt.Sprintf("数据超过 %d 行限制", uc.rowLimit), "", "", ""}); err != nil {
 				return count, fmt.Errorf("export payments: write truncation note: %w", err)
 			}
 			break
 		}
-		dateStr := ""
-		if payDate.Valid {
-			dateStr = payDate.Time.Format("2006-01-02 15:04:05")
-		}
-		if err := cw.Write([]string{billNo, partnerID, amount, payType, dateStr}); err != nil {
+		if err := cw.Write([]string{billNo, partnerID, amount, payType, formatNullDate(payDate, dateTimeLayout)}); err != nil {
 			return count, fmt.Errorf("export payments: write row: %w", err)
 		}
 		count++
