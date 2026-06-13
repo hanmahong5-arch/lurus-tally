@@ -13,7 +13,6 @@ import (
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // Handler groups all stock REST handlers.
@@ -65,7 +64,7 @@ func (h *Handler) ListLowStock(c *gin.Context) {
 	limit := middleware.ParseLimitQuery(c, "limit", 200, middleware.DefaultMaxPageLimit)
 	rows, err := h.listLowStock.Execute(c.Request.Context(), tenantID, limit)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if rows == nil {
@@ -153,7 +152,7 @@ func (h *Handler) PostMovement(c *gin.Context) {
 			})
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -181,7 +180,7 @@ func (h *Handler) GetSnapshot(c *gin.Context) {
 
 	snap, err := h.getSnapshot.Execute(c.Request.Context(), tenantID, productID, warehouseID)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	if snap == nil {
@@ -217,7 +216,7 @@ func (h *Handler) ListSnapshots(c *gin.Context) {
 
 	snaps, err := h.listSnapshots.Execute(c.Request.Context(), f)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": snaps})
@@ -249,7 +248,7 @@ func (h *Handler) ListMovements(c *gin.Context) {
 
 	mvs, err := h.listMovements.Execute(c.Request.Context(), f)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"items": mvs})

@@ -13,7 +13,6 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // Handler groups all currency and exchange rate Gin handlers.
@@ -51,7 +50,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 func (h *Handler) ListCurrencies(c *gin.Context) {
 	currencies, err := h.listCurrencies.Execute(c.Request.Context())
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"currencies": currencies})
@@ -80,7 +79,7 @@ func (h *Handler) GetRate(c *gin.Context) {
 
 	result, err := h.getRate.Execute(c.Request.Context(), tenantID, from, to, date)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -141,7 +140,7 @@ func (h *Handler) CreateRate(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, errResp("validation_error", err.Error(), ""))
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 	c.JSON(http.StatusCreated, result)
@@ -166,7 +165,7 @@ func (h *Handler) ListRateHistory(c *gin.Context) {
 
 	rates, err := h.listRateHistory.Execute(c.Request.Context(), tenantID, from, to, days)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"rates": rates})

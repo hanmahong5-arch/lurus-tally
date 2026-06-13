@@ -23,17 +23,6 @@ import { test, expect, type Page, type APIRequestContext } from "@playwright/tes
 // ─── Constants ─────────────────────────────────────────────────────────────
 
 const BACKEND = "http://localhost:18200"
-
-// REAL mode (UAT_REAL=1, set by uat-stage.config.ts): API calls go through the
-// session-authenticated FE proxy (/api/proxy/*) to the STAGE backend instead
-// of a local auth-disabled backend. When UAT_REAL is unset the original stub
-// path below is 100% unchanged.
-const REAL = process.env.UAT_REAL === "1"
-
-/** Maps a direct-backend /api/v1 path to its FE-proxy equivalent in REAL mode. */
-function apiPath(p: string): string {
-  return REAL ? p.replace(/^\/api\/v1\//, "/api/proxy/") : p
-}
 const SCREENSHOT_DIR = nodePath.join(
   __dirname,
   "..",
@@ -82,7 +71,7 @@ async function closePalette(page: Page): Promise<void> {
  * Idempotent — 409 Conflict is treated as success.
  */
 async function seedProduct(ctx: APIRequestContext): Promise<string | null> {
-  const res = await ctx.post(apiPath("/api/v1/products"), {
+  const res = await ctx.post("/api/v1/products", {
     data: SEED_PRODUCT,
     headers: { "Content-Type": "application/json" },
   })
@@ -92,7 +81,7 @@ async function seedProduct(ctx: APIRequestContext): Promise<string | null> {
   }
   if (res.status() === 409) {
     const listRes = await ctx.get(
-      apiPath(`/api/v1/products?q=${encodeURIComponent(SEED_PRODUCT.code)}&limit=1`)
+      `/api/v1/products?q=${encodeURIComponent(SEED_PRODUCT.code)}&limit=1`
     )
     if (listRes.ok()) {
       const body = (await listRes.json()) as { data?: Array<{ id: string }> }
@@ -110,14 +99,8 @@ async function seedProduct(ctx: APIRequestContext): Promise<string | null> {
 // directly — bypassing the Next.js proxy and its auth requirement.
 
 const paletteTest = test.extend<{ backendApi: APIRequestContext }>({
-  backendApi: async ({ playwright, context }, use) => {
-    if (REAL) {
-      // Browser-context request — carries the NextAuth session cookie from
-      // storageState and resolves relative URLs against baseURL, so calls go
-      // through /api/proxy/* to the real STAGE backend.
-      await use(context.request)
-      return
-    }
+  // eslint-disable-next-line no-empty-pattern
+  backendApi: async ({ playwright }, use) => {
     const ctx = await playwright.request.newContext({ baseURL: BACKEND })
     await use(ctx)
     await ctx.dispose()
@@ -254,7 +237,7 @@ paletteTest.describe("Command Palette UAT", () => {
       for (const char of queries) {
         const t0 = performance.now()
         const res = await backendApi.get(
-          apiPath(`/api/v1/search?q=${encodeURIComponent(char)}&limit=5`)
+          `/api/v1/search?q=${encodeURIComponent(char)}&limit=5`
         )
         const elapsed = performance.now() - t0
         samples.push(elapsed)
@@ -273,16 +256,6 @@ paletteTest.describe("Command Palette UAT", () => {
         `[UAT-4] Latency (${samples.length} samples) — ` +
           `p50: ${p50.toFixed(1)} ms | p95: ${p95.toFixed(1)} ms | p99: ${p99.toFixed(1)} ms`
       )
-
-      if (REAL) {
-        // Through next-dev proxy + WAN to STAGE the 200 ms budget does not
-        // apply — percentiles are informational. The strict budget remains
-        // asserted in the local (stub) config run.
-        console.log(
-          "[UAT-4] REAL mode: p95 budget not asserted (proxy + WAN path); see logged percentiles"
-        )
-        return
-      }
 
       expect(
         p95,

@@ -74,10 +74,6 @@ func RecordUsage(ctx context.Context, model string, promptTokens, completionToke
 	if cost := costCNYFor(model, promptTokens, completionTokens); cost > 0 {
 		llmCostCNY.WithLabelValues(tenant, m).Add(cost)
 	}
-
-	// Fan out to the optional billing usage sink (unified-billing Wave 2).
-	// No-op when no sink is wired; the sink itself must be non-blocking.
-	emitToSink(ctx, model, promptTokens, completionTokens)
 }
 
 // Handler returns the /internal/v1/metrics http.Handler. Callers wire this

@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httpx"
 )
 
 // defaultTimeout caps every outbound platform request. Platform itself enforces
@@ -57,11 +55,6 @@ func New(cfg Config) (*Client, error) {
 		apiKey:  cfg.APIKey,
 		http: &http.Client{
 			Timeout: timeout,
-			// Resilient transport: idempotent reads (GET overview) retry on
-			// 429/5xx with backoff; the non-idempotent POSTs (subscribe /
-			// payment) are single-shot, never replayed. All calls share a
-			// circuit breaker that fast-fails when platform is down.
-			Transport: httpx.New(http.DefaultTransport, httpx.DefaultConfig()),
 		},
 	}, nil
 }

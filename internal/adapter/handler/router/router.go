@@ -3,8 +3,6 @@ package router
 
 import (
 	"net/http"
-	"strings"
-	"time"
 
 	"github.com/gin-gonic/gin"
 	handleracct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/account"
@@ -33,26 +31,6 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 )
 
-const (
-	// maxRequestBodyBytes is a generous global backstop (10 MiB) against
-	// pathological request bodies. Routes needing a tighter bound keep their
-	// own MaxBytesReader (e.g. the Shopify webhook); the avatar upload
-	// (200 KiB) and JSON endpoints sit far below this.
-	maxRequestBodyBytes = 10 << 20
-	// requestTimeout bounds processing of non-streaming requests so a stuck
-	// handler cannot pin a connection forever.
-	requestTimeout = 30 * time.Second
-)
-
-// isStreamingRoute reports whether the matched route streams its response and
-// therefore must NOT be wrapped by the buffering Timeout middleware: the SSE
-// chat endpoint (POST /api/v1/ai/chat) and the CSV exports (*.csv), which write
-// incrementally via io.Copy.
-func isStreamingRoute(c *gin.Context) bool {
-	p := c.FullPath()
-	return p == "/api/v1/ai/chat" || strings.HasSuffix(p, ".csv")
-}
-
 // notImplemented is a placeholder handler returned when a handler struct is nil.
 // This allows the router to register routes for integration testing even when
 // handler dependencies (DB) are not available.
@@ -77,10 +55,6 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
 	r.Use(middleware.RequestMetrics())
-	// Resource bounds (T0 hardening): cap request body size and per-request
-	// processing time. Timeout skips streaming routes it cannot buffer.
-	r.Use(middleware.BodyLimit(maxRequestBodyBytes))
-	r.Use(middleware.Timeout(requestTimeout, isStreamingRoute))
 
 	internal := r.Group("/internal/v1/tally")
 	{
@@ -295,7 +269,6 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 		} else {
 			api.GET("/replenish/suggestions", notImplemented)
 			api.POST("/replenish/draft-batch", notImplemented)
-			api.GET("/replenish/scorecard", notImplemented)
 		}
 
 		// Reports — surfaced AI analytics (Req 10).

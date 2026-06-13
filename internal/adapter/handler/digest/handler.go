@@ -7,11 +7,10 @@
 // Response:
 //
 //	{
-//	  "replenish":            {"count": N, "amount_cny": "12345.67"},
-//	  "oversell":             {"count": M},
-//	  "dead_stock":           {"count": K},
-//	  "suggestion_scorecard": {"suggested": N, "adopted": M, "missed_stockout": K},
-//	  "generated_at":         "2026-05-22T00:00:00Z"
+//	  "replenish":     {"count": N, "amount_cny": "12345.67"},
+//	  "oversell":      {"count": M},
+//	  "dead_stock":    {"count": K},
+//	  "generated_at":  "2026-05-22T00:00:00Z"
 //	}
 package digest
 
@@ -24,7 +23,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // WeeklySummaryUseCase is the surface the handler calls.
@@ -58,20 +56,12 @@ type countResp struct {
 	Count int `json:"count"`
 }
 
-// scorecardResp is the JSON shape for last week's suggestion track record.
-type scorecardResp struct {
-	Suggested      int `json:"suggested"`
-	Adopted        int `json:"adopted"`
-	MissedStockout int `json:"missed_stockout"`
-}
-
 // weeklyResp is the full JSON response body.
 type weeklyResp struct {
-	Replenish           replenishResp `json:"replenish"`
-	Oversell            countResp     `json:"oversell"`
-	DeadStock           countResp     `json:"dead_stock"`
-	SuggestionScorecard scorecardResp `json:"suggestion_scorecard"`
-	GeneratedAt         time.Time     `json:"generated_at"`
+	Replenish   replenishResp `json:"replenish"`
+	Oversell    countResp     `json:"oversell"`
+	DeadStock   countResp     `json:"dead_stock"`
+	GeneratedAt time.Time     `json:"generated_at"`
 }
 
 // GetWeeklySummary handles GET /api/v1/weekly-summary.
@@ -86,7 +76,7 @@ func (h *Handler) GetWeeklySummary(c *gin.Context) {
 
 	summary, err := h.uc.Execute(c.Request.Context(), tenantID)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
 		return
 	}
 
@@ -95,13 +85,8 @@ func (h *Handler) GetWeeklySummary(c *gin.Context) {
 			Count:     summary.ReplenishCount,
 			AmountCNY: summary.ReplenishAmountCNY.StringFixed(2),
 		},
-		Oversell:  countResp{Count: summary.OversellCount},
-		DeadStock: countResp{Count: summary.DeadStockCount},
-		SuggestionScorecard: scorecardResp{
-			Suggested:      summary.Suggested,
-			Adopted:        summary.Adopted,
-			MissedStockout: summary.MissedStockout,
-		},
+		Oversell:    countResp{Count: summary.OversellCount},
+		DeadStock:   countResp{Count: summary.DeadStockCount},
 		GeneratedAt: summary.GeneratedAt,
 	})
 }

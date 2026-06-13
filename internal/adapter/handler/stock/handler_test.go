@@ -150,7 +150,7 @@ func buildTestRouter(record RecordExecutor, getSnap *stubGetSnapshot, listSnaps 
 				})
 				return
 			}
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusCreated, snap)
@@ -158,7 +158,7 @@ func buildTestRouter(record RecordExecutor, getSnap *stubGetSnapshot, listSnaps 
 	api.GET("/snapshots", func(c *gin.Context) {
 		snaps, err := listSnaps.Execute(c.Request.Context(), appstock.ListSnapshotsFilter{})
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error"})
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 			return
 		}
 		c.JSON(http.StatusOK, gin.H{"items": snaps})

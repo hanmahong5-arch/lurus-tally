@@ -13,11 +13,6 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
 
-// scorecardWindowDays is the Monday-card track-record window. 7 days = "last
-// week", matching the weekly digest cadence; the replenish page uses its own
-// 28-day window for the longer-term adoption rate.
-const scorecardWindowDays = 7
-
 // SQLDigestRepo implements appdigest.DigestRepo against PostgreSQL.
 type SQLDigestRepo struct {
 	db *sql.DB
@@ -159,51 +154,4 @@ func (r *SQLDigestRepo) CountDeadStock(ctx context.Context, tenantID uuid.UUID) 
 		return 0, fmt.Errorf("digest dead stock count: %w", err)
 	}
 	return n, nil
-}
-
-// SuggestionScorecard returns the 7-day suggestion track record from
-// tally.replenish_suggestion_log.
-//
-// The stockout-miss definition matches the replenish scorecard exactly:
-// products suggested in the window, never adopted in the window, whose
-// CURRENT total available stock is <= 0. Current-snapshot-only (no historical
-// replay) and "no snapshot row ≠ miss" — a trust feature must under-claim.
-// An empty ledger yields all-zero counts via the scalar subqueries.
-func (r *SQLDigestRepo) SuggestionScorecard(ctx context.Context, tenantID uuid.UUID) (appdigest.ScorecardCounts, error) {
-	const q = `
-		WITH win AS (
-			SELECT product_id, adopted_at
-			FROM tally.replenish_suggestion_log
-			WHERE tenant_id = $1
-			  AND suggested_on >= CURRENT_DATE - $2::int
-		),
-		never_adopted AS (
-			SELECT product_id
-			FROM win
-			GROUP BY product_id
-			HAVING bool_and(adopted_at IS NULL)
-		),
-		cur AS (
-			SELECT product_id, SUM(available_qty) AS available_qty
-			FROM tally.stock_snapshot
-			WHERE tenant_id = $1
-			GROUP BY product_id
-		)
-		SELECT
-			(SELECT COUNT(*) FROM win)                              AS suggested,
-			(SELECT COUNT(*) FROM win WHERE adopted_at IS NOT NULL) AS adopted,
-			(SELECT COUNT(*)
-			   FROM never_adopted na
-			   JOIN cur c ON c.product_id = na.product_id
-			  WHERE c.available_qty <= 0)                           AS missed_stockout`
-
-	dbh := dbscope.From(ctx, r.db)
-	var out appdigest.ScorecardCounts
-	err := dbh.QueryRowContext(ctx, q, tenantID, scorecardWindowDays).Scan(
-		&out.Suggested, &out.Adopted, &out.MissedStockout,
-	)
-	if err != nil {
-		return appdigest.ScorecardCounts{}, fmt.Errorf("digest suggestion scorecard: %w", err)
-	}
-	return out, nil
 }

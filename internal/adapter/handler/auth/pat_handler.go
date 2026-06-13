@@ -12,7 +12,6 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appauth "github.com/hanmahong5-arch/lurus-tally/internal/app/auth"
 	domainauth "github.com/hanmahong5-arch/lurus-tally/internal/domain/auth"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 const (
@@ -89,7 +88,7 @@ func (h *PATHandler) Create(c *gin.Context) {
 	// Soft cap: prevent runaway token creation in a single tenant.
 	existing, err := h.repo.ListByTenant(c.Request.Context(), tenantID)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
 		return
 	}
 	if len(existing) >= maxPATsPerTenant {
@@ -114,7 +113,7 @@ func (h *PATHandler) Create(c *gin.Context) {
 		ExpiresAt: req.ExpiresAt,
 	}
 	if err := h.repo.Create(c.Request.Context(), pat); err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
 		return
 	}
 
@@ -151,7 +150,7 @@ func (h *PATHandler) List(c *gin.Context) {
 
 	pats, err := h.repo.ListByTenant(c.Request.Context(), tenantID)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
 		return
 	}
 	items := make([]patSummary, 0, len(pats))
@@ -185,7 +184,7 @@ func (h *PATHandler) Revoke(c *gin.Context) {
 			c.Status(http.StatusNoContent)
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
 		return
 	}
 	c.Status(http.StatusNoContent)

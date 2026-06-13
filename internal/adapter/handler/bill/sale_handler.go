@@ -17,7 +17,6 @@ import (
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // SaleHandler groups all sale bill Gin handlers.
@@ -134,7 +133,7 @@ func (h *SaleHandler) Create(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, errResp("validation_error", err.Error(), ""))
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"bill_id": out.BillID, "bill_no": out.BillNo})
@@ -232,7 +231,7 @@ func (h *SaleHandler) Approve(c *gin.Context) {
 			})
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"status": "approved"})
@@ -260,7 +259,7 @@ func (h *SaleHandler) Cancel(c *gin.Context) {
 			c.JSON(http.StatusUnprocessableEntity, errResp("cannot_cancel_approved_bill", "approved 单据不可直接取消", ""))
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 	middleware.IncBillCancelled("sale", tenantID.String())
@@ -298,7 +297,7 @@ func (h *SaleHandler) List(c *gin.Context) {
 
 	bills, total, err := h.billRepo.ListBills(c.Request.Context(), f)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 
@@ -332,19 +331,19 @@ func (h *SaleHandler) Get(c *gin.Context) {
 			c.JSON(http.StatusNotFound, errResp("bill_not_found", "sale bill not found", ""))
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 
 	items, err := h.billRepo.GetBillItems(c.Request.Context(), tenantID, billID)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 
 	payments, err := h.listPaymentsUC.Execute(c.Request.Context(), tenantID, billID)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 
@@ -441,7 +440,7 @@ func (h *SaleHandler) QuickCheckout(c *gin.Context) {
 			})
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, errResp("internal_error", err.Error(), ""))
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{

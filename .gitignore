@@ -1,15 +1,12 @@
 # Binaries
 tally-backend
 tally-backend.exe
-*.exe
 /bin/*
 !/bin/*.sh
 !/bin/*.md
 
-# Claude Code local working state (agents, worktrees, transcripts) —
-# except workflows/, which holds committed automation artifacts (UAT runner).
-.claude/*
-!.claude/workflows/
+# Claude Code local working state (agents, worktrees, transcripts).
+.claude/
 
 # Go build artifacts
 *.out
@@ -39,4 +36,3 @@ web/.next/
 web/node_modules/
 web/.env*.local
 server
-_uat-reports/evidence/

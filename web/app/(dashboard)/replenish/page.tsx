@@ -7,9 +7,7 @@ import type { ColumnDef } from "@tanstack/react-table"
 import {
   listReplenishSuggestions,
   draftBatch,
-  fetchScorecard,
   type ReplenishSuggestion,
-  type ReplenishScorecard,
 } from "@/lib/api/replenish"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useTenantId } from "@/hooks/use-tenant-id"
@@ -45,7 +43,6 @@ export default function ReplenishPage() {
   const [error, setError] = useState<string | null>(null)
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [submitting, setSubmitting] = useState(false)
-  const [scorecard, setScorecard] = useState<ReplenishScorecard | null>(null)
   const tenantId = useTenantId()
 
   const load = useCallback(
@@ -72,23 +69,6 @@ export default function ReplenishPage() {
   useAbortableEffect((signal, isCancelled) => {
     load(signal, isCancelled)
   }, [load])
-
-  // The track-record bar is informational: a fetch failure (old backend,
-  // network blip) simply leaves the bar unrendered and the page unaffected.
-  useAbortableEffect(
-    (signal, isCancelled) => {
-      fetchScorecard(tenantId, signal)
-        .then((sc) => {
-          if (isCancelled?.()) return
-          setScorecard(sc)
-        })
-        .catch(() => {
-          if (isCancelled?.()) return
-          setScorecard(null)
-        })
-    },
-    [tenantId]
-  )
 
   function toggleRow(id: string) {
     setSelected((prev) => {
@@ -257,19 +237,10 @@ export default function ReplenishPage() {
       header: "提前期",
       meta: { align: "right" },
       cell: ({ row }) => {
-        const r = row.original
-        const lt = r.lead_time_days
+        const lt = row.original.lead_time_days
         return (
-          <span className="inline-flex items-center justify-end gap-1">
-            <span className="tabular-nums text-muted-foreground">
-              {lt != null ? `${lt}天` : "—"}
-            </span>
-            {r.lead_time_source === "learned" && (
-              // Learned from actual arrivals — tooltip carries the full reason.
-              <span title={r.reason} className="cursor-help">
-                <Badge tone="ok">实测</Badge>
-              </span>
-            )}
+          <span className="tabular-nums text-muted-foreground">
+            {lt != null ? `${lt}天` : "—"}
           </span>
         )
       },
@@ -316,22 +287,6 @@ export default function ReplenishPage() {
           </Button>
         }
       />
-
-      {scorecard && scorecard.suggestions_count > 0 && (
-        <div className="flex flex-wrap items-center gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-sm">
-          <span className="text-muted-foreground">
-            近 4 周建议 {scorecard.suggestions_count} 项
-          </span>
-          <Badge tone="ok">
-            采纳率 {Math.round(scorecard.adoption_rate * 100)}%
-          </Badge>
-          {scorecard.stockout_misses > 0 && (
-            <Badge tone="err">
-              未采纳且断货 {scorecard.stockout_misses} 项
-            </Badge>
-          )}
-        </div>
-      )}
 
       <DataTable
         columns={columns}

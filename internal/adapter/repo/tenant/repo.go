@@ -127,27 +127,6 @@ func (r *TenantRepo) Create(ctx context.Context, id uuid.UUID, name string) erro
 	return nil
 }
 
-// GetPlatformAccountID returns the lurus-platform account id pinned to a tenant
-// (migration 000051), used by the LLM usage reporter to attribute spend.
-// Returns (id, true, nil) when set, (0, false, nil) when the column is NULL —
-// i.e. the tenant predates Wave 2 or platform was unreachable at onboarding.
-// tally.tenant is the tenant registry (no RLS), so this read is safe from a
-// background goroutine with no request-scoped tenant pin.
-func (r *TenantRepo) GetPlatformAccountID(ctx context.Context, tenantID uuid.UUID) (int64, bool, error) {
-	const q = `SELECT platform_account_id FROM tally.tenant WHERE id = $1`
-	var acct sql.NullInt64
-	switch err := r.db.QueryRowContext(ctx, q, tenantID).Scan(&acct); {
-	case errors.Is(err, sql.ErrNoRows):
-		return 0, false, nil
-	case err != nil:
-		return 0, false, fmt.Errorf("tenant repo get platform account id: %w", err)
-	}
-	if !acct.Valid || acct.Int64 <= 0 {
-		return 0, false, nil
-	}
-	return acct.Int64, true, nil
-}
-
 // MappingRepo implements UserMappingRepository against PostgreSQL.
 type MappingRepo struct {
 	db DB

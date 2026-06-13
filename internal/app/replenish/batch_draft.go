@@ -4,7 +4,6 @@ package replenish
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -54,31 +53,6 @@ type SupplierNameResolver interface {
 	NameByID(ctx context.Context, tenantID, supplierID uuid.UUID) (string, error)
 }
 
-// ProductSupplier identifies one (product, preferred supplier) pair for batch
-// price lookup. Defined here (not in the repo adapter) so the dependency keeps
-// pointing adapter → app. SupplierID is nil for the no-supplier group.
-type ProductSupplier struct {
-	ProductID  uuid.UUID
-	SupplierID *uuid.UUID
-}
-
-// PriceLookup resolves the most recent approved purchase price (already
-// converted to CNY) for a set of pairs in ONE batch query — never per-product.
-// The result is keyed by product only: within a single draft batch each
-// product belongs to exactly one supplier group, so the product ID is a
-// sufficient key and spares callers a composite-key type.
-type PriceLookup interface {
-	LastPurchasePrices(ctx context.Context, tenantID uuid.UUID, pairs []ProductSupplier) (map[uuid.UUID]decimal.Decimal, error)
-}
-
-// AdoptionMarker stamps ledger rows adopted when their suggestions turn into
-// a PO draft (F3). The SQL implementation only touches rows that are still
-// unadopted and recent, which makes the call idempotent under
-// Idempotency-Key retries — a second identical call matches zero rows.
-type AdoptionMarker interface {
-	MarkAdopted(ctx context.Context, tenantID uuid.UUID, productIDs []uuid.UUID, billID uuid.UUID) error
-}
-
 // CreateDraftBatchUseCase groups selected replenishment lines by supplier and
 // creates one purchase draft per group.
 //
@@ -90,32 +64,12 @@ type AdoptionMarker interface {
 type CreateDraftBatchUseCase struct {
 	creator  PurchaseDraftCreator
 	resolver SupplierNameResolver // may be nil — names will be empty
-	prices   PriceLookup          // may be nil — drafts keep zero unit prices
-	adopt    AdoptionMarker       // may be nil — no ledger adoption stamping
-	log      *slog.Logger
 }
 
 // NewCreateDraftBatchUseCase constructs the use case.
 // resolver may be nil; supplier names will then be omitted from results.
 func NewCreateDraftBatchUseCase(creator PurchaseDraftCreator, resolver SupplierNameResolver) *CreateDraftBatchUseCase {
-	return &CreateDraftBatchUseCase{creator: creator, resolver: resolver, log: slog.Default()}
-}
-
-// WithPriceLookup enables last-purchase-price backfill on created draft lines.
-// nil keeps today's behavior (every line at decimal.Zero, filled in manually).
-func (uc *CreateDraftBatchUseCase) WithPriceLookup(pl PriceLookup) *CreateDraftBatchUseCase {
-	uc.prices = pl
-	return uc
-}
-
-// WithAdoptionMarker enables best-effort F3 adoption stamping after each
-// group's draft is created. A nil logger falls back to slog.Default.
-func (uc *CreateDraftBatchUseCase) WithAdoptionMarker(m AdoptionMarker, log *slog.Logger) *CreateDraftBatchUseCase {
-	uc.adopt = m
-	if log != nil {
-		uc.log = log
-	}
-	return uc
+	return &CreateDraftBatchUseCase{creator: creator, resolver: resolver}
 }
 
 // Execute groups lines by supplier, creates one draft per group, and returns
@@ -160,26 +114,6 @@ func (uc *CreateDraftBatchUseCase) Execute(ctx context.Context, req DraftBatchRe
 		remark = "补货建议批量草稿"
 	}
 
-	// One batch price fetch for all (product, supplier) pairs up front — a
-	// single query on the request-pinned connection, never per group or per
-	// product. With no PriceLookup wired the map stays nil and every line
-	// falls back to zero (today's behavior).
-	var prices map[uuid.UUID]decimal.Decimal
-	if uc.prices != nil {
-		pairs := make([]ProductSupplier, 0, len(req.Lines))
-		for _, k := range keys {
-			g := groups[k]
-			for _, l := range g.lines {
-				pairs = append(pairs, ProductSupplier{ProductID: l.ProductID, SupplierID: g.supplierID})
-			}
-		}
-		var perr error
-		prices, perr = uc.prices.LastPurchasePrices(ctx, req.TenantID, pairs)
-		if perr != nil {
-			return nil, fmt.Errorf("replenish batch draft: last purchase prices: %w", perr)
-		}
-	}
-
 	now := time.Now().UTC()
 	out := &DraftBatchOutput{Drafts: make([]DraftResult, 0, len(keys))}
 
@@ -187,15 +121,11 @@ func (uc *CreateDraftBatchUseCase) Execute(ctx context.Context, req DraftBatchRe
 		g := groups[k]
 		items := make([]appbill.CreatePurchaseItemInput, 0, len(g.lines))
 		for i, l := range g.lines {
-			unitPrice := decimal.Zero // draft — price filled in manually before approval
-			if p, ok := prices[l.ProductID]; ok {
-				unitPrice = p
-			}
 			items = append(items, appbill.CreatePurchaseItemInput{
 				ProductID: l.ProductID,
 				LineNo:    i + 1,
 				Qty:       l.Qty,
-				UnitPrice: unitPrice,
+				UnitPrice: decimal.Zero, // draft — price filled in manually before approval
 			})
 		}
 
@@ -209,22 +139,6 @@ func (uc *CreateDraftBatchUseCase) Execute(ctx context.Context, req DraftBatchRe
 		})
 		if err != nil {
 			return nil, fmt.Errorf("replenish batch draft: create group %s: %w", k, err)
-		}
-
-		// Best-effort F3 adoption stamp for this group's products. Sequential
-		// on the pinned connection; a failure only logs — the draft already
-		// exists and must be returned to the user regardless.
-		if uc.adopt != nil {
-			pids := make([]uuid.UUID, 0, len(g.lines))
-			for _, gl := range g.lines {
-				pids = append(pids, gl.ProductID)
-			}
-			if aerr := uc.adopt.MarkAdopted(ctx, req.TenantID, pids, created.BillID); aerr != nil {
-				uc.log.Warn("replenish: ledger adoption stamp failed",
-					slog.String("tenant_id", req.TenantID.String()),
-					slog.String("bill_id", created.BillID.String()),
-					slog.String("error", aerr.Error()))
-			}
 		}
 
 		result := DraftResult{

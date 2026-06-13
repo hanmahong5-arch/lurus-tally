@@ -22,7 +22,6 @@ import (
 	appob "github.com/hanmahong5-arch/lurus-tally/internal/app/onboarding"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domainstock "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // stockAdapter bridges appob.StockInitializer → appstock.RecordMovementUseCase.
@@ -132,7 +131,7 @@ func (h *Handler) SeedDemo(c *gin.Context) {
 		Persona:     persona,
 	})
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -150,7 +149,7 @@ func (h *Handler) ClearDemo(c *gin.Context) {
 	}
 
 	if err := h.clear.Execute(c.Request.Context(), tenantID); err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.Status(http.StatusNoContent)

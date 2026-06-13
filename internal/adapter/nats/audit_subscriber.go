@@ -132,9 +132,6 @@ func (s *AuditSubscriber) dispatch(msg jetstream.Msg) {
 		TargetKind: targetKind,
 		TargetID:   targetID,
 		Payload:    env.Payload,
-		// Dedup key: a redelivered envelope carries the same EventID, so the
-		// repo's ON CONFLICT keeps audit at exactly one row per business event.
-		EventID: env.EventID,
 	}); err != nil {
 		// Retryable — let JetStream redeliver. After MaxDeliver the message
 		// goes to the dead-letter ceiling and stops eating ack budget.

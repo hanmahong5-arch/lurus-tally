@@ -18,8 +18,6 @@ type stubDigestRepo struct {
 	oversellErr   error
 	deadCount     int
 	deadErr       error
-	scorecard     appdigest.ScorecardCounts
-	scorecardErr  error
 }
 
 func (s *stubDigestRepo) ListReplenishCandidates(_ context.Context, _ uuid.UUID) ([]appdigest.ReplenishRow, error) {
@@ -32,10 +30,6 @@ func (s *stubDigestRepo) CountOversell(_ context.Context, _ uuid.UUID) (int, err
 
 func (s *stubDigestRepo) CountDeadStock(_ context.Context, _ uuid.UUID) (int, error) {
 	return s.deadCount, s.deadErr
-}
-
-func (s *stubDigestRepo) SuggestionScorecard(_ context.Context, _ uuid.UUID) (appdigest.ScorecardCounts, error) {
-	return s.scorecard, s.scorecardErr
 }
 
 // TestWeeklySummary_HappyPath_ComputesAmountCorrectly verifies the
@@ -114,56 +108,6 @@ func TestWeeklySummary_SuggestedQtyFlooredAtZero(t *testing.T) {
 func TestWeeklySummary_RepoError_Propagates(t *testing.T) {
 	uc := appdigest.NewWeeklySummaryUseCase(&stubDigestRepo{
 		replenishErr: errors.New("connection reset"),
-	})
-	_, err := uc.Execute(context.Background(), uuid.New())
-	if err == nil {
-		t.Error("expected error, got nil")
-	}
-}
-
-// TestWeeklySummary_Execute_ScorecardPassthrough verifies the repo's
-// scorecard counts land unchanged in the Summary (table-driven, including
-// the empty-ledger zero-value path).
-func TestWeeklySummary_Execute_ScorecardPassthrough(t *testing.T) {
-	cases := []struct {
-		name      string
-		scorecard appdigest.ScorecardCounts
-	}{
-		{
-			name:      "values pass through",
-			scorecard: appdigest.ScorecardCounts{Suggested: 12, Adopted: 5, MissedStockout: 2},
-		},
-		{
-			name:      "empty ledger yields zeros",
-			scorecard: appdigest.ScorecardCounts{},
-		},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			uc := appdigest.NewWeeklySummaryUseCase(&stubDigestRepo{scorecard: tc.scorecard})
-			s, err := uc.Execute(context.Background(), uuid.New())
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if s.Suggested != tc.scorecard.Suggested {
-				t.Errorf("Suggested: want %d got %d", tc.scorecard.Suggested, s.Suggested)
-			}
-			if s.Adopted != tc.scorecard.Adopted {
-				t.Errorf("Adopted: want %d got %d", tc.scorecard.Adopted, s.Adopted)
-			}
-			if s.MissedStockout != tc.scorecard.MissedStockout {
-				t.Errorf("MissedStockout: want %d got %d", tc.scorecard.MissedStockout, s.MissedStockout)
-			}
-		})
-	}
-}
-
-// TestWeeklySummary_Execute_ScorecardError_Propagates verifies a scorecard
-// repo error surfaces like the other aggregate errors.
-func TestWeeklySummary_Execute_ScorecardError_Propagates(t *testing.T) {
-	uc := appdigest.NewWeeklySummaryUseCase(&stubDigestRepo{
-		scorecardErr: errors.New("connection reset"),
 	})
 	_, err := uc.Execute(context.Background(), uuid.New())
 	if err == nil {

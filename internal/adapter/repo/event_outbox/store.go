@@ -63,18 +63,12 @@ func (s *Store) Drain(ctx context.Context, limit int) ([]adapternats.OutboxRow, 
 
 	// MaxAttempts gates a poison row from being retried forever; the row stays
 	// in the table so an operator can inspect last_error and decide manually.
-	//
-	// FOR UPDATE SKIP LOCKED makes the drain safe to run from more than one
-	// replica: each worker locks the rows it claims for the lifetime of this
-	// tx and other workers skip them instead of blocking, so no two drains
-	// publish the same row in the same cycle.
 	const q = `
 		SELECT id, subject, payload
 		FROM tally.event_outbox
 		WHERE published_at IS NULL AND attempts < $2
 		ORDER BY created_at
-		LIMIT $1
-		FOR UPDATE SKIP LOCKED`
+		LIMIT $1`
 	rows, err := tx.QueryContext(ctx, q, limit, adapternats.MaxOutboxAttempts)
 	if err != nil {
 		return nil, fmt.Errorf("event_outbox: drain query: %w", err)

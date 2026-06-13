@@ -21,7 +21,6 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
 	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmgateway"
 )
@@ -89,7 +88,7 @@ func (h *Handler) ListPlans(c *gin.Context) {
 	status := c.Query("status")
 	plans, err := h.orchestrator.ListPlans(c.Request.Context(), tenantID, status)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
 		return
 	}
 	if plans == nil {
@@ -342,7 +341,7 @@ func (h *Handler) RevertPlan(c *gin.Context) {
 		case appai.ErrPlanNotRevertible:
 			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "not_revertible", "detail": "plan type does not support undo"})
 		default:
-			httperr.WriteInternal(c, err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
 		}
 		return
 	}
@@ -369,7 +368,7 @@ func (h *Handler) CancelPlan(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "plan not found or expired"})
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
 		return
 	}
 

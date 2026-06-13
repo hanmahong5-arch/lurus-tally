@@ -9,7 +9,6 @@ import (
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appreports "github.com/hanmahong5-arch/lurus-tally/internal/app/reports"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // Handler groups all analytics report REST handlers.
@@ -40,7 +39,7 @@ func (h *Handler) GrossMargin(c *gin.Context) {
 	days := middleware.ParseLimitQuery(c, "days", 30, 365)
 	result, err := h.uc.GrossMarginSummary(c.Request.Context(), tenantID, days)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -55,7 +54,7 @@ func (h *Handler) ABCClassify(c *gin.Context) {
 	}
 	result, err := h.uc.ABCClassify(c.Request.Context(), tenantID)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -71,7 +70,7 @@ func (h *Handler) DeadStock(c *gin.Context) {
 	days := middleware.ParseLimitQuery(c, "days", 90, 365)
 	result, err := h.uc.DeadStock(c.Request.Context(), tenantID, days)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, result)
@@ -97,7 +96,7 @@ func (h *Handler) SalesTop(c *gin.Context) {
 
 	result, err := h.uc.SalesTop(c.Request.Context(), tenantID, metric, days, limit)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, result)

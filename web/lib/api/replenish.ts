@@ -22,10 +22,6 @@ export interface ReplenishSuggestion {
   rop: string
   safety_stock: string
   reason: string
-  // Learning-driven fields (F1/F2) — optional: older backends omit them.
-  last_purchase_price?: string
-  lead_time_source?: "learned" | "configured" | "default"
-  lead_time_samples?: number
 }
 
 export interface ListSuggestionsParams {
@@ -40,24 +36,6 @@ export async function listReplenishSuggestions(
   const { weeks = 2, tenantId, signal } = params
   const usp = new URLSearchParams({ weeks: String(weeks) })
   return apiFetch(`/replenish/suggestions?${usp.toString()}`, { tenantId, signal })
-}
-
-// ----- Scorecard -----
-
-export interface ReplenishScorecard {
-  window_days: number
-  suggestions_count: number
-  adopted_count: number
-  adoption_rate: number
-  stockout_misses: number
-}
-
-/** GET /api/v1/replenish/scorecard — 28-day suggestion track record. */
-export async function fetchScorecard(
-  tenantId?: string,
-  signal?: AbortSignal
-): Promise<ReplenishScorecard> {
-  return apiFetch("/replenish/scorecard", { tenantId, signal })
 }
 
 // ----- Draft-batch -----

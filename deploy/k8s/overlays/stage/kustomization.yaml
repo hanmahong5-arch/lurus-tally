@@ -13,15 +13,6 @@ patches:
     target:
       kind: ConfigMap
       name: tally-config
-  # STAGE web must sign users in against the STAGE issuer too, or the id_token's
-  # `iss` won't match the backend's ZITADEL_DOMAIN (test-auth) → backend 401.
-  - patch: |-
-      - op: replace
-        path: /data/ZITADEL_ISSUER
-        value: https://test-auth.lurus.cn
-    target:
-      kind: ConfigMap
-      name: tally-web-config
   # R6 STAGE fronts traffic with a node-level nginx (no in-cluster Traefik
   # IngressRoute), so services MUST expose stable NodePorts to match
   # /etc/nginx/sites-enabled/lurus-stage upstream (127.0.0.1:30820 / 30830).

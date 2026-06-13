@@ -16,7 +16,6 @@ import (
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // maxUploadBytes caps the multipart body to 10 MB.
@@ -107,7 +106,7 @@ func (h *Handler) ImportOrders(c *gin.Context) {
 
 	csvData, err := io.ReadAll(io.LimitReader(f, maxUploadBytes))
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
 		return
 	}
 
@@ -145,7 +144,7 @@ func (h *Handler) ListMappings(c *gin.Context) {
 	platform := c.Query("platform")
 	mappings, err := h.uc.ListMappings(c.Request.Context(), tenantID, platform)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "internal_error", "detail": err.Error()})
 		return
 	}
 

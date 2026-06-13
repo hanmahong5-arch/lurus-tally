@@ -26,16 +26,6 @@ type ReplenishRow struct {
 	UnitCost      decimal.Decimal
 }
 
-// ScorecardCounts is the past-week suggestion track record (F4): how many
-// suggestions were made, how many were adopted, and how many ignored
-// suggestions ended in a stockout. The window is 7 days — the Monday card
-// reports "last week", unlike the replenish scorecard's 28-day view.
-type ScorecardCounts struct {
-	Suggested      int
-	Adopted        int
-	MissedStockout int
-}
-
 // Summary is the computed output of WeeklySummaryUseCase.
 type Summary struct {
 	// ReplenishCount is the number of SKUs below safety line with positive velocity.
@@ -46,11 +36,6 @@ type Summary struct {
 	OversellCount int
 	// DeadStockCount is SKUs with on_hand > 0 and no movement in 90 days.
 	DeadStockCount int
-	// Suggested / Adopted / MissedStockout surface last week's suggestion
-	// track record on the Monday card (zero values when the ledger is empty).
-	Suggested      int
-	Adopted        int
-	MissedStockout int
 	GeneratedAt    time.Time
 }
 
@@ -64,10 +49,6 @@ type DigestRepo interface {
 	// CountDeadStock returns the number of products with on_hand > 0 and no
 	// stock movement in the past 90 days.
 	CountDeadStock(ctx context.Context, tenantID uuid.UUID) (int, error)
-	// SuggestionScorecard returns the 7-day suggestion track record from the
-	// replenish suggestion ledger. An empty ledger yields zero counts, not an
-	// error, so tenants without history still get a Monday card.
-	SuggestionScorecard(ctx context.Context, tenantID uuid.UUID) (ScorecardCounts, error)
 }
 
 // WeeklySummaryUseCase computes the Monday-card summary for a tenant.
@@ -82,12 +63,12 @@ func NewWeeklySummaryUseCase(repo DigestRepo) *WeeklySummaryUseCase {
 	return &WeeklySummaryUseCase{repo: repo, coverageDays: 14}
 }
 
-// Execute runs the four aggregate queries SEQUENTIALLY and assembles the summary.
+// Execute runs the three aggregate queries SEQUENTIALLY and assembles the summary.
 //
 // They must be sequential, not concurrent: when middleware.TenantDB has pinned a
-// single *sql.Conn for the request (so RLS is enforced), all four reads resolve
+// single *sql.Conn for the request (so RLS is enforced), all three reads resolve
 // to that one connection via dbscope.From — and a *sql.Conn cannot serve queries
-// concurrently (a parallel errgroup yields "driver: bad connection"). Four small
+// concurrently (a parallel errgroup yields "driver: bad connection"). Three small
 // aggregates run serially well within the request budget. Returning on the first
 // error also means no other query is left in flight (the original errgroup's F05
 // goal), so this is strictly safer.
@@ -101,10 +82,6 @@ func (uc *WeeklySummaryUseCase) Execute(ctx context.Context, tenantID uuid.UUID)
 		return Summary{}, err
 	}
 	deadStockN, err := uc.repo.CountDeadStock(ctx, tenantID)
-	if err != nil {
-		return Summary{}, err
-	}
-	scorecard, err := uc.repo.SuggestionScorecard(ctx, tenantID)
 	if err != nil {
 		return Summary{}, err
 	}
@@ -125,9 +102,6 @@ func (uc *WeeklySummaryUseCase) Execute(ctx context.Context, tenantID uuid.UUID)
 		ReplenishAmountCNY: totalAmount,
 		OversellCount:      oversellN,
 		DeadStockCount:     deadStockN,
-		Suggested:          scorecard.Suggested,
-		Adopted:            scorecard.Adopted,
-		MissedStockout:     scorecard.MissedStockout,
 		GeneratedAt:        time.Now().UTC(),
 	}, nil
 }

@@ -10,11 +10,7 @@ data:
   KOVA_URL: ""
   MEMORUS_URL: "http://memorus.lurus-system.svc:8880"
   ZITADEL_DOMAIN: "auth.lurus.cn"
-  # Tally's own Zitadel client/project id = the expected JWT `aud` claim.
-  # MUST equal secret ZITADEL_CLIENT_ID. The backend reads ZITADEL_AUDIENCE
-  # (config.go); while ZITADEL_DOMAIN is set, an empty value makes Load()
-  # fail-fast at boot. Set the real per-env value at deploy time.
-  ZITADEL_AUDIENCE: ""
+  JWT_AUDIENCE: ""
   SHUTDOWN_TIMEOUT: "5s"
   MIGRATE_ON_BOOT: "true"
   # AI assistant — routes LLM calls through lurus newapi (never upstream directly)

@@ -13,7 +13,6 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appproject "github.com/hanmahong5-arch/lurus-tally/internal/app/project"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/project"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 const dateLayout = "2006-01-02"
@@ -136,7 +135,7 @@ func (h *ProjectHandler) List(c *gin.Context) {
 
 	items, total, err := h.list.Execute(c.Request.Context(), f)
 	if err != nil {
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
@@ -227,7 +226,7 @@ func (h *ProjectHandler) GetByID(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, toDTO(p))
@@ -320,7 +319,7 @@ func (h *ProjectHandler) Delete(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.Status(http.StatusNoContent)
@@ -345,7 +344,7 @@ func (h *ProjectHandler) Restore(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
 			return
 		}
-		httperr.WriteInternal(c, err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 	c.JSON(http.StatusOK, toDTO(p))
