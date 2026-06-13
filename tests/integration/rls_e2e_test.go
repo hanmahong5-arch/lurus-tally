@@ -134,6 +134,13 @@ func doReq(t *testing.T, h http.Handler, method, path, bearer, body string) (int
 	if body != "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	// The high-risk write routes (payments / approve / quick-checkout / confirm)
+	// now require an Idempotency-Key (RequireIdempotencyKey middleware). A fresh
+	// UUID per call satisfies the guard without triggering replay dedup, so each
+	// POST still executes independently. Harmless on non-allowlisted routes.
+	if method == http.MethodPost {
+		req.Header.Set("Idempotency-Key", uuid.NewString())
+	}
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	return w.Code, w.Body.String()

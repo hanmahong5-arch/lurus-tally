@@ -114,6 +114,12 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 	if idempotencyMW != nil {
 		api.Use(idempotencyMW)
 	}
+	// Always-applied (not gated on Redis): make the Idempotency-Key header
+	// mandatory on the high-risk write routes. The opt-in Idempotency dedup
+	// above is a no-op when Redis is absent, so enforcement of the contract
+	// lives here to stay uniform regardless of cache availability. Runs after
+	// authMW, so an unauthed request still 401s before this 400.
+	api.Use(middleware.RequireIdempotencyKey())
 	{
 		// Auth + tenant profile routes (Story 2.1).
 		// Production setup: AuthMiddleware is applied at the lifecycle layer before
