@@ -101,8 +101,9 @@ func bootRLSApp(t *testing.T) (http.Handler, *sql.DB, func()) {
 }
 
 // seedPAT mints a real PAT for tenantID and inserts it via the superuser
-// connection. Returns the plaintext bearer token. scopes default to ['read'];
-// no route enforces scopes, so that is sufficient for both reads and writes.
+// connection. Returns the plaintext bearer token. PATs carry no scopes (no
+// route ever enforced them; column dropped in 000052), so a single token is
+// sufficient for both reads and writes.
 func seedPAT(t *testing.T, db *sql.DB, ctx context.Context, tenantID uuid.UUID) string {
 	t.Helper()
 	plaintext, prefix, hash, err := domainauth.GenerateToken()

@@ -50,7 +50,6 @@ type PAT struct {
 	Name       string
 	Prefix     string
 	Hash       string
-	Scopes     []string
 	CreatedAt  time.Time
 	ExpiresAt  *time.Time
 	LastUsedAt *time.Time

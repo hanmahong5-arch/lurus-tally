@@ -171,7 +171,7 @@ func TestPATHandler_Create_LimitExceeded_Returns409(t *testing.T) {
 func TestPATHandler_List_OmitsHash(t *testing.T) {
 	hash := strings.Repeat("a", 64)
 	repo := &stubRepo{listResult: []*domainauth.PAT{
-		{ID: uuid.New(), Name: "one", Prefix: "abcd1234", Hash: hash, Scopes: []string{"read"}},
+		{ID: uuid.New(), Name: "one", Prefix: "abcd1234", Hash: hash},
 	}}
 	r := newPATEngine(repo)
 

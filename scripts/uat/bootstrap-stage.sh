@@ -97,9 +97,9 @@ VALUES ('$TENANT_PRIMARY', 'UAT-PRIMARY', 1),
        ('$TENANT_SECONDARY', 'UAT-SECONDARY', 1)
 ON CONFLICT (id) DO NOTHING;
 
-INSERT INTO tally.personal_access_token (tenant_id, name, prefix, hash, scopes)
-VALUES ('$TENANT_PRIMARY', 'uat-primary', '$PREFIX_P', '$HASH_P', ARRAY['read','write']),
-       ('$TENANT_SECONDARY', 'uat-secondary', '$PREFIX_S', '$HASH_S', ARRAY['read','write'])
+INSERT INTO tally.personal_access_token (tenant_id, name, prefix, hash)
+VALUES ('$TENANT_PRIMARY', 'uat-primary', '$PREFIX_P', '$HASH_P'),
+       ('$TENANT_SECONDARY', 'uat-secondary', '$PREFIX_S', '$HASH_S')
 ON CONFLICT (prefix) DO NOTHING;
 SQL
 echo "bootstrap: tenants + PATs inserted"

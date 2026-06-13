@@ -462,23 +462,23 @@ func NewApp(cfg *config.Config) (*App, error) {
 		// PAT resolver — short-circuits before JWT path when bearer starts
 		// with tally_pat_. See domain/auth and migration 000031.
 		patRepo := repoauth.New(db)
-		patResolver := func(ctx context.Context, bearer string) (uuid.UUID, []string, error) {
+		patResolver := func(ctx context.Context, bearer string) (uuid.UUID, error) {
 			prefix, secret, ok := domainauth.ParseBearer(bearer)
 			if !ok {
-				return uuid.Nil, nil, middleware.ErrInvalidPAT
+				return uuid.Nil, middleware.ErrInvalidPAT
 			}
 			pat, err := patRepo.GetByPrefix(ctx, prefix)
 			if err != nil {
 				if errors.Is(err, appauth.ErrNotFound) {
-					return uuid.Nil, nil, middleware.ErrInvalidPAT
+					return uuid.Nil, middleware.ErrInvalidPAT
 				}
-				return uuid.Nil, nil, err
+				return uuid.Nil, err
 			}
 			if !domainauth.Verify(prefix, secret, pat.Hash) {
-				return uuid.Nil, nil, middleware.ErrInvalidPAT
+				return uuid.Nil, middleware.ErrInvalidPAT
 			}
 			if !pat.IsActive(time.Now()) {
-				return uuid.Nil, nil, middleware.ErrInvalidPAT
+				return uuid.Nil, middleware.ErrInvalidPAT
 			}
 			// Best-effort last_used_at touch — don't block the request, don't
 			// fail the auth on a transient DB hiccup. Detached context so the
@@ -490,7 +490,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 					slog.Debug("auth: touch last_used_at failed", slog.Any("error", err))
 				}
 			}(pat.ID)
-			return pat.TenantID, pat.Scopes, nil
+			return pat.TenantID, nil
 		}
 
 		authMW = middleware.NewAuthMiddleware(jwksURL, issuer, cfg.ZitadelAudience, tenantLookup, patResolver)

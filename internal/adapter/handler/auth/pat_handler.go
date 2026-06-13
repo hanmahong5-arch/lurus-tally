@@ -52,7 +52,6 @@ type createPATResponse struct {
 	// the server keeps only sha256(prefix||secret). The UI must surface a
 	// "copy and store this securely — it won't be shown again" affordance.
 	Token     string     `json:"token"`
-	Scopes    []string   `json:"scopes"`
 	CreatedAt time.Time  `json:"created_at"`
 	ExpiresAt *time.Time `json:"expires_at,omitempty"`
 }
@@ -109,7 +108,6 @@ func (h *PATHandler) Create(c *gin.Context) {
 		Name:      name,
 		Prefix:    prefix,
 		Hash:      hash,
-		Scopes:    []string{"read"},
 		CreatedAt: time.Now().UTC(),
 		ExpiresAt: req.ExpiresAt,
 	}
@@ -123,7 +121,6 @@ func (h *PATHandler) Create(c *gin.Context) {
 		Name:      pat.Name,
 		Prefix:    pat.Prefix,
 		Token:     plaintext,
-		Scopes:    pat.Scopes,
 		CreatedAt: pat.CreatedAt,
 		ExpiresAt: pat.ExpiresAt,
 	})
@@ -133,7 +130,6 @@ type patSummary struct {
 	ID         uuid.UUID  `json:"id"`
 	Name       string     `json:"name"`
 	Prefix     string     `json:"prefix"`
-	Scopes     []string   `json:"scopes"`
 	CreatedAt  time.Time  `json:"created_at"`
 	ExpiresAt  *time.Time `json:"expires_at,omitempty"`
 	LastUsedAt *time.Time `json:"last_used_at,omitempty"`
@@ -157,7 +153,7 @@ func (h *PATHandler) List(c *gin.Context) {
 	items := make([]patSummary, 0, len(pats))
 	for _, p := range pats {
 		items = append(items, patSummary{
-			ID: p.ID, Name: p.Name, Prefix: p.Prefix, Scopes: p.Scopes,
+			ID: p.ID, Name: p.Name, Prefix: p.Prefix,
 			CreatedAt: p.CreatedAt, ExpiresAt: p.ExpiresAt, LastUsedAt: p.LastUsedAt,
 		})
 	}
