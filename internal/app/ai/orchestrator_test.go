@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -240,15 +241,16 @@ func TestOrchestrator_ConfirmPlan_NotExpired_Confirms(t *testing.T) {
 
 // --- execution-path tests (PlanExecutor wired) ---
 
-// fakeExecutor records calls and can be told to fail.
+// fakeExecutor records calls and can be told to fail. calls is atomic because
+// the concurrent-retry test invokes Execute from multiple goroutines.
 type fakeExecutor struct {
-	calls  int
+	calls  atomic.Int64
 	result *appai.ExecutionResult
 	err    error
 }
 
 func (f *fakeExecutor) Execute(_ context.Context, _ uuid.UUID, plan *domainai.Plan) (*appai.ExecutionResult, error) {
-	f.calls++
+	f.calls.Add(1)
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -286,8 +288,8 @@ func TestConfirmPlan_WithExecutor_RunsAndReturnsResult(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ConfirmPlan: %v", err)
 	}
-	if ex.calls != 1 {
-		t.Errorf("executor called %d times, want 1", ex.calls)
+	if ex.calls.Load() != 1 {
+		t.Errorf("executor called %d times, want 1", ex.calls.Load())
 	}
 	if plan.Status != domainai.PlanStatusConfirmed {
 		t.Errorf("status=%s, want Confirmed", plan.Status)
@@ -337,8 +339,8 @@ func TestConfirmPlan_DoubleConfirm_SecondRejected(t *testing.T) {
 	if _, _, err := o.ConfirmPlan(context.Background(), tenantID, actorID, planID); err == nil {
 		t.Fatal("second confirm should be rejected")
 	}
-	if ex.calls != 1 {
-		t.Errorf("executor ran %d times, want 1 (no double execution)", ex.calls)
+	if ex.calls.Load() != 1 {
+		t.Errorf("executor ran %d times, want 1 (no double execution)", ex.calls.Load())
 	}
 }
 
