@@ -26,16 +26,19 @@ var billsHeader = []string{"单号", "类型", "状态", "日期", "合作方", 
 
 // BillsExportUseCase streams all bill_head rows for a tenant as CSV.
 type BillsExportUseCase struct {
-	db  *sql.DB
-	log *slog.Logger
+	db       *sql.DB
+	log      *slog.Logger
+	rowLimit int
 }
 
-// NewBillsExportUseCase creates a BillsExportUseCase.
-func NewBillsExportUseCase(db *sql.DB, log *slog.Logger) *BillsExportUseCase {
+// NewBillsExportUseCase creates a BillsExportUseCase. Pass WithRowLimit to
+// override the default cap (billsRowLimit).
+func NewBillsExportUseCase(db *sql.DB, log *slog.Logger, opts ...Option) *BillsExportUseCase {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &BillsExportUseCase{db: db, log: log}
+	o := resolve(billsRowLimit, opts)
+	return &BillsExportUseCase{db: db, log: log, rowLimit: o.rowLimit}
 }
 
 // Execute fetches bill rows for tenantID and writes CSV to w.
@@ -57,7 +60,7 @@ func (uc *BillsExportUseCase) Execute(ctx context.Context, tenantID uuid.UUID, w
 		ORDER BY bill_date DESC
 		LIMIT $2`
 
-	rows, err := dbscope.From(ctx, uc.db).QueryContext(ctx, q, tenantID, billsRowLimit+1)
+	rows, err := dbscope.From(ctx, uc.db).QueryContext(ctx, q, tenantID, uc.rowLimit+1)
 	if err != nil {
 		return 0, fmt.Errorf("export bills: query: %w", err)
 	}
@@ -78,26 +81,22 @@ func (uc *BillsExportUseCase) Execute(ctx context.Context, tenantID uuid.UUID, w
 		if err := rows.Scan(&billNo, &billType, &status, &billDate, &partnerID, &warehouseID, &totalAmount, &paidAmount, &remark); err != nil {
 			return count, fmt.Errorf("export bills: scan row: %w", err)
 		}
-		if count == billsRowLimit {
+		if count == uc.rowLimit {
 			// Extra row fetched confirms truncation — emit trailer and stop.
 			uc.log.Warn("export bills: result truncated at row limit",
 				slog.String("tenant_id", tenantID.String()),
-				slog.Int("limit", billsRowLimit))
-			if err := cw.Write([]string{"[截断]", fmt.Sprintf("数据超过 %d 行限制，请联系管理员导出完整数据", billsRowLimit), "", "", "", "", "", "", ""}); err != nil {
+				slog.Int("limit", uc.rowLimit))
+			if err := cw.Write([]string{"[截断]", fmt.Sprintf("数据超过 %d 行限制，请联系管理员导出完整数据", uc.rowLimit), "", "", "", "", "", "", ""}); err != nil {
 				return count, fmt.Errorf("export bills: write truncation note: %w", err)
 			}
 			break
 		}
 
-		dateStr := ""
-		if billDate.Valid {
-			dateStr = billDate.Time.Format("2006-01-02")
-		}
 		if err := cw.Write([]string{
 			billNo,
 			billType,
 			statusLabel(status),
-			dateStr,
+			formatNullDate(billDate, dateLayout),
 			partnerID,
 			warehouseID,
 			totalAmount,
