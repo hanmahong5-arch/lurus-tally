@@ -35,6 +35,8 @@ func setEnv(t *testing.T, vars map[string]string) {
 // fullEnv returns a map with all required env vars set to placeholder values.
 // ZITADEL_* are explicitly cleared so auth stays disabled (dev default) unless
 // a test opts in — this keeps the suite independent of a polluted local env.
+// TALLY_DEV_MODE=true is set because running with auth disabled (empty
+// ZITADEL_DOMAIN) now requires an explicit dev-mode opt-in.
 func fullEnv() map[string]string {
 	return map[string]string{
 		"DATABASE_DSN":     "postgres://placeholder:placeholder@localhost/placeholder?sslmode=disable",
@@ -42,6 +44,7 @@ func fullEnv() map[string]string {
 		"NATS_URL":         "nats://localhost:4222",
 		"ZITADEL_DOMAIN":   "",
 		"ZITADEL_AUDIENCE": "",
+		"TALLY_DEV_MODE":   "true",
 	}
 }
 
@@ -150,6 +153,35 @@ func TestConfig_ZitadelDomainEmpty_AudienceOptional(t *testing.T) {
 	}
 	if cfg.ZitadelAudience != "" {
 		t.Errorf("ZitadelAudience: want empty when auth disabled, got %q", cfg.ZitadelAudience)
+	}
+}
+
+func TestConfig_AuthDisabledWithoutDevMode_ReturnsError(t *testing.T) {
+	env := fullEnv()
+	// Auth disabled (no ZITADEL_DOMAIN) AND no explicit dev-mode opt-in: this is
+	// the misconfiguration the gate must catch before it reaches stage/prod.
+	env["ZITADEL_DOMAIN"] = ""
+	env["TALLY_DEV_MODE"] = ""
+	setEnv(t, env)
+
+	_, err := config.Load()
+	if err == nil {
+		t.Fatal("expected error when auth is disabled without TALLY_DEV_MODE=true, got nil")
+	}
+}
+
+func TestConfig_AuthDisabledWithDevMode_ReturnsConfig(t *testing.T) {
+	env := fullEnv()
+	env["ZITADEL_DOMAIN"] = ""
+	env["TALLY_DEV_MODE"] = "true"
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("expected no error when TALLY_DEV_MODE=true permits auth-disabled boot, got: %v", err)
+	}
+	if cfg.ZitadelDomain != "" {
+		t.Errorf("ZitadelDomain: want empty in dev mode, got %q", cfg.ZitadelDomain)
 	}
 }
 

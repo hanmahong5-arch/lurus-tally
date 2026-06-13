@@ -72,3 +72,18 @@ func TestParseOffsetQuery_RejectsNegative(t *testing.T) {
 		t.Errorf("negative offset → %d, want 0", got)
 	}
 }
+
+func TestParseOffsetQuery_ClampsAboveMax(t *testing.T) {
+	c := ginCtx("offset=2147483647")
+	got := middleware.ParseOffsetQuery(c, "offset")
+	if got != middleware.DefaultMaxPageOffset {
+		t.Errorf("offset=2147483647 → %d, want %d (clamped)", got, middleware.DefaultMaxPageOffset)
+	}
+}
+
+func TestParseOffsetQuery_AcceptsValidWithinMax(t *testing.T) {
+	c := ginCtx("offset=1000")
+	if got := middleware.ParseOffsetQuery(c, "offset"); got != 1000 {
+		t.Errorf("offset=1000 → %d, want 1000", got)
+	}
+}
