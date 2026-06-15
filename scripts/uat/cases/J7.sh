@@ -30,7 +30,8 @@ CASE_ID="J7"
 # shellcheck disable=SC1091
 source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
-PFX="UAT-${RUN_ID}-J7"
+TS="$(date +%s)"                 # uniqueness inside one RUN_ID re-execution
+PFX="UAT-${RUN_ID}-J7-${TS}"
 WIDGET="${PFX}-WIDGET"
 BOGUS_UUID="00000000-0000-0000-0000-00000000dead"
 JSON=(-H 'Content-Type: application/json')
@@ -131,7 +132,8 @@ fi
 # The 30s undo window runs from plan CreatedAt, so no sleeps in this block.
 ###############################################################################
 if [ "$_BLOCKED" = "0" ] && [ -n "$PLAN_ID" ]; then
-  http plan-confirm POST "/api/v1/ai/plans/$PLAN_ID/confirm"
+  http plan-confirm POST "/api/v1/ai/plans/$PLAN_ID/confirm" \
+    -H "Idempotency-Key: ${PFX}-confirm-${PLAN_ID}"
   expect_status 200
   check "confirm reports status confirmed, affected_count 1" \
     bash -c "jq -e '(.status == \"confirmed\") and (.affected_count == 1)' '$HTTP_BODY_FILE' >/dev/null"
@@ -166,7 +168,8 @@ fi
 ###############################################################################
 # Step 5 — parameter error paths (no LLM spend).
 ###############################################################################
-http confirm-bogus POST "/api/v1/ai/plans/$BOGUS_UUID/confirm"
+http confirm-bogus POST "/api/v1/ai/plans/$BOGUS_UUID/confirm" \
+  -H "Idempotency-Key: ${PFX}-confirm-bogus"
 expect_status 404
 
 http confirm-badid POST /api/v1/ai/plans/not-a-uuid/confirm

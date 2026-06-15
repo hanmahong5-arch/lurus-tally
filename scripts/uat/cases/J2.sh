@@ -137,7 +137,9 @@ read_on_hand; BEFORE2=$ON_HAND
 check "p2 baseline snapshot readable (got $BEFORE2)" [ "$BEFORE2" != "ERR" ]
 
 http approve-purchase POST "/api/v1/purchase-bills/$BILL_ID/approve" \
-  -H 'Content-Type: application/json' -d '{}'
+  -H 'Content-Type: application/json' \
+  -H "Idempotency-Key: UAT-${RUN_ID}-${TS}-J2-apprv" \
+  -d '{}'
 expect_status 200
 check "approve response status==approved" jq -e '.status=="approved"' "$HTTP_BODY_FILE"
 

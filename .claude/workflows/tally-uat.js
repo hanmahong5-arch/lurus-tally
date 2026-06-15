@@ -21,6 +21,9 @@ const ONLY = typeof args.only === 'string' && args.only
   ? args.only.split(',').map(s => s.trim()).filter(Boolean)
   : null
 const SKIP_FE = args.skipFrontend === true
+// Optional per-run model override for ALL sub-agents (caller-supplied, e.g. "sonnet").
+// null => each agent keeps its built-in default (testers sonnet; audit/report inherit main loop).
+const MODEL = typeof args.model === 'string' && args.model ? args.model : null
 
 // Backend shards: cases inside a shard run sequentially (shared fixtures),
 // shards run concurrently. J7 is isolated (LLM budget), B1 is the long tail.
@@ -109,7 +112,7 @@ const prep = await agent(
 3. Report the route count from routes-deployed.txt.
 ${SAFETY}
 Return JSON-ish plain text: bootstrap result, extractor result, route count.`,
-  { label: 'prepare', phase: 'Prepare' },
+  { label: 'prepare', phase: 'Prepare', model: MODEL || undefined },
 )
 if (prep === null || /FATAL|ERROR/.test(String(prep)) && !/no-op|verified/.test(String(prep))) {
   throw new Error('Prepare phase failed: ' + String(prep).slice(0, 500))
@@ -150,7 +153,7 @@ const backendResults = await pipeline(
   shard => agent(testerPrompt(shard), {
     label: `test:${shard.key}`,
     phase: 'Execute',
-    model: 'sonnet',
+    model: MODEL || 'sonnet',
     schema: SCHEMA_EXEC,
   }),
   (execResult, shard) => execResult === null
@@ -158,6 +161,7 @@ const backendResults = await pipeline(
     : agent(auditorPrompt(shard, execResult), {
         label: `audit:${shard.key}`,
         phase: 'Supervise',
+        model: MODEL || undefined,
         schema: SCHEMA_AUDIT,
       }).then(audit => ({ shard: shard.key, exec: execResult, audit })),
 )
@@ -167,12 +171,14 @@ const backendResults = await pipeline(
 let feResult = null
 if (!SKIP_FE && (!ONLY || ONLY.includes('FE'))) {
   const feExec = await agent(
-    `You are a UAT tester. Repo C:\\Users\\Anita\\Desktop\\lurus\\2b-svc-psi. Run the frontend STAGE E2E suite:
+    `You are a UAT tester. Repo C:\\Users\\Anita\\Desktop\\lurus\\2b-svc-psi. Run the frontend STAGE E2E suite.
+FIRST free port 3030 so Playwright boots a FRESH next dev — a reused half-dead dev server crashed the prior run mid-suite. On this Git Bash / Windows host, find the PID listening on :3030 (e.g. \`netstat -ano | findstr :3030\`) and \`taskkill //PID <pid> //F\` it; ignore "not found".
+THEN run:
 cd web && UAT_REAL=1 bunx playwright test --config tests/e2e/uat-stage.config.ts
-(The config boots next dev on :3030 with AUTH_DEV_PROVIDER=true and proxies to STAGE; setup project logs in with the UAT PAT.)
-If it fails on environment (browser missing → bunx playwright install chromium; port busy → kill stale next dev), fix env and retry once. Test failures are NOT to be fixed by editing specs unless the spec itself is buggy — same iron rule: report, don't fudge. Report per-spec pass/fail and the trace/report paths (playwright-report-uat-stage).
+(The config boots next dev on :3030 with AUTH_DEV_PROVIDER=true and proxies to STAGE; setup project logs in with the UAT PAT. A per-test health gate now SKIPS any test when :3030 is unreachable — those skips are env-blocked, NOT failures and NOT product bugs; count and report them separately as env.)
+If it fails on environment (browser missing → bunx playwright install chromium), fix env and retry once. Test failures are NOT to be fixed by editing specs unless the spec itself is buggy — same iron rule: report, don't fudge; NEVER assert a PASS for a skipped or crashed test. Report per-spec pass / fail / skip(env) counts and the trace/report paths (playwright-report-uat-stage).
 ${SAFETY}`,
-    { label: 'test:frontend', phase: 'Execute', model: 'sonnet' },
+    { label: 'test:frontend', phase: 'Execute', model: MODEL || 'sonnet' },
   )
   feResult = feExec === null ? null : {
     shard: 'frontend',
@@ -180,7 +186,7 @@ ${SAFETY}`,
     audit: await agent(
       `Adversarial audit of a Playwright STAGE run. Repo C:\\Users\\Anita\\Desktop\\lurus\\2b-svc-psi. Tester claims (UNTRUSTED): ${String(feExec).slice(0, 3000)}
 Verify: web/playwright-report-uat-stage and web/test-results-uat exist with artifacts consistent with the claims (trace zips, results). Open the HTML report's JSON or list result dirs. Classify failures (product-bug|env|test-bug|pre-existing). Verdict per spec file. Write your verdict verbatim to _uat-reports/evidence/${RUN_ID}/.audit/frontend.json (the only write allowed); otherwise READ-ONLY.`,
-      { label: 'audit:frontend', phase: 'Supervise' },
+      { label: 'audit:frontend', phase: 'Supervise', model: MODEL || undefined },
     ),
   }
 }
@@ -214,10 +220,10 @@ ${JSON.stringify({ backend: audited, frontend: feResult ? { exec: String(feResul
 DO, in order:
 1. Update scripts/uat/registry.yaml: for each case set last_result to the AUDITED verdict, last_run: "${RUN_ID}", and ai_calls for J7 from _uat-reports/evidence/${RUN_ID}/.ai_calls (0 if absent). Verdict mapping: all checks green => pass; ran to completion but kept deliberate RED checks on real product bugs => partial AND list the affected endpoint lines under that case's failed_endpoints; execution/evidence unsound or fabricated-unproven => fail; could not run => blocked. Keep the file's field order (id,title,script,last_result,last_run,ai_calls,failed_endpoints,endpoints) — coverage.sh parses it positionally. Do not invent endpoints entries.
 2. Run: bash scripts/uat/coverage.sh — its printed percentage is the ONLY coverage number; never hand-compute. Note exit code (1 = below 90% gate).
-3. Append ONE new section to _uat-reports/uat-ledger.md (create with a title header if missing; NEVER edit earlier sections): "## Run ${RUN_ID}" containing: STAGE image tag main-da39944 (commit da399443); per-case audited verdict table (case | verdict | pass/fail counts | evidence dir); claimed-vs-audited discrepancies; bug list with classification + curl repro; ai_calls used; coverage % + gate exit code; frontend spec results + report path; gaps (uncovered endpoints from _uat-reports/coverage-matrix.md) with one-line reasons; any fabrication flags.
+3. Append ONE new section to _uat-reports/uat-ledger.md (create with a title header if missing; NEVER edit earlier sections): "## Run ${RUN_ID}" containing: STAGE image tag main-46b0a4d (commit 46b0a4d3); per-case audited verdict table (case | verdict | pass/fail counts | evidence dir); claimed-vs-audited discrepancies; bug list with classification + curl repro; ai_calls used; coverage % + gate exit code; frontend spec results + report path; gaps (uncovered endpoints from _uat-reports/coverage-matrix.md) with one-line reasons; any fabrication flags.
 4. Return as your final text: coverage %, gate pass/fail, per-case verdicts, bug count by classification, and workflow_changes: a list of concrete improvement proposals for .claude/workflows/tally-uat.js / scripts (DO NOT edit the workflow file yourself — proposals only, the main session reviews them).
 ${SAFETY}`,
-  { label: 'report', phase: 'Report' },
+  { label: 'report', phase: 'Report', model: MODEL || undefined },
 )
 
 return {

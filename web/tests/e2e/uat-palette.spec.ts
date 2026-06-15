@@ -19,6 +19,7 @@
 
 import * as nodePath from "node:path"
 import { test, expect, type Page, type APIRequestContext } from "@playwright/test"
+import { gateOnDevServer } from "./_server-health"
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -125,6 +126,9 @@ const paletteTest = test.extend<{ backendApi: APIRequestContext }>({
 })
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
+
+// Skip (not fail) when the dev server has crashed/restarted — env, not product.
+gateOnDevServer(paletteTest)
 
 paletteTest.describe("Command Palette UAT", () => {
 
