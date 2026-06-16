@@ -47,12 +47,13 @@ patches:
       kind: Service
       name: tally-web
 images:
-  # Backend bumped to main-46b0a4d (Hardening Wave 2, PRs #10+#11): require
-  # Idempotency-Key on the 5 high-risk write routes + drop vestigial PAT scopes
-  # (migration 000052 runs on boot → head 52). PR #12 (test backfill) carries no
-  # runtime change. Prior: main-5f127f5 (#9 startup bounds), main-da76ee4 (#8
-  # request-timeout). Web stays on da39944 — no web change in this wave.
+  # Backend bumped to main-5007577 (PR #13): fix P0 — onboarding seed-demo 500.
+  # RefInit stock movements now self-reference reference_id so the migration-034
+  # NOT NULL constraint holds (was SQLSTATE 23502 → 500 for every new tenant).
+  # No migration. Prior: main-46b0a4d (#10+#11 idempotency + PAT-scope drop,
+  # migration 052), main-5f127f5 (#9 startup bounds). Web stays on da39944 — this
+  # PR's only web change was an e2e test selector (not shipped in the web image).
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-46b0a4d
+    newTag: main-5007577
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
     newTag: main-da39944

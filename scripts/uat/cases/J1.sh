@@ -24,6 +24,9 @@ source "$(dirname "${BASH_SOURCE[0]}")/../lib.sh"
 
 use_primary
 P="UAT-${RUN_ID}" # mandatory prefix for every entity we name
+# unit_def.code is VARCHAR(20); full P is too long. Derive a ≤20-char unit code:
+# "UAT-" (4) + 12 chars of RUN_ID + "-U" (2) = 18 chars total for the final code.
+UC="UAT-${RUN_ID:0:12}"
 
 # --- Step 1: GET /me must 401 under PAT (no sub injected on PAT path) -------
 http me-401 GET /api/v1/me
@@ -68,9 +71,10 @@ if [ "$HTTP_STATUS" = "200" ]; then
 fi
 
 # --- Step 4: unit create + read back (list — no GET /units/:id route) --------
+# unit_def.code is VARCHAR(20); use UC (≤20 chars) instead of the full P prefix.
 http unit-create POST /api/v1/units \
   -H 'Content-Type: application/json' \
-  -d "{\"code\":\"${P}-U\",\"name\":\"${P}-box\",\"unit_type\":\"count\"}"
+  -d "{\"code\":\"${UC}-U\",\"name\":\"${P}-box\",\"unit_type\":\"count\"}"
 expect_status 201
 UNIT_ID=$(body_json -r '.id')
 check "unit create returned uuid id" \
@@ -79,7 +83,7 @@ check "unit create returned uuid id" \
 http unit-list GET /api/v1/units
 expect_status 200
 check "unit round-trip via list: code+name" \
-  jq -e --arg id "$UNIT_ID" --arg c "${P}-U" --arg n "${P}-box" \
+  jq -e --arg id "$UNIT_ID" --arg c "${UC}-U" --arg n "${P}-box" \
     '.items | map(select(.id == $id)) | length == 1 and .[0].code == $c and .[0].name == $n' \
     "$HTTP_BODY_FILE"
 

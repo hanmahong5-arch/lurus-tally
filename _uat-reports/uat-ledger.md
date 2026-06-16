@@ -546,3 +546,74 @@ Report dir: `web/playwright-report-uat-stage/`; artifacts: `web/test-results-uat
 ### Fabrication flags
 
 None. Backend (J7): all evidence genuine, re-probes corroborate. Frontend: 5 failure dirs with `trace.zip + video.webm` on disk; error messages in `error-context.md` consistent with test source; state file has valid JWT. LOW fabrication risk overall.
+
+## Run 20260616-seeddemo-verify
+
+- **Target**: `tally-stage.lurus.cn`, image tag `main-5007577` (commit `5007577`) — see maintainer correction below
+- **Date**: 2026-06-16
+- **Scope**: onboarding-replenish-billing shard only (J1 re-run). All other cases were NOT re-run; their registry verdicts and `last_run` are unchanged from `20260615-wave2-rerun`.
+
+### Per-case audited verdicts
+
+| Case | Audited verdict | Pass/Fail | Evidence dir |
+|------|-----------------|-----------|--------------|
+| J1 | partial (33/3; script_modified legitimate; 3 failing checks = 3 genuine product bugs on `POST /api/v1/onboarding/clear-demo`; evidence corroborated by 4 independent re-probes) | 33/3 | `_uat-reports/evidence/20260616-seeddemo-verify/J1` |
+
+Audit source of truth: `_uat-reports/evidence/20260616-seeddemo-verify/.audit/onboarding-replenish-billing.json`
+(auditor `adversarial-supervisor`, audited 2026-06-15T00:00:00Z).
+
+### Claimed vs audited discrepancies
+
+None. Tester claimed 33 pass / 3 fail / exit_code 1. Audit corroborates 33/3. All 19 evidence JSON files present with consistent timestamps (02:56:46–02:56:52 UTC 2026-06-16). PAT prefix matches `.uat.env UAT_PAT_PRIMARY`. `result.json` counts match exactly.
+
+`script_modified=true` is legitimate: `unit_def.code` is VARCHAR(20) per migration 000014; full `${RUN_ID}-U` = 30 chars exceeds the column; fix uses `${RUN_ID:0:12}-U` = 18 chars. Created unit `UAT-20260616-see-U` (id `48191403-531a-4c9c-afc9-e24a14945ad9`) confirmed in unit-list evidence body.
+
+**Seed-demo disambiguation**: `POST /api/v1/onboarding/seed-demo` returned 200 `{products_created:0}` this run because DEMO-RT products already existed (created_at 02:55:40, before run start 02:56:46) from an earlier tenant seed; the usecase silently skips duplicates, so no `stock_movement` INSERT was attempted and the `RefInit` NOT NULL constraint was not triggered. The 200 return is idempotency behaviour, not evidence from THIS run. **Maintainer correction (post-run)**: the deployed image during this run was in fact `main-5007577` (PR #13, merge `50075771`) — the `main-46b0a4d` the report printed is a stale hardcode in the workflow report prompt (since corrected). The RefInit fix (commit `02bc8740`) IS live and was verified directly out-of-band: a clean-tenant probe (UAT **secondary**) `POST /api/v1/onboarding/seed-demo` returned 200 `products_created:3` with 3 stock snapshots (on_hand 5/45/60) — the init `stock_movement` INSERTs that 23502'd pre-fix now succeed. J1 here merely no-op'd on the primary tenant's pre-existing demo rows, so this run does not exercise the fix.
+
+### Bug list (classification + curl repro)
+
+All three failing checks are distinct expressions of a single root cause: `stock_movement.product_id` is defined `ON DELETE RESTRICT` (not CASCADE) in migration `000022_stock_upgrade.up.sql`; the `repo.go` comment claiming CASCADE is incorrect.
+
+1. **product-bug — `POST /api/v1/onboarding/clear-demo` → 500 (J1 check 12).**
+   DELETE FROM `tally.product WHERE remark='DEMO'` is blocked by FK violation (SQLSTATE 23503) because DEMO products have `stock_movement` rows from the earlier successful seed run. The deployed image makes no attempt to delete child rows first.
+   Repro: `curl -sS -X POST -H "Authorization: Bearer $UAT_PAT_PRIMARY" https://tally-stage.lurus.cn/api/v1/onboarding/clear-demo`
+   → HTTP 500 `{"error":"internal_error","message":"an internal error occurred","action":"retry shortly; contact support if it keeps happening"}`.
+
+2. **product-bug — clear-demo body is non-empty (J1 check 12b).**
+   Response body is a 129-byte JSON error object, not empty. Cascades from the same ON DELETE RESTRICT defect.
+   Repro: same curl as above.
+
+3. **product-bug — DEMO-RT products not deleted after clear-demo (J1 check 13).**
+   `curl -s -H "Authorization: Bearer $UAT_PAT_PRIMARY" "https://tally-stage.lurus.cn/api/v1/products?q=DEMO-RT-"` → `{"total":3,"items":[DEMO-RT-001,DEMO-RT-002,DEMO-RT-003]}`. Re-probed independently by auditor at audit time and confirmed.
+
+All three checks map to a single fix: either delete `stock_movement` child rows before deleting DEMO products in `clear-demo`, or change the FK to `ON DELETE CASCADE`.
+
+### AI calls used
+
+0 / 3 (run-wide LLM budget). No `.ai_calls` counter file exists under `_uat-reports/evidence/20260616-seeddemo-verify/` — this run executed only J1 which makes no LLM calls. J7 `ai_calls` updated to 0 per reporter contract (absent `.ai_calls` → 0 for the case the run touched; J7 was not executed this run — see workflow change proposal #1 below).
+
+### Coverage + gate
+
+- **Coverage: 94 / 101 = 93%** (per `bash scripts/uat/coverage.sh`; sole sanctioned number — not hand-derived).
+- **Gate: PASS** (exit code 0; above the 90% threshold).
+- Delta from prior run (`20260615-wave2-rerun`, also 94/101): J1's `failed_endpoints` changed from `POST /api/v1/onboarding/seed-demo` (now covered, not in failed_endpoints) to `POST /api/v1/onboarding/clear-demo` (newly uncovered). Net endpoint coverage is unchanged.
+
+### Frontend spec results
+
+Skipped (`frontend: skipped` in the audited payload). No browser-spec run this canary; no frontend report artifact produced. Prior frontend results stand under `20260615-wave2-rerun`.
+
+### Gaps (uncovered endpoints, one-line reasons)
+
+7 uncovered routes (from regenerated `_uat-reports/coverage-matrix.md`):
+
+- `POST /api/v1/onboarding/clear-demo` — J1 `failed_endpoints` (clear-demo ON DELETE RESTRICT bug; all 3 failing checks root here).
+- `POST /api/v1/ai/plans/:plan_id/confirm` — J7 `failed_endpoints` (idempotency gate fires before UUID validation; inconsistent with `/cancel` and `/revert`; unchanged from prior run).
+- `GET /api/v1/stock/alerts/low-stock` — J2 `failed_endpoints` (no REST endpoint writes `stock_initial.low_safe_qty`; unchanged).
+- `POST /api/v1/payments` — J2 `failed_endpoints` (`FOR UPDATE` + `SUM` aggregate 0A000; unchanged).
+- `POST /api/v1/purchase-bills` — J2 `failed_endpoints` (partner_id FK to `tally.partner` unsatisfiable; unchanged).
+- `POST /api/v1/replenish/draft-batch` — J3 `failed_endpoints` (PAT path → `uuid.Nil` → 500 instead of 4xx; unchanged).
+- `POST /webhooks/shopify/orders` + `POST /webhooks/shopify/refunds` — J6 `failed_endpoints` (FE edge auth middleware shadows `/webhooks/*`; same routing defect; unchanged).
+
+### Fabrication flags
+
+None. All J1 claims corroborated by independent read-only re-probes (4 GET re-probes by auditor). Evidence genuine; timestamps coherent; counts match. `script_modified=true` verified as legitimate. No fabrication flags.
