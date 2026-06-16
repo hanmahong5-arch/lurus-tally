@@ -7,7 +7,11 @@ spec:
   entryPoints:
     - websecure
   routes:
-    - match: Host(`tally-stage.lurus.cn`) && (PathPrefix(`/api`) || PathPrefix(`/internal`))
+    # /webhooks is served unauthenticated by the Go backend (Shopify HMAC-verified).
+    # Without it the path falls through to the tally-web catch-all below and the
+    # Next.js auth middleware 307-redirects the webhook to /login, so Shopify never
+    # reaches the HMAC check.
+    - match: Host(`tally-stage.lurus.cn`) && (PathPrefix(`/api`) || PathPrefix(`/internal`) || PathPrefix(`/webhooks`))
       kind: Rule
       priority: 10
       services:
