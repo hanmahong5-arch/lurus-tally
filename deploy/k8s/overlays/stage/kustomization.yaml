@@ -47,13 +47,12 @@ patches:
       kind: Service
       name: tally-web
 images:
-  # Backend bumped to main-5007577 (PR #13): fix P0 — onboarding seed-demo 500.
-  # RefInit stock movements now self-reference reference_id so the migration-034
-  # NOT NULL constraint holds (was SQLSTATE 23502 → 500 for every new tenant).
-  # No migration. Prior: main-46b0a4d (#10+#11 idempotency + PAT-scope drop,
-  # migration 052), main-5f127f5 (#9 startup bounds). Web stays on da39944 — this
-  # PR's only web change was an e2e test selector (not shipped in the web image).
+  # Backend bumped to main-09c3a0c (PR #14): fix clear-demo 500 — delete demo
+  # products' stock_movement/lot/snapshot before the product (FK ON DELETE
+  # RESTRICT was raising 23503). No migration. Prior: main-5007577 (#13 seed-demo
+  # RefInit P0), main-46b0a4d (#10+#11 idempotency + PAT-scope drop, migration
+  # 052). Web stays on da39944 — no web runtime change in these PRs.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-5007577
+    newTag: main-09c3a0c
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
     newTag: main-da39944
