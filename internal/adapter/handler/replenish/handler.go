@@ -234,8 +234,15 @@ func (h *Handler) PostDraftBatch(c *gin.Context) {
 		})
 	}
 
-	// Creator ID from JWT sub (middleware-injected).
+	// Creator ID from JWT sub (middleware-injected). PAT auth carries no user
+	// sub, so fall back to the tenant id as the integration actor — matching the
+	// payment handler. Passing uuid.Nil here made the use case reject the request
+	// as "creator_id is required", surfacing a confusing 500. creator_id has no FK,
+	// so the tenant id is a safe sentinel for machine-driven writes.
 	creatorID := resolveCreatorID(c)
+	if creatorID == uuid.Nil {
+		creatorID = tenantID
+	}
 
 	out, err := h.batch.Execute(c.Request.Context(), appreplenish.DraftBatchRequest{
 		TenantID:  tenantID,

@@ -3,12 +3,14 @@ package httperr_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
@@ -102,6 +104,59 @@ func TestWrite_4xx_EchoesValidationDetail(t *testing.T) {
 	}
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("status: got %d, want 400", w.Code)
+	}
+}
+
+// TestWriteInternal_ClassifiesConstraintViolations proves a PG constraint
+// violation passed to WriteInternal is mapped to a 4xx (not a bare 500), while
+// the driver's table/column/constraint detail is NEVER echoed to the client.
+func TestWriteInternal_ClassifiesConstraintViolations(t *testing.T) {
+	leak := []string{"bill_head_partner_id_fkey", "tally.partner", "Key (partner_id)", "SQLSTATE"}
+
+	cases := []struct {
+		name       string
+		pgCode     string
+		wantStatus int
+		wantCode   string
+	}{
+		{"foreign_key→409", "23503", http.StatusConflict, "invalid_reference"},
+		{"unique→409", "23505", http.StatusConflict, "duplicate"},
+		{"not_null→500", "23502", http.StatusInternalServerError, "internal_error"},
+		{"check→500", "23514", http.StatusInternalServerError, "internal_error"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			// Wrap a realistic PgError the way a repo would (fmt.Errorf %w).
+			pgErr := &pgconn.PgError{
+				Code:           tc.pgCode,
+				Message:        `insert or update on table "bill_head" violates foreign key constraint "bill_head_partner_id_fkey"`,
+				Detail:         `Key (partner_id)=(00000000-0000-0000-0000-000000000000) is not present in table "tally.partner".`,
+				ConstraintName: "bill_head_partner_id_fkey",
+			}
+			wrapped := fmt.Errorf("bill repo: create bill: %w", pgErr)
+
+			w := httptest.NewRecorder()
+			c, _ := gin.CreateTestContext(w)
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/v1/purchase-bills", nil)
+			httperr.WriteInternal(c, wrapped)
+
+			if w.Code != tc.wantStatus {
+				t.Fatalf("status: got %d, want %d (body=%s)", w.Code, tc.wantStatus, w.Body.String())
+			}
+			var body map[string]any
+			if err := json.Unmarshal(w.Body.Bytes(), &body); err != nil {
+				t.Fatalf("body not JSON: %v", err)
+			}
+			if body["error"] != tc.wantCode {
+				t.Errorf("code: got %v, want %q", body["error"], tc.wantCode)
+			}
+			// Security: never leak driver internals regardless of status.
+			for _, m := range leak {
+				if strings.Contains(w.Body.String(), m) {
+					t.Errorf("body leaked driver detail %q: %s", m, w.Body.String())
+				}
+			}
+		})
 	}
 }
 

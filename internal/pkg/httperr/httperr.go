@@ -22,6 +22,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // ctxKeyRequestID mirrors middleware.CtxKeyRequestID. Duplicated as a literal so
@@ -158,19 +159,57 @@ func Write(c *gin.Context, err error) {
 	c.JSON(he.Status, body)
 }
 
-// WriteInternal classifies cause as a 500 and writes it. Shorthand for the
-// common "c.JSON(500, …err.Error()…)" sites.
-func WriteInternal(c *gin.Context, cause error) { Write(c, Internal(cause)) }
+// WriteInternal renders cause, mapping a recognised client-side database
+// constraint violation (e.g. a bad foreign key) to a 4xx and everything else to
+// a generic 500. Shorthand for the common "c.JSON(500, …err.Error()…)" sites;
+// the constraint mapping means a write referencing a non-existent record no
+// longer surfaces as an opaque internal_error.
+func WriteInternal(c *gin.Context, cause error) {
+	if db := classifyDBError(cause); db != nil {
+		Write(c, db)
+		return
+	}
+	Write(c, Internal(cause))
+}
+
+// classifyDBError inspects err's chain for a PostgreSQL constraint violation that
+// is unambiguously the caller's fault and maps it to a 4xx carrying a SAFE,
+// STATIC message — the driver's text (table/column/constraint names, key values)
+// is never echoed. Returns nil when err is not such a violation, so callers fall
+// back to a generic 500.
+//
+// Only foreign-key (23503) and unique (23505) violations are mapped. NOT NULL
+// (23502) and CHECK (23514) usually mean the server failed to populate a field
+// it owns — a server bug — so those stay 500 and remain visible rather than being
+// disguised as a client error.
+func classifyDBError(err error) *Error {
+	var pg *pgconn.PgError
+	if !errors.As(err, &pg) {
+		return nil
+	}
+	switch pg.Code {
+	case "23503": // foreign_key_violation
+		return Conflict("invalid_reference", "the request references a record that does not exist or is still in use")
+	case "23505": // unique_violation
+		return Conflict("duplicate", "a record with these values already exists")
+	default:
+		return nil
+	}
+}
 
 // WriteUnavailable classifies cause as a 503 and writes it.
 func WriteUnavailable(c *gin.Context, cause error) { Write(c, Unavailable(cause)) }
 
 // AsError coerces err into a *Error: returns it unchanged if it already is (or
-// wraps) one, otherwise classifies it as a generic 500.
+// wraps) one; otherwise maps a recognised DB constraint violation to a 4xx, and
+// failing that classifies it as a generic 500.
 func AsError(err error) *Error {
 	var he *Error
 	if errors.As(err, &he) {
 		return he
+	}
+	if db := classifyDBError(err); db != nil {
+		return db
 	}
 	return Internal(err)
 }
