@@ -617,3 +617,22 @@ Skipped (`frontend: skipped` in the audited payload). No browser-spec run this c
 ### Fabrication flags
 
 None. All J1 claims corroborated by independent read-only re-probes (4 GET re-probes by auditor). Evidence genuine; timestamps coherent; counts match. `script_modified=true` verified as legitimate. No fabrication flags.
+
+---
+
+## Fix log 20260616 (post-UAT remediation, image `main-ba458ba`)
+
+Closing the product bugs the runs above surfaced. Each fixed with TDD (RED→GREEN
+unit/integration) and verified LIVE on STAGE with the UAT-primary PAT. Source of
+truth for the running fixes is `deploy/STAGE_RUNBOOK.md`; cross-session tracker is
+the `tally-stage-uat-findings` memory.
+
+| Finding | Status | Fix | LIVE proof (STAGE) |
+|---------|--------|-----|--------------------|
+| `POST /payments` 422 (SumByBill FOR UPDATE+SUM 0A000) | **FIXED** main-ba458ba PR#15 | drop FOR UPDATE; serialisation already via `GetBillForUpdate` bill-row lock | create→approve→pay 30 **201**→pay 20 **201**→list 2 rows |
+| FK 23503 → bare 500 | **FIXED** main-ba458ba PR#15 | `httperr` classifies 23503→409 `invalid_reference`, 23505→409 `duplicate` (safe static msg); 23502/23514 stay 500 | `POST /purchase-bills` bad partner_id → **409 invalid_reference** |
+| PAT replenish draft-batch 500 / imports 422 (`creator_id is required`) | **FIXED** main-ba458ba PR#15 | handlers fall back `creator_id`→tenant id (no FK; matches payment handler) | PAT `POST /replenish/draft-batch` → **200**, draft `creator_id`=tenant |
+| `/webhooks/shopify/*` shadowed by FE auth (307) | **FIXED** main-ba458ba PR#16 + R6 nginx | IngressRoute `PathPrefix(/webhooks)`→backend (PROD); R6 nginx regex `+webhooks` (STAGE edge, config drift in `/etc/nginx/sites-enabled/lurus-stage`) | `POST /webhooks/shopify/orders` → **401 invalid_signature** (was 307→/login) |
+| `GET /stock/alerts/low-stock` always empty | **DEFERRED (product decision)** | No write path anywhere sets `stock_initial.low_safe_qty` (RecordMovement doesn't write it; onboarding `lowStock` flag is dropped). This is a feature gap, not a bug: the threshold source is an owner call (zero-config auto-learn vs explicit config) — constitution says push back on config rather than speculatively build a config API. Not shipped. |
+
+Still open (out of this round): suppliers live in `tally.supplier` but `bill_head.partner_id` FK → `tally.partner` with no `/partners` API (dead-end for supplier-linked purchase bills); `DELETE /account/sessions/:id` has no tenant-level sub gate (design review item).
