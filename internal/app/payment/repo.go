@@ -21,8 +21,9 @@ type PaymentRepo interface {
 	// ListByBill returns all non-deleted payment_head rows for the given bill.
 	ListByBill(ctx context.Context, tenantID, billID uuid.UUID) ([]*domain.Payment, error)
 
-	// SumByBill returns the total paid amount for the given bill.
-	// Uses SELECT ... FOR UPDATE to serialise concurrent payments.
+	// SumByBill returns the total paid amount for the given bill. Concurrent
+	// payments are serialised by the caller's GetBillForUpdate row lock, not by
+	// this query (PG forbids FOR UPDATE on an aggregate).
 	SumByBill(ctx context.Context, tx *sql.Tx, tenantID, billID uuid.UUID) (decimal.Decimal, error)
 
 	// WithTx executes fn inside a new PG transaction.

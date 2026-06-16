@@ -124,13 +124,19 @@ func (r *Repo) ListByBill(ctx context.Context, tenantID, billID uuid.UUID) ([]*d
 	return payments, nil
 }
 
-// SumByBill returns the sum of all payments for the bill, locking the rows for update.
+// SumByBill returns the total paid amount for the bill.
+//
+// It deliberately does NOT use FOR UPDATE: PostgreSQL rejects row locking on an
+// aggregate query (SQLSTATE 0A000 "FOR UPDATE is not allowed with aggregate
+// functions"), which previously made every payment 422. Concurrent over-payment
+// is already serialised by RecordPaymentUseCase locking the bill_head row via
+// GetBillForUpdate before this sum runs — two payments on the same bill cannot
+// run their sum+insert concurrently, so a lock on payment_head here is redundant.
 func (r *Repo) SumByBill(ctx context.Context, tx *sql.Tx, tenantID, billID uuid.UUID) (decimal.Decimal, error) {
 	const q = `
 		SELECT COALESCE(SUM(amount), 0)
 		FROM tally.payment_head
-		WHERE related_bill_id = $1 AND tenant_id = $2 AND deleted_at IS NULL
-		FOR UPDATE`
+		WHERE related_bill_id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
 
 	var total string
 	if err := tx.QueryRowContext(ctx, q, billID, tenantID).Scan(&total); err != nil {

@@ -62,7 +62,14 @@ func (h *Handler) ImportOrders(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
+	// PAT auth carries no user sub; fall back to the tenant id as the integration
+	// actor (matching the payment/replenish handlers). Passing uuid.Nil made the
+	// import use case reject with "creator_id is required" → 422. creator_id has
+	// no FK, so the tenant id is a safe sentinel for machine-driven imports.
 	creatorID := actorID(c)
+	if creatorID == uuid.Nil {
+		creatorID = tenantID
+	}
 
 	// Bound the multipart body.
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxUploadBytes)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -255,6 +256,42 @@ func TestReplenishHandler_GetSuggestions_SerializesForecastAndLearningFields(t *
 	}
 	if it.LastPurchasePrice == nil || *it.LastPurchasePrice != "72.5" {
 		t.Errorf("last_purchase_price = %v, want 72.5", it.LastPurchasePrice)
+	}
+}
+
+// stubBatchUC records the DraftBatchRequest it receives so a test can assert the
+// resolved creator_id. It always succeeds with an empty output.
+type stubBatchUC struct {
+	gotCreator uuid.UUID
+}
+
+func (s *stubBatchUC) Execute(_ context.Context, req appreplenish.DraftBatchRequest) (*appreplenish.DraftBatchOutput, error) {
+	s.gotCreator = req.CreatorID
+	return &appreplenish.DraftBatchOutput{}, nil
+}
+
+// TestReplenishHandler_DraftBatch_PATFallsBackToTenantCreator verifies that when
+// no Zitadel sub is present (PAT auth carries no user identity), the handler
+// falls back creator_id to the tenant id instead of passing uuid.Nil — which the
+// use case rejected as "creator_id is required", surfacing a confusing 500.
+// Matches the payment handler's existing tenant-as-actor fallback.
+func TestReplenishHandler_DraftBatch_PATFallsBackToTenantCreator(t *testing.T) {
+	tenantID := uuid.New()
+	batch := &stubBatchUC{}
+	h := handlerreplenish.NewWithBatch(&stubUseCase{}, batch)
+	e := newTestEngine(h, tenantID) // sets tenant only; no Zitadel sub (PAT scenario)
+
+	body := `{"lines":[{"product_id":"` + uuid.New().String() + `","qty":"5"}]}`
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/replenish/draft-batch", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (PAT draft-batch should succeed), got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if batch.gotCreator != tenantID {
+		t.Errorf("creator_id: got %v, want tenant fallback %v", batch.gotCreator, tenantID)
 	}
 }
 

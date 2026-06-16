@@ -24,7 +24,8 @@ type RecordPaymentRequest struct {
 }
 
 // RecordPaymentUseCase records an additional payment against an approved bill.
-// Prevents concurrent over-payment via SumByBill FOR UPDATE.
+// Prevents concurrent over-payment by locking the bill_head row (GetBillForUpdate)
+// before summing existing payments and inserting the new one.
 type RecordPaymentUseCase struct {
 	billRepo    BillReader
 	paymentRepo PaymentRepo
@@ -66,7 +67,8 @@ func (uc *RecordPaymentUseCase) Execute(ctx context.Context, req RecordPaymentRe
 			return fmt.Errorf("record payment: bill must be approved; current status is %d", head.Status)
 		}
 
-		// Compute new cumulative paid amount (prevents over-payment race condition).
+		// Compute new cumulative paid amount. The over-payment race is prevented by
+		// the bill_head row lock above, not by locking payment_head here.
 		currentPaid, err := uc.paymentRepo.SumByBill(ctx, tx, req.TenantID, req.BillID)
 		if err != nil {
 			return fmt.Errorf("record payment: sum by bill: %w", err)
