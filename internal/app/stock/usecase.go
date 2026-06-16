@@ -151,6 +151,13 @@ func (uc *RecordMovementUseCase) Execute(ctx context.Context, req RecordMovement
 		Note:          req.Note,
 	}
 
+	// RefInit movements (onboarding seed / opening balance) have no source
+	// business document; self-reference the movement so the NOT NULL
+	// stock_movement.reference_id constraint (migration 000034) is satisfied.
+	if m.ReferenceType == domain.RefInit && m.ReferenceID == nil {
+		m.ReferenceID = &m.ID
+	}
+
 	var snap *domain.Snapshot
 
 	txErr := uc.repo.WithTx(ctx, func(tx *sql.Tx) error {
@@ -230,6 +237,13 @@ func (uc *RecordMovementUseCase) ExecuteInTx(ctx context.Context, tx *sql.Tx, re
 		OccurredAt:    occurredAt,
 		CreatedBy:     req.CreatedBy,
 		Note:          req.Note,
+	}
+
+	// RefInit movements (onboarding seed / opening balance) have no source
+	// business document; self-reference the movement so the NOT NULL
+	// stock_movement.reference_id constraint (migration 000034) is satisfied.
+	if m.ReferenceType == domain.RefInit && m.ReferenceID == nil {
+		m.ReferenceID = &m.ID
 	}
 
 	if err := uc.repo.AcquireAdvisoryLock(ctx, tx, req.TenantID, req.ProductID, req.WarehouseID); err != nil {

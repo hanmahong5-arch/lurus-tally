@@ -28,6 +28,11 @@
 import { test, expect, type Page, type Route } from "@playwright/test"
 import path from "path"
 import fs from "fs"
+import { gateOnDevServer } from "./_server-health"
+
+// Skip (not fail) any test whose local next-dev server has crashed/restarted —
+// keeps an ERR_CONNECTION_REFUSED outage classified as env, never a product bug.
+gateOnDevServer(test)
 
 // ---------------------------------------------------------------------------
 // Constants

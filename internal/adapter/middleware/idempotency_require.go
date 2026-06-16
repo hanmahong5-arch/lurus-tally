@@ -36,6 +36,12 @@ var requireIdempotencyKeyRoutes = map[string]struct{}{
 // window. It runs after the auth middleware, so an unauthenticated request is
 // rejected with 401 before reaching here. Non-allowlisted routes, and reads on
 // an allowlisted path, pass through untouched.
+//
+// Intended ordering note: as a group-level guard this fires BEFORE a handler
+// parses its path params. For /ai/plans/:plan_id/confirm an invalid plan_id with
+// no key therefore returns missing_idempotency_key (not "invalid plan_id") — the
+// key is mandatory regardless of plan_id validity. The un-gated /cancel and
+// /revert parse the UUID first; that asymmetry is accepted, not a bug.
 func RequireIdempotencyKey() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if _, ok := requireIdempotencyKeyRoutes[c.Request.Method+" "+c.FullPath()]; !ok {

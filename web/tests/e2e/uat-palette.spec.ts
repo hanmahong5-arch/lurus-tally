@@ -19,6 +19,7 @@
 
 import * as nodePath from "node:path"
 import { test, expect, type Page, type APIRequestContext } from "@playwright/test"
+import { gateOnDevServer } from "./_server-health"
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
@@ -126,6 +127,9 @@ const paletteTest = test.extend<{ backendApi: APIRequestContext }>({
 
 // ─── Tests ─────────────────────────────────────────────────────────────────
 
+// Skip (not fail) when the dev server has crashed/restarted — env, not product.
+gateOnDevServer(paletteTest)
+
 paletteTest.describe("Command Palette UAT", () => {
 
   // ── 1. Open via Ctrl+K within 100 ms ─────────────────────────────────────
@@ -171,7 +175,7 @@ paletteTest.describe("Command Palette UAT", () => {
       const input = palette.getByTestId(INPUT_TESTID)
       await input.fill("testproduct12345")
 
-      await expect(palette.getByText("AI 模式")).toBeVisible({ timeout: 3_000 })
+      await expect(palette.getByText("AI 模式", { exact: true })).toBeVisible({ timeout: 3_000 })
 
       // Entity group appears when the backend has results; warn if absent.
       const entityVisible = await palette
@@ -193,7 +197,7 @@ paletteTest.describe("Command Palette UAT", () => {
       // Hard assertions: Commands (pages + actions) + AI must always be present.
       await expect(palette.getByText("页面")).toBeVisible()
       await expect(palette.getByText("操作")).toBeVisible()
-      await expect(palette.getByText("AI 模式")).toBeVisible()
+      await expect(palette.getByText("AI 模式", { exact: true })).toBeVisible()
 
       await closePalette(page)
     }

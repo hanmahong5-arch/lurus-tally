@@ -341,7 +341,9 @@ http pbill-restore-badid POST /api/v1/purchase-bills/not-a-uuid/restore
 expect_status 400
 
 # Approve the restored draft so the sale section below has 10 units on hand.
-http pbill-approve POST "/api/v1/purchase-bills/$PBILL_ID/approve"
+# Idempotency-Key is mandatory on approve routes (hardening: aaeef7c1).
+http pbill-approve POST "/api/v1/purchase-bills/$PBILL_ID/approve" \
+  -H "Idempotency-Key: b1-pbapprove-${SHORT}"
 expect_status 200
 
 # Restoring an APPROVED bill must be refused (409, cannot_restore_approved_bill).
@@ -375,7 +377,9 @@ check "sale bill GET :id round-trips bill_id" \
 http sbill-get-bogus GET "/api/v1/sale-bills/$BOGUS_UUID"
 expect_status 404
 
-http sbill-approve POST "/api/v1/sale-bills/$SBILL_ID/approve" "${JSON[@]}" -d '{}'
+# Idempotency-Key is mandatory on approve routes (hardening: aaeef7c1).
+http sbill-approve POST "/api/v1/sale-bills/$SBILL_ID/approve" "${JSON[@]}" -d '{}' \
+  -H "Idempotency-Key: b1-sbapprove-${SHORT}"
 expect_status 200
 check "sale approve returns approved" \
   bash -c "jq -e '.status == \"approved\"' '$HTTP_BODY_FILE' >/dev/null"
@@ -390,7 +394,10 @@ expect_status 200
 check "sale cancel returns cancelled" \
   bash -c "jq -e '.status == \"cancelled\"' '$HTTP_BODY_FILE' >/dev/null"
 
-http sbill-approve-bogus POST "/api/v1/sale-bills/$BOGUS_UUID/approve" "${JSON[@]}" -d '{}'
+# Idempotency-Key must be present even for the bogus-id 404 path; middleware
+# validates the header before the handler looks up the resource (hardening: aaeef7c1).
+http sbill-approve-bogus POST "/api/v1/sale-bills/$BOGUS_UUID/approve" "${JSON[@]}" -d '{}' \
+  -H "Idempotency-Key: b1-sbapprove-bogus-${SHORT}"
 expect_status 404
 
 http sbill-cancel-badid POST /api/v1/sale-bills/not-a-uuid/cancel

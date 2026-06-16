@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # extract-routes.sh — regenerate the UAT coverage denominator from the DEPLOYED
 # commit's source (not the working tree). The deployed STAGE image tag is
-# main-da39944 => commit da399443. When STAGE is upgraded, change DEPLOY_COMMIT
+# main-46b0a4d => commit 46b0a4d3. When STAGE is upgraded, change DEPLOY_COMMIT
 # (or pass it as $1), re-run, and commit the refreshed routes-deployed.txt.
 #
 # Output: scripts/uat/routes-deployed.txt — one "METHOD PATH" per line, sorted.
@@ -15,7 +15,7 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/../.."
-DEPLOY_COMMIT="${1:-da399443}"
+DEPLOY_COMMIT="${1:-46b0a4d3}"
 OUT="scripts/uat/routes-deployed.txt"
 EXPECTED_COUNT=101 # hand-audited 2026-06-10; the plan's "103" was a miscount
 
