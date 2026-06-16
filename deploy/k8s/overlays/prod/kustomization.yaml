@@ -6,7 +6,7 @@ patches:
   - patch: |-
       - op: replace
         path: /spec/routes/0/match
-        value: Host(`tally.lurus.cn`) && (PathPrefix(`/api`) || PathPrefix(`/internal`))
+        value: Host(`tally.lurus.cn`) && (PathPrefix(`/api`) || PathPrefix(`/internal`) || PathPrefix(`/webhooks`))
       - op: replace
         path: /spec/routes/1/match
         value: Host(`tally.lurus.cn`)
