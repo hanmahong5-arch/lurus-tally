@@ -175,7 +175,7 @@ paletteTest.describe("Command Palette UAT", () => {
       const input = palette.getByTestId(INPUT_TESTID)
       await input.fill("testproduct12345")
 
-      await expect(palette.getByText("AI 模式")).toBeVisible({ timeout: 3_000 })
+      await expect(palette.getByText("AI 模式", { exact: true })).toBeVisible({ timeout: 3_000 })
 
       // Entity group appears when the backend has results; warn if absent.
       const entityVisible = await palette
@@ -197,7 +197,7 @@ paletteTest.describe("Command Palette UAT", () => {
       // Hard assertions: Commands (pages + actions) + AI must always be present.
       await expect(palette.getByText("页面")).toBeVisible()
       await expect(palette.getByText("操作")).toBeVisible()
-      await expect(palette.getByText("AI 模式")).toBeVisible()
+      await expect(palette.getByText("AI 模式", { exact: true })).toBeVisible()
 
       await closePalette(page)
     }
