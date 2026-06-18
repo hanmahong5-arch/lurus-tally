@@ -243,6 +243,3 @@ func (c *countingLockRepo) WithTx(ctx context.Context, fn func(tx *sql.Tx) error
 func (c *countingLockRepo) ListSnapshots(ctx context.Context, f appstock.ListSnapshotsFilter) ([]domain.Snapshot, error) {
 	return c.inner.ListSnapshots(ctx, f)
 }
-func (c *countingLockRepo) ListLowStock(ctx context.Context, tenantID uuid.UUID, limit int) ([]appstock.LowStockRow, error) {
-	return c.inner.ListLowStock(ctx, tenantID, limit)
-}

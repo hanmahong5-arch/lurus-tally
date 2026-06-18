@@ -140,19 +140,21 @@ function LowStockSection({ items, totalCount }: { items: LowStockItem[]; totalCo
       <ul className="divide-y divide-border rounded-xl border border-border bg-card">
         {items.map((i) => (
           <li
-            key={`${i.product_id}-${i.warehouse_id}`}
+            key={i.product_id}
             className="flex items-center justify-between gap-3 px-4 py-3"
           >
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">{i.product_name}</p>
-              <p className="truncate text-xs text-muted-foreground">{i.warehouse_name}</p>
+              <p className="truncate text-xs text-muted-foreground">
+                约 {Number(i.days_of_supply).toFixed(0)} 天可售
+              </p>
             </div>
             <div className="text-right">
               <p className="font-mono text-sm tabular-nums text-destructive">
                 {Number(i.available_qty).toFixed(0)}
                 <span className="text-xs text-muted-foreground">
                   {" "}
-                  / {Number(i.low_safe_qty).toFixed(0)}
+                  / {Number(i.reorder_point).toFixed(0)}
                 </span>
               </p>
               <Link

@@ -50,11 +50,6 @@ type StockRepo interface {
 	// ListSnapshots returns paginated snapshots (read-only, no transaction needed).
 	ListSnapshots(ctx context.Context, filter ListSnapshotsFilter) ([]domain.Snapshot, error)
 
-	// ListLowStock joins stock_snapshot + product + stock_initial and returns
-	// rows where available_qty < low_safe_qty for the tenant. Backs the
-	// /api/v1/stock/alerts/low-stock endpoint.
-	ListLowStock(ctx context.Context, tenantID uuid.UUID, limit int) ([]LowStockRow, error)
-
 	// WithTx executes fn inside a new database transaction, committing on success
 	// and rolling back on error or panic.
 	WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error

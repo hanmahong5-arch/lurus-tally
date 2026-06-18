@@ -166,7 +166,7 @@ func makeLowStockHandler(c *tallyClient) server.ResourceHandlerFunc {
 		return wrapJSON(req.Params.URI, map[string]any{
 			"items":     rows,
 			"count":     len(rows),
-			"threshold": "available_qty < low_safe_qty",
+			"threshold": "available_qty <= reorder_point",
 		})
 	}
 }

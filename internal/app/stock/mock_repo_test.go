@@ -59,10 +59,6 @@ func (m *mockRepo) ListSnapshots(_ context.Context, _ appstock.ListSnapshotsFilt
 	return nil, nil
 }
 
-func (m *mockRepo) ListLowStock(_ context.Context, _ uuid.UUID, _ int) ([]appstock.LowStockRow, error) {
-	return nil, nil
-}
-
 func (m *mockRepo) InsertLot(_ context.Context, _ *sql.Tx, l *domain.Lot) error {
 	m.lots = append(m.lots, *l)
 	return nil

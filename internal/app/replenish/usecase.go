@@ -126,7 +126,10 @@ func (uc *ListSuggestionsUseCase) WithLedger(ledger SnapshotLedger, log *slog.Lo
 	return uc
 }
 
-const defaultWeeks = 2
+// DefaultWeeks is the coverage window (in weeks) used when a caller passes
+// weeks<=0. Exported so the low-stock alert can request the same reorder-point
+// definition the suggestions endpoint uses.
+const DefaultWeeks = 2
 
 // defaultLeadTimeDays mirrors the tally.product.lead_time_days NOT NULL DEFAULT.
 // A stored value of 7 is indistinguishable from the untouched default (the
@@ -158,7 +161,7 @@ const sigmaFactor = 0.3
 //	urgencyScore = availableQty / avgDailySales  (days-of-supply; 0 velocity → 999999)
 func (uc *ListSuggestionsUseCase) Execute(ctx context.Context, tenantID uuid.UUID, weeks int) ([]SuggestionRow, error) {
 	if weeks <= 0 {
-		weeks = defaultWeeks
+		weeks = DefaultWeeks
 	}
 
 	raws, err := uc.repo.ListSuggestions(ctx, tenantID)
@@ -166,111 +169,9 @@ func (uc *ListSuggestionsUseCase) Execute(ctx context.Context, tenantID uuid.UUI
 		return nil, err
 	}
 
-	weeksD := decimal.NewFromInt(int64(weeks))
-	seven := decimal.NewFromInt(7)
-	zD := decimal.NewFromFloat(z)
-	sigmaFactorD := decimal.NewFromFloat(sigmaFactor)
-	// largeScore represents "not urgent" for zero-velocity products.
-	largeScore := decimal.NewFromInt(999999)
-
 	out := make([]SuggestionRow, 0, len(raws))
 	for _, r := range raws {
-		// Lead-time three-state resolution: a learned median (≥2 real arrival
-		// samples) beats whatever is configured; otherwise a non-default
-		// configured value wins; 7 collapses to "default" (see defaultLeadTimeDays).
-		leadTime := r.LeadTimeDays
-		leadTimeSource := LeadTimeSourceDefault
-		if leadTime <= 0 {
-			leadTime = defaultLeadTimeDays
-		} else if leadTime != defaultLeadTimeDays {
-			leadTimeSource = LeadTimeSourceConfigured
-		}
-		if r.LeadTimeSamples >= minLeadTimeSamples {
-			learned := int(math.Round(r.LearnedLeadDays))
-			if learned < 1 {
-				// Sub-day medians round to 1 so the ROP formula keeps a horizon.
-				learned = 1
-			}
-			leadTime = learned
-			leadTimeSource = LeadTimeSourceLearned
-		}
-
-		// Safety stock: z × σ × √leadTime.
-		// σ is approximated as avgDailySales × sigmaFactor.
-		var safetyStock decimal.Decimal
-		if !r.AvgDailySales.IsZero() {
-			sigma := r.AvgDailySales.Mul(sigmaFactorD)
-			sqrtLT := decimal.NewFromFloat(math.Sqrt(float64(leadTime)))
-			safetyStock = zD.Mul(sigma).Mul(sqrtLT)
-		}
-
-		// ROP = avgDailySales × leadTime + safetyStock.
-		ltD := decimal.NewFromInt(int64(leadTime))
-		rop := r.AvgDailySales.Mul(ltD).Add(safetyStock)
-
-		// Target coverage: avgDailySales × 7 × weeks.
-		target := r.AvgDailySales.Mul(seven).Mul(weeksD)
-
-		// Suggested = target + safetyStock − available − inTransit, floored at 0, whole units.
-		suggested := target.Add(safetyStock).Sub(r.AvailableQty).Sub(r.InTransit)
-		if suggested.IsNegative() {
-			suggested = decimal.Zero
-		}
-		// Round up to the nearest whole unit.
-		suggested = suggested.Ceil()
-
-		// Estimated amount prefers the real last purchase price over the
-		// weighted-average cost — WAC drifts when old cheap stock lingers.
-		// A nil or non-positive last price (no history / free sample) keeps WAC.
-		unitPrice := r.UnitCost
-		if r.LastPurchasePrice != nil && r.LastPurchasePrice.IsPositive() {
-			unitPrice = *r.LastPurchasePrice
-		}
-		estAmount := suggested.Mul(unitPrice)
-
-		// Urgency: days-of-supply.
-		var urgency decimal.Decimal
-		if r.AvgDailySales.IsZero() {
-			urgency = largeScore
-		} else {
-			urgency = r.AvailableQty.Div(r.AvgDailySales)
-		}
-
-		// Human-readable reason string (why this qty).
-		reason := fmt.Sprintf(
-			"日均%s×提前期%d天 + 安全库存%s − 可用%s − 在途%s",
-			r.AvgDailySales.StringFixed(1),
-			leadTime,
-			safetyStock.StringFixed(1),
-			r.AvailableQty.StringFixed(0),
-			r.InTransit.StringFixed(0),
-		)
-		if leadTimeSource == LeadTimeSourceLearned {
-			reason += fmt.Sprintf("；基于最近%d次实际到货,中位交期%d天", r.LeadTimeSamples, leadTime)
-		}
-
-		out = append(out, SuggestionRow{
-			ProductID:     r.ProductID,
-			ProductName:   r.ProductName,
-			ProductCode:   r.ProductCode,
-			AvailableQty:  r.AvailableQty,
-			SafetyQty:     r.SafetyQty,
-			AvgDailySales: r.AvgDailySales,
-			SuggestedQty:  suggested,
-			EstAmountCNY:  estAmount,
-			SupplierID:    r.SupplierID,
-			SupplierName:  r.SupplierName,
-			UrgencyScore:  urgency,
-			LeadTimeDays:  leadTime,
-			InTransit:     r.InTransit,
-			ROP:           rop,
-			SafetyStock:   safetyStock,
-			Reason:        reason,
-
-			LastPurchasePrice: r.LastPurchasePrice,
-			LeadTimeSource:    leadTimeSource,
-			LeadTimeSamples:   r.LeadTimeSamples,
-		})
+		out = append(out, Forecast(r, weeks))
 	}
 
 	// Sort by urgency ascending — closest to stockout first.
@@ -309,4 +210,118 @@ func (uc *ListSuggestionsUseCase) Execute(ctx context.Context, tenantID uuid.UUI
 	}
 
 	return out, nil
+}
+
+// Forecast applies the v2 demand-forecast formula to one raw row.
+// Pure: no I/O, no side effects. Shared by ListSuggestionsUseCase and the
+// low-stock alert so both use one reorder-point definition. A weeks<=0 falls
+// back to DefaultWeeks so callers can pass it directly.
+func Forecast(r RawRow, weeks int) SuggestionRow {
+	if weeks <= 0 {
+		weeks = DefaultWeeks
+	}
+
+	weeksD := decimal.NewFromInt(int64(weeks))
+	seven := decimal.NewFromInt(7)
+	zD := decimal.NewFromFloat(z)
+	sigmaFactorD := decimal.NewFromFloat(sigmaFactor)
+	// largeScore represents "not urgent" for zero-velocity products.
+	largeScore := decimal.NewFromInt(999999)
+
+	// Lead-time three-state resolution: a learned median (≥2 real arrival
+	// samples) beats whatever is configured; otherwise a non-default
+	// configured value wins; 7 collapses to "default" (see defaultLeadTimeDays).
+	leadTime := r.LeadTimeDays
+	leadTimeSource := LeadTimeSourceDefault
+	if leadTime <= 0 {
+		leadTime = defaultLeadTimeDays
+	} else if leadTime != defaultLeadTimeDays {
+		leadTimeSource = LeadTimeSourceConfigured
+	}
+	if r.LeadTimeSamples >= minLeadTimeSamples {
+		learned := int(math.Round(r.LearnedLeadDays))
+		if learned < 1 {
+			// Sub-day medians round to 1 so the ROP formula keeps a horizon.
+			learned = 1
+		}
+		leadTime = learned
+		leadTimeSource = LeadTimeSourceLearned
+	}
+
+	// Safety stock: z × σ × √leadTime.
+	// σ is approximated as avgDailySales × sigmaFactor.
+	var safetyStock decimal.Decimal
+	if !r.AvgDailySales.IsZero() {
+		sigma := r.AvgDailySales.Mul(sigmaFactorD)
+		sqrtLT := decimal.NewFromFloat(math.Sqrt(float64(leadTime)))
+		safetyStock = zD.Mul(sigma).Mul(sqrtLT)
+	}
+
+	// ROP = avgDailySales × leadTime + safetyStock.
+	ltD := decimal.NewFromInt(int64(leadTime))
+	rop := r.AvgDailySales.Mul(ltD).Add(safetyStock)
+
+	// Target coverage: avgDailySales × 7 × weeks.
+	target := r.AvgDailySales.Mul(seven).Mul(weeksD)
+
+	// Suggested = target + safetyStock − available − inTransit, floored at 0, whole units.
+	suggested := target.Add(safetyStock).Sub(r.AvailableQty).Sub(r.InTransit)
+	if suggested.IsNegative() {
+		suggested = decimal.Zero
+	}
+	// Round up to the nearest whole unit.
+	suggested = suggested.Ceil()
+
+	// Estimated amount prefers the real last purchase price over the
+	// weighted-average cost — WAC drifts when old cheap stock lingers.
+	// A nil or non-positive last price (no history / free sample) keeps WAC.
+	unitPrice := r.UnitCost
+	if r.LastPurchasePrice != nil && r.LastPurchasePrice.IsPositive() {
+		unitPrice = *r.LastPurchasePrice
+	}
+	estAmount := suggested.Mul(unitPrice)
+
+	// Urgency: days-of-supply.
+	var urgency decimal.Decimal
+	if r.AvgDailySales.IsZero() {
+		urgency = largeScore
+	} else {
+		urgency = r.AvailableQty.Div(r.AvgDailySales)
+	}
+
+	// Human-readable reason string (why this qty).
+	reason := fmt.Sprintf(
+		"日均%s×提前期%d天 + 安全库存%s − 可用%s − 在途%s",
+		r.AvgDailySales.StringFixed(1),
+		leadTime,
+		safetyStock.StringFixed(1),
+		r.AvailableQty.StringFixed(0),
+		r.InTransit.StringFixed(0),
+	)
+	if leadTimeSource == LeadTimeSourceLearned {
+		reason += fmt.Sprintf("；基于最近%d次实际到货,中位交期%d天", r.LeadTimeSamples, leadTime)
+	}
+
+	return SuggestionRow{
+		ProductID:     r.ProductID,
+		ProductName:   r.ProductName,
+		ProductCode:   r.ProductCode,
+		AvailableQty:  r.AvailableQty,
+		SafetyQty:     r.SafetyQty,
+		AvgDailySales: r.AvgDailySales,
+		SuggestedQty:  suggested,
+		EstAmountCNY:  estAmount,
+		SupplierID:    r.SupplierID,
+		SupplierName:  r.SupplierName,
+		UrgencyScore:  urgency,
+		LeadTimeDays:  leadTime,
+		InTransit:     r.InTransit,
+		ROP:           rop,
+		SafetyStock:   safetyStock,
+		Reason:        reason,
+
+		LastPurchasePrice: r.LastPurchasePrice,
+		LeadTimeSource:    leadTimeSource,
+		LeadTimeSamples:   r.LeadTimeSamples,
+	}
 }

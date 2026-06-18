@@ -270,7 +270,10 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appstock.NewGetSnapshotUseCase(stockRepo),
 		appstock.NewListSnapshotsUseCase(stockRepo),
 		appstock.NewListMovementsUseCase(stockRepo),
-		appstock.NewListLowStockUseCase(stockRepo),
+		// Low-stock alert = products at/below their auto-computed reorder point,
+		// reusing the replenish engine's learned demand + lead-time intelligence
+		// (zero-config). Same tenant-pinned RLS access as /replenish/suggestions.
+		appreplenish.NewListLowStockUseCase(reporepl.NewSQLSuggestionRepo(db)),
 	)
 
 	// Wire bill use cases (Story 6.1: purchase receipt baseline).

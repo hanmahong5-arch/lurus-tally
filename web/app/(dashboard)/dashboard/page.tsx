@@ -88,7 +88,7 @@ export default async function DashboardPage({
           <Card>
             <CardHeader className="pb-2">
               <CardTitle className="text-base">低库存预警 TOP 5</CardTitle>
-              <CardDescription>可用量低于安全库存的商品</CardDescription>
+              <CardDescription>可用量低于补货点的商品</CardDescription>
             </CardHeader>
             <CardContent>
               {lowStock.items.length === 0 ? (
@@ -99,19 +99,19 @@ export default async function DashboardPage({
                 <ul className="divide-y divide-border">
                   {lowStock.items.map((item) => (
                     <li
-                      key={`${item.product_id}-${item.warehouse_id}`}
+                      key={item.product_id}
                       className="flex items-center justify-between py-2.5 gap-3"
                     >
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium truncate">{item.product_name}</p>
                         <p className="text-xs text-muted-foreground truncate">
-                          {item.warehouse_name}
+                          约 {Number(item.days_of_supply).toFixed(0)} 天可售
                         </p>
                       </div>
                       <div className="text-right flex-shrink-0">
                         <p className="text-sm font-mono tabular-nums text-destructive">
                           {Number(item.available_qty).toFixed(0)}
-                          <span className="text-muted-foreground text-xs"> / {Number(item.low_safe_qty).toFixed(0)}</span>
+                          <span className="text-muted-foreground text-xs"> / {Number(item.reorder_point).toFixed(0)}</span>
                         </p>
                         <Link
                           href={`/purchases/new?prefill_product_id=${item.product_id}`}

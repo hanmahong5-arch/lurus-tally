@@ -124,13 +124,18 @@ const SERVER_BACKEND_URL =
     ? (process.env.BACKEND_URL ?? "http://tally-backend:18200")
     : ""
 
+// One product at or below its auto-computed reorder point. Per-product
+// granularity (a reorder decision is per-product); the backend sums available
+// across warehouses. `reorder_point` is the learned ROP, or an explicit
+// low_safe_qty when set. `days_of_supply` ≈ available / avg_daily_sales.
 export interface LowStockItem {
   product_id: string
+  product_code: string
   product_name: string
-  warehouse_id: string
-  warehouse_name: string
   available_qty: string
-  low_safe_qty: string
+  reorder_point: string
+  avg_daily_sales: string
+  days_of_supply: string
 }
 
 export interface LowStockResponse {

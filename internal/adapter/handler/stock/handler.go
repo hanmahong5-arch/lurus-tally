@@ -10,6 +10,7 @@ import (
 	"github.com/shopspring/decimal"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
+	appreplenish "github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
@@ -22,7 +23,7 @@ type Handler struct {
 	getSnapshot   *appstock.GetSnapshotUseCase
 	listSnapshots *appstock.ListSnapshotsUseCase
 	listMovements *appstock.ListMovementsUseCase
-	listLowStock  *appstock.ListLowStockUseCase
+	listLowStock  *appreplenish.ListLowStockUseCase
 }
 
 // New constructs the handler. All use cases must be non-nil.
@@ -31,7 +32,7 @@ func New(
 	getSnapshot *appstock.GetSnapshotUseCase,
 	listSnapshots *appstock.ListSnapshotsUseCase,
 	listMovements *appstock.ListMovementsUseCase,
-	listLowStock *appstock.ListLowStockUseCase,
+	listLowStock *appreplenish.ListLowStockUseCase,
 ) *Handler {
 	return &Handler{
 		record:        record,
@@ -54,8 +55,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 }
 
 // ListLowStock handles GET /api/v1/stock/alerts/low-stock.
-// Returns SKUs whose available_qty has fallen below their configured
-// low_safe_qty (per tenant + product + warehouse, set on stock_initial).
+// Returns products whose available stock has fallen at or below their
+// auto-computed reorder point (learned demand + lead time; zero-config).
+// An explicit per-product low_safe_qty, when set, overrides the learned ROP.
 func (h *Handler) ListLowStock(c *gin.Context) {
 	tenantID := resolveTenantID(c)
 	if tenantID == uuid.Nil {
@@ -69,7 +71,7 @@ func (h *Handler) ListLowStock(c *gin.Context) {
 		return
 	}
 	if rows == nil {
-		rows = []appstock.LowStockRow{}
+		rows = []appreplenish.LowStockRow{}
 	}
 	c.JSON(http.StatusOK, gin.H{"items": rows, "count": len(rows)})
 }

@@ -88,17 +88,17 @@ type listPlansResponse struct {
 	Count int      `json:"count"`
 }
 
-// LowStockRow mirrors GET /api/v1/stock/alerts/low-stock items. Quantity
-// fields are decimal strings — the wire contract is "preserve precision".
+// LowStockRow mirrors GET /api/v1/stock/alerts/low-stock items: one product
+// at or below its auto-computed reorder point (per-product granularity).
+// Quantity fields are decimal strings — the wire contract is "preserve precision".
 type LowStockRow struct {
-	TenantID     string `json:"tenant_id"`
-	ProductID    string `json:"product_id"`
-	ProductCode  string `json:"product_code"`
-	ProductName  string `json:"product_name"`
-	WarehouseID  string `json:"warehouse_id"`
-	OnHandQty    string `json:"on_hand_qty"`
-	AvailableQty string `json:"available_qty"`
-	LowSafeQty   string `json:"low_safe_qty"`
+	ProductID     string `json:"product_id"`
+	ProductCode   string `json:"product_code"`
+	ProductName   string `json:"product_name"`
+	AvailableQty  string `json:"available_qty"`
+	ReorderPoint  string `json:"reorder_point"`
+	AvgDailySales string `json:"avg_daily_sales"`
+	DaysOfSupply  string `json:"days_of_supply"`
 }
 
 type listLowStockResponse struct {
@@ -214,8 +214,8 @@ func (c *tallyClient) ListPendingPlans(ctx context.Context) ([]AIPlan, error) {
 	return out.Items, nil
 }
 
-// ListLowStock fetches SKUs that have dropped below their per-warehouse
-// low_safe_qty threshold.
+// ListLowStock fetches products at or below their auto-computed reorder point
+// (learned demand + lead time; zero-config).
 func (c *tallyClient) ListLowStock(ctx context.Context, limit int) ([]LowStockRow, error) {
 	if limit <= 0 || limit > 500 {
 		limit = 200

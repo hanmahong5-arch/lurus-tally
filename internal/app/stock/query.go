@@ -65,51 +65,6 @@ func (uc *ListSnapshotsUseCase) Execute(ctx context.Context, f ListSnapshotsFilt
 	return snaps, nil
 }
 
-// LowStockRow is the join shape returned by ListLowStock — snapshot fields
-// (qty side) plus product display fields plus the stock_initial threshold.
-// Decimal values are rendered as JSON strings by the handler to preserve
-// precision (mirrors how StockSnapshot is shaped over the wire).
-type LowStockRow struct {
-	TenantID     uuid.UUID `json:"tenant_id"`
-	ProductID    uuid.UUID `json:"product_id"`
-	ProductCode  string    `json:"product_code"`
-	ProductName  string    `json:"product_name"`
-	WarehouseID  uuid.UUID `json:"warehouse_id"`
-	OnHandQty    string    `json:"on_hand_qty"`
-	AvailableQty string    `json:"available_qty"`
-	LowSafeQty   string    `json:"low_safe_qty"`
-}
-
-// LowStockLister is the minimal read interface for the low-stock alert query.
-// Kept narrow on purpose so tests can stub it without a full StockRepo mock.
-type LowStockLister interface {
-	ListLowStock(ctx context.Context, tenantID uuid.UUID, limit int) ([]LowStockRow, error)
-}
-
-// ListLowStockUseCase returns SKUs whose available_qty has fallen below the
-// per-warehouse low_safe_qty threshold configured in stock_initial.
-type ListLowStockUseCase struct {
-	lister LowStockLister
-}
-
-// NewListLowStockUseCase constructs the use case.
-func NewListLowStockUseCase(lister LowStockLister) *ListLowStockUseCase {
-	return &ListLowStockUseCase{lister: lister}
-}
-
-// Execute returns up to `limit` low-stock rows for the tenant; limit<=0 picks
-// a sensible default (200).
-func (uc *ListLowStockUseCase) Execute(ctx context.Context, tenantID uuid.UUID, limit int) ([]LowStockRow, error) {
-	if limit <= 0 {
-		limit = 200
-	}
-	rows, err := uc.lister.ListLowStock(ctx, tenantID, limit)
-	if err != nil {
-		return nil, fmt.Errorf("list low stock: %w", err)
-	}
-	return rows, nil
-}
-
 // ListMovementsUseCase paginates over stock movement history.
 type ListMovementsUseCase struct {
 	repo StockRepo
