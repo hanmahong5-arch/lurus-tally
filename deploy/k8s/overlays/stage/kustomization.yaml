@@ -47,13 +47,13 @@ patches:
       kind: Service
       name: tally-web
 images:
-  # Backend bumped to main-ba458ba (PR #15 + #16): fix payments 422 (SumByBill
-  # FOR UPDATE+SUM 0A000), FK violations 500→409, and PAT creator_id status; plus
-  # the /webhooks IngressRoute routing (PROD/Traefik — STAGE edge fixed in R6
-  # nginx). No migration. Prior: main-09c3a0c (#14 clear-demo FK), main-5007577
-  # (#13 seed-demo RefInit P0), main-46b0a4d (#10+#11 idempotency + PAT-scope
-  # drop, migration 052). Web stays on da39944 — no web runtime change.
+  # Bumped to main-e02788a: low-stock alert redefined as the learned reorder
+  # point (zero-config ROP, reusing the replenish Forecast) instead of the dead
+  # low_safe_qty join; contract is now per-product (also fixes the never-
+  # populated warehouse_name). Both backend AND web bumped — the alert row shape
+  # changed, so the web widgets (dashboard + todo) move together. No migration.
+  # Prior: backend main-ba458ba (#15+#16 payments/FK/PAT/webhook); web da39944.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-ba458ba
+    newTag: main-e02788a
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-da39944
+    newTag: main-e02788a
