@@ -35,7 +35,7 @@ type Config struct {
 	// service trusts X-Tenant-ID + X-Zitadel-Sub headers (dev only). In
 	// production ZitadelDomain MUST be set so the JWT signature is validated
 	// against the issuer's JWKS.
-	ZitadelDomain string // ZITADEL_DOMAIN: e.g. auth.lurus.cn — issuer + JWKS derived from this
+	ZitadelDomain string // ZITADEL_DOMAIN: e.g. identity.lurus.cn — issuer + JWKS derived from this
 	// ZitadelAudience is Tally's own Zitadel client/project id. The JWT aud
 	// claim must contain it, so tokens minted for other apps on the shared
 	// issuer are rejected. Required whenever ZitadelDomain is set (auth enabled);
