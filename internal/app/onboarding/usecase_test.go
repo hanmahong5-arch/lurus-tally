@@ -53,6 +53,17 @@ func (f *fakeStockInitializer) Execute(_ context.Context, req appob.StockInitReq
 	}, nil
 }
 
+// fakeSalesRecorder records (no-op) the backdated demo sales the seed emits.
+type fakeSalesRecorder struct {
+	calls []appob.DemoSaleRequest
+	err   error
+}
+
+func (f *fakeSalesRecorder) RecordSale(_ context.Context, req appob.DemoSaleRequest) error {
+	f.calls = append(f.calls, req)
+	return f.err
+}
+
 type fakeDemoDeleter struct {
 	called   bool
 	tenantID uuid.UUID
@@ -70,7 +81,8 @@ func (f *fakeDemoDeleter) DeleteDemoProducts(_ context.Context, tenantID uuid.UU
 func TestSeedDemoUseCase_Execute_CrossBorder(t *testing.T) {
 	products := &fakeProductCreator{}
 	stock := &fakeStockInitializer{}
-	uc := appob.NewSeedDemoUseCase(products, stock)
+	sales := &fakeSalesRecorder{}
+	uc := appob.NewSeedDemoUseCase(products, stock, sales)
 
 	tenantID := uuid.New()
 	warehouseID := uuid.New()
@@ -97,6 +109,7 @@ func TestSeedDemoUseCase_Execute_CrossBorder(t *testing.T) {
 			t.Errorf("product %s: want tenantID=%s, got %s", p.Code, tenantID, p.TenantID)
 		}
 	}
+	// One opening receipt per SKU (the over-received 'in').
 	if len(stock.calls) != 3 {
 		t.Errorf("want 3 stock.Execute calls, got %d", len(stock.calls))
 	}
@@ -107,23 +120,28 @@ func TestSeedDemoUseCase_Execute_CrossBorder(t *testing.T) {
 		if s.Qty.LessThanOrEqual(decimal.Zero) {
 			t.Errorf("stock call: qty must be positive, got %s", s.Qty)
 		}
-	}
-	// Exactly one SKU should be low-stock for the replenishment trigger.
-	lowCount := 0
-	for _, s := range stock.calls {
-		if s.LowStock {
-			lowCount++
+		if s.OccurredAt.IsZero() {
+			t.Errorf("stock call: opening receipt must be backdated, got zero OccurredAt")
 		}
 	}
-	if lowCount != 1 {
-		t.Errorf("want exactly 1 low-stock SKU for cross_border, got %d", lowCount)
+	// Sales are recorded per SKU (3 SKUs × K parts). All must be backdated.
+	if len(sales.calls) == 0 {
+		t.Errorf("want backdated demo sales recorded, got none")
+	}
+	for _, s := range sales.calls {
+		if s.OccurredAt.IsZero() {
+			t.Errorf("sale call: must be backdated, got zero OccurredAt")
+		}
+		if s.Qty.LessThanOrEqual(decimal.Zero) {
+			t.Errorf("sale call: qty must be positive, got %s", s.Qty)
+		}
 	}
 }
 
 func TestSeedDemoUseCase_Execute_Retail(t *testing.T) {
 	products := &fakeProductCreator{}
 	stock := &fakeStockInitializer{}
-	uc := appob.NewSeedDemoUseCase(products, stock)
+	uc := appob.NewSeedDemoUseCase(products, stock, &fakeSalesRecorder{})
 
 	result, err := uc.Execute(context.Background(), appob.SeedInput{
 		TenantID:    uuid.New(),
@@ -139,7 +157,7 @@ func TestSeedDemoUseCase_Execute_Retail(t *testing.T) {
 }
 
 func TestSeedDemoUseCase_Execute_MissingTenantID(t *testing.T) {
-	uc := appob.NewSeedDemoUseCase(&fakeProductCreator{}, &fakeStockInitializer{})
+	uc := appob.NewSeedDemoUseCase(&fakeProductCreator{}, &fakeStockInitializer{}, &fakeSalesRecorder{})
 	_, err := uc.Execute(context.Background(), appob.SeedInput{
 		TenantID:    uuid.Nil,
 		WarehouseID: uuid.New(),
@@ -151,7 +169,7 @@ func TestSeedDemoUseCase_Execute_MissingTenantID(t *testing.T) {
 }
 
 func TestSeedDemoUseCase_Execute_MissingWarehouseID(t *testing.T) {
-	uc := appob.NewSeedDemoUseCase(&fakeProductCreator{}, &fakeStockInitializer{})
+	uc := appob.NewSeedDemoUseCase(&fakeProductCreator{}, &fakeStockInitializer{}, &fakeSalesRecorder{})
 	_, err := uc.Execute(context.Background(), appob.SeedInput{
 		TenantID:    uuid.New(),
 		WarehouseID: uuid.Nil,
@@ -168,7 +186,7 @@ func TestSeedDemoUseCase_Execute_SkipsDuplicateCode(t *testing.T) {
 		errMsg: "duplicate key value violates unique constraint",
 	}
 	stock := &fakeStockInitializer{}
-	uc := appob.NewSeedDemoUseCase(products, stock)
+	uc := appob.NewSeedDemoUseCase(products, stock, &fakeSalesRecorder{})
 
 	result, err := uc.Execute(context.Background(), appob.SeedInput{
 		TenantID:    uuid.New(),
@@ -191,7 +209,7 @@ func TestSeedDemoUseCase_Execute_SkipsDuplicateCode(t *testing.T) {
 func TestSeedDemoUseCase_Execute_StockError(t *testing.T) {
 	products := &fakeProductCreator{}
 	stock := &fakeStockInitializer{err: errors.New("db down")}
-	uc := appob.NewSeedDemoUseCase(products, stock)
+	uc := appob.NewSeedDemoUseCase(products, stock, &fakeSalesRecorder{})
 
 	_, err := uc.Execute(context.Background(), appob.SeedInput{
 		TenantID:    uuid.New(),

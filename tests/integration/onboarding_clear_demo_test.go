@@ -21,6 +21,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/shopspring/decimal"
 
@@ -64,15 +65,33 @@ func TestClearDemo_DeletesDemoProductsWithStock(t *testing.T) {
 		t.Fatalf("seed opening stock: %v", err)
 	}
 
-	// Sanity: the movement exists, so the FK RESTRICT would bite a naive delete.
-	var movements int
-	if err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM tally.stock_movement WHERE product_id=$1`, productID,
-	).Scan(&movements); err != nil {
-		t.Fatalf("count movements: %v", err)
+	// Also record a backdated 'out' sale — the shape seed-demo now emits for
+	// velocity. clear-demo must remove these too (they share product_id).
+	saleRef := uuid.New()
+	if _, err := uc.Execute(ctx, appstock.RecordMovementRequest{
+		TenantID:      tenantID,
+		ProductID:     productID,
+		WarehouseID:   warehouseID,
+		Direction:     domainstock.DirectionOut,
+		Qty:           decimal.NewFromInt(5),
+		ConvFactor:    "1",
+		CostStrategy:  domainstock.CostStrategyWAC,
+		ReferenceType: domainstock.RefSale,
+		ReferenceID:   &saleRef,
+	}); err != nil {
+		t.Fatalf("seed demo sale: %v", err)
 	}
-	if movements == 0 {
-		t.Fatal("expected at least one stock_movement for the demo product")
+
+	// Sanity: both an 'in' and an 'out' movement exist, so the FK RESTRICT would
+	// bite a naive delete.
+	var outMovements int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM tally.stock_movement WHERE product_id=$1 AND direction='out'`, productID,
+	).Scan(&outMovements); err != nil {
+		t.Fatalf("count out movements: %v", err)
+	}
+	if outMovements == 0 {
+		t.Fatal("expected at least one 'out' (sale) stock_movement for the demo product")
 	}
 
 	// clear-demo must succeed (pre-fix: SQLSTATE 23503 from the stock_movement FK).

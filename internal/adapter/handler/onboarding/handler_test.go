@@ -64,6 +64,10 @@ func (s *stubStockInitializer) Execute(_ context.Context, req appob.StockInitReq
 	}, nil
 }
 
+type stubSalesRecorder struct{}
+
+func (s *stubSalesRecorder) RecordSale(_ context.Context, _ appob.DemoSaleRequest) error { return nil }
+
 type stubDemoDeleter struct{ called bool }
 
 func (s *stubDemoDeleter) DeleteDemoProducts(_ context.Context, _ uuid.UUID) error {
@@ -75,7 +79,7 @@ func (s *stubDemoDeleter) DeleteDemoProducts(_ context.Context, _ uuid.UUID) err
 
 func seedClear() (*appob.SeedDemoUseCase, *appob.ClearDemoUseCase, *stubDemoDeleter) {
 	del := &stubDemoDeleter{}
-	return appob.NewSeedDemoUseCase(&stubProductCreator{}, &stubStockInitializer{}),
+	return appob.NewSeedDemoUseCase(&stubProductCreator{}, &stubStockInitializer{}, &stubSalesRecorder{}),
 		appob.NewClearDemoUseCase(del),
 		del
 }
