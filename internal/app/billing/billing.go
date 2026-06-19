@@ -13,14 +13,14 @@ import (
 
 // ProductID is the cross-service constant Tally always passes when calling
 // platform billing endpoints. Defined in doc/coord/contracts.md.
-const ProductID = "lurus-tally"
+const ProductID = "tally"
 
 // PlatformPort is the surface of platformclient.Client we depend on.
 // Captured as an interface so use cases can be unit-tested with a stub.
 type PlatformPort interface {
 	GetAccountByZitadelSub(ctx context.Context, sub string) (*platformclient.Account, error)
 	GetAccountOverview(ctx context.Context, accountID int64, productID string) (*platformclient.AccountOverview, error)
-	SubscriptionCheckout(ctx context.Context, req platformclient.SubscriptionCheckoutRequest) (*platformclient.SubscriptionCheckoutResponse, error)
+	SubscriptionCheckout(ctx context.Context, req platformclient.SubscriptionCheckoutRequest, idempotencyKey string) (*platformclient.SubscriptionCheckoutResponse, error)
 }
 
 // SubscribeInput is what the HTTP handler hands to the use case.
@@ -30,6 +30,9 @@ type SubscribeInput struct {
 	BillingCycle  string
 	PaymentMethod string
 	ReturnURL     string
+	// IdempotencyKey is forwarded to platform's checkout so a Tally-side retry
+	// cannot double-charge; platform mandates it on financial mutations.
+	IdempotencyKey string
 }
 
 // SubscribeOutput captures both the wallet-activation and the redirect-pay shapes.
@@ -78,7 +81,7 @@ func (uc *SubscribeUseCase) Execute(ctx context.Context, in SubscribeInput) (*Su
 		BillingCycle:  in.BillingCycle,
 		PaymentMethod: in.PaymentMethod,
 		ReturnURL:     in.ReturnURL,
-	})
+	}, in.IdempotencyKey)
 	if err != nil {
 		return nil, fmt.Errorf("checkout: %w", err)
 	}
@@ -91,7 +94,7 @@ func (uc *SubscribeUseCase) Execute(ctx context.Context, in SubscribeInput) (*Su
 }
 
 // OverviewUseCase returns the wallet/subscription/entitlement snapshot for
-// the caller, scoped to the lurus-tally product.
+// the caller, scoped to the tally product.
 type OverviewUseCase struct {
 	platform PlatformPort
 }

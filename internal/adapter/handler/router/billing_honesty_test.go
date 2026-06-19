@@ -79,6 +79,10 @@ func TestBillingRoutes_NilHandler_Returns501(t *testing.T) {
 	for _, tc := range cases {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(tc.method, tc.path, nil)
+		// /billing/subscribe is now idempotency-gated (RequireIdempotencyKey);
+		// supply a key so the request reaches the handler/stub under test rather
+		// than short-circuiting at the 400 guard. GET overview ignores it.
+		req.Header.Set("Idempotency-Key", "honesty-test-key")
 		r.ServeHTTP(w, req)
 
 		if w.Code != http.StatusNotImplemented {
@@ -114,6 +118,10 @@ func TestBillingRoutes_RealHandler_NotImplementedReplaced(t *testing.T) {
 	for _, tc := range cases {
 		w := httptest.NewRecorder()
 		req, _ := http.NewRequest(tc.method, tc.path, nil)
+		// /billing/subscribe is now idempotency-gated (RequireIdempotencyKey);
+		// supply a key so the request reaches the handler/stub under test rather
+		// than short-circuiting at the 400 guard. GET overview ignores it.
+		req.Header.Set("Idempotency-Key", "honesty-test-key")
 		r.ServeHTTP(w, req)
 
 		if w.Code == http.StatusNotImplemented {

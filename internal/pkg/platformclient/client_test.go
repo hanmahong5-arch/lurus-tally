@@ -92,11 +92,11 @@ func TestSubscriptionCheckout_WalletActivation(t *testing.T) {
 
 	resp, err := newClient(t, srv).SubscriptionCheckout(context.Background(), platformclient.SubscriptionCheckoutRequest{
 		AccountID:     42,
-		ProductID:     "lurus-tally",
+		ProductID:     "tally",
 		PlanCode:      "pro",
 		BillingCycle:  "monthly",
 		PaymentMethod: "wallet",
-	})
+	}, "idem-local-test")
 	if err != nil {
 		t.Fatalf("checkout err: %v", err)
 	}
@@ -116,11 +116,11 @@ func TestSubscriptionCheckout_AlipayReturnsPayURL(t *testing.T) {
 
 	resp, err := newClient(t, srv).SubscriptionCheckout(context.Background(), platformclient.SubscriptionCheckoutRequest{
 		AccountID:     42,
-		ProductID:     "lurus-tally",
+		ProductID:     "tally",
 		PlanCode:      "pro",
 		BillingCycle:  "monthly",
 		PaymentMethod: "alipay",
-	})
+	}, "idem-local-test")
 	if err != nil {
 		t.Fatalf("checkout err: %v", err)
 	}
@@ -138,11 +138,11 @@ func TestSubscriptionCheckout_InsufficientBalance_MapsTo402Code(t *testing.T) {
 
 	_, err := newClient(t, srv).SubscriptionCheckout(context.Background(), platformclient.SubscriptionCheckoutRequest{
 		AccountID:     42,
-		ProductID:     "lurus-tally",
+		ProductID:     "tally",
 		PlanCode:      "pro",
 		BillingCycle:  "monthly",
 		PaymentMethod: "wallet",
-	})
+	}, "idem-local-test")
 	if !platformclient.IsCode(err, platformclient.ErrCodeInsufficientBalance) {
 		t.Errorf("expected ErrCodeInsufficientBalance, got %v", err)
 	}
@@ -156,11 +156,11 @@ func TestSubscriptionCheckout_PlatformDown_MapsToUnavailable(t *testing.T) {
 
 	_, err := newClient(t, srv).SubscriptionCheckout(context.Background(), platformclient.SubscriptionCheckoutRequest{
 		AccountID:     42,
-		ProductID:     "lurus-tally",
+		ProductID:     "tally",
 		PlanCode:      "pro",
 		BillingCycle:  "monthly",
 		PaymentMethod: "wallet",
-	})
+	}, "idem-local-test")
 	if !platformclient.IsCode(err, platformclient.ErrCodeUnavailable) {
 		t.Errorf("expected ErrCodeUnavailable, got %v", err)
 	}
@@ -168,7 +168,7 @@ func TestSubscriptionCheckout_PlatformDown_MapsToUnavailable(t *testing.T) {
 
 func TestGetAccountOverview_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("product_id") != "lurus-tally" {
+		if r.URL.Query().Get("product_id") != "tally" {
 			t.Errorf("missing product_id query: %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
@@ -182,7 +182,7 @@ func TestGetAccountOverview_HappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	ov, err := newClient(t, srv).GetAccountOverview(context.Background(), 42, "lurus-tally")
+	ov, err := newClient(t, srv).GetAccountOverview(context.Background(), 42, "tally")
 	if err != nil {
 		t.Fatalf("overview err: %v", err)
 	}

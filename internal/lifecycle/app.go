@@ -514,7 +514,47 @@ func NewApp(cfg *config.Config) (*App, error) {
 			sessionMW(c)
 		}
 	} else {
-		l.Warn("auth middleware disabled (ZITADEL_DOMAIN not set) — /api/v1 is unauthenticated")
+		// Dev mode: config.Load rejects an empty ZITADEL_DOMAIN unless
+		// TALLY_DEV_MODE=true, so reaching this branch means dev is explicitly on.
+		// Inject identity from trusted headers (X-Zitadel-Sub / X-Email /
+		// X-Display-Name / X-Tenant-ID) so EVERY handler reading
+		// middleware.GetZitadelSub / GetTenantID works consistently — previously
+		// only the billing handler's ad-hoc callerSub() honoured the header, so
+		// /tenant/profile (ChooseProfile) and other setup endpoints 401'd in dev,
+		// making first-time onboarding impossible to exercise locally.
+		// NEVER reachable in prod (ZITADEL_DOMAIN is always set there).
+		l.Warn("auth middleware: DEV header-injection mode (X-Zitadel-Sub / X-Tenant-ID trusted) — local only, never prod")
+		authMW = func(c *gin.Context) {
+			if sub := c.GetHeader("X-Zitadel-Sub"); sub != "" {
+				c.Set(middleware.CtxKeyZitadelSub, sub)
+			}
+			if email := c.GetHeader("X-Email"); email != "" {
+				c.Set(middleware.CtxKeyEmail, email)
+			}
+			if name := c.GetHeader("X-Display-Name"); name != "" {
+				c.Set(middleware.CtxKeyDisplayName, name)
+			}
+			var tenantID uuid.UUID
+			if tid := c.GetHeader("X-Tenant-ID"); tid != "" {
+				if parsed, err := uuid.Parse(tid); err == nil {
+					tenantID = parsed
+				}
+			}
+			// No explicit tenant header: resolve via the same user_identity_mapping
+			// lookup the real middleware uses, so onboarded dev users get their
+			// tenant_id without having to pass it on every call.
+			if tenantID == uuid.Nil {
+				if sub := c.GetHeader("X-Zitadel-Sub"); sub != "" {
+					if m, err := tenantStore.GetMappingBySub(c.Request.Context(), sub); err == nil && m != nil {
+						tenantID = m.TenantID
+					}
+				}
+			}
+			if tenantID != uuid.Nil {
+				c.Set(middleware.CtxKeyTenantID, tenantID)
+			}
+			c.Next()
+		}
 	}
 
 	// Wire horticulture nursery dictionary (Story 28.1).

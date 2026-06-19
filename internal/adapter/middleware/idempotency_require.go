@@ -24,6 +24,11 @@ var requireIdempotencyKeyRoutes = map[string]struct{}{
 	"POST /api/v1/sale-bills/:id/approve":     {},
 	"POST /api/v1/sale-bills/quick-checkout":  {},
 	"POST /api/v1/ai/plans/:plan_id/confirm":  {},
+	// Subscription checkout debits the wallet / creates a payment order on
+	// platform; platform itself mandates an Idempotency-Key on this financial
+	// mutation, so a key-less retry would 400 downstream. Make it mandatory at
+	// Tally's edge and forward the key (see app/billing SubscribeInput).
+	"POST /api/v1/billing/subscribe": {},
 }
 
 // RequireIdempotencyKey returns a middleware that rejects requests to the

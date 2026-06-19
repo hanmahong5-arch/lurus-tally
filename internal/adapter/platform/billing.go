@@ -126,7 +126,7 @@ func (c *Client) GetAccountOverview(ctx context.Context, accountID int64, produc
 
 // SubscriptionCheckout posts a checkout intent and returns either an activated
 // subscription (wallet) or a payment URL the user should be redirected to.
-func (c *Client) SubscriptionCheckout(ctx context.Context, req SubscriptionCheckoutRequest) (*SubscriptionCheckoutResponse, error) {
+func (c *Client) SubscriptionCheckout(ctx context.Context, req SubscriptionCheckoutRequest, idempotencyKey string) (*SubscriptionCheckoutResponse, error) {
 	if req.AccountID <= 0 {
 		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "account_id is required"}
 	}
@@ -134,7 +134,7 @@ func (c *Client) SubscriptionCheckout(ctx context.Context, req SubscriptionCheck
 		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "product_id, plan_code, billing_cycle, payment_method are required"}
 	}
 	var out SubscriptionCheckoutResponse
-	if err := c.do(ctx, http.MethodPost, "/internal/v1/subscriptions/checkout", req, &out); err != nil {
+	if err := c.doWithIdem(ctx, http.MethodPost, "/internal/v1/subscriptions/checkout", req, idempotencyKey, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

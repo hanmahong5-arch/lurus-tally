@@ -24,8 +24,9 @@ import (
 
 const (
 	// ProductID is Tally's identifier in the platform product registry
-	// (lurus-platform migration 025).
-	ProductID = "lurus-tally"
+	// (seeded by lurus-platform migration 025, canonicalized to the bare
+	// form in migration 100).
+	ProductID = "tally"
 	// MetricLLMTokens is the metering metric name for LLM token spend.
 	MetricLLMTokens = "llm_tokens"
 

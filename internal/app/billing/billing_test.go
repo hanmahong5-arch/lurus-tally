@@ -10,14 +10,15 @@ import (
 )
 
 type stubPlatform struct {
-	account         *platformclient.Account
-	accountErr      error
-	overview        *platformclient.AccountOverview
-	overviewErr     error
-	checkoutResp    *platformclient.SubscriptionCheckoutResponse
-	checkoutErr     error
-	gotCheckoutReq  platformclient.SubscriptionCheckoutRequest
-	gotOverviewArgs struct {
+	account           *platformclient.Account
+	accountErr        error
+	overview          *platformclient.AccountOverview
+	overviewErr       error
+	checkoutResp      *platformclient.SubscriptionCheckoutResponse
+	checkoutErr       error
+	gotCheckoutReq    platformclient.SubscriptionCheckoutRequest
+	gotIdempotencyKey string
+	gotOverviewArgs   struct {
 		ID        int64
 		ProductID string
 	}
@@ -33,8 +34,9 @@ func (s *stubPlatform) GetAccountOverview(_ context.Context, id int64, productID
 	return s.overview, s.overviewErr
 }
 
-func (s *stubPlatform) SubscriptionCheckout(_ context.Context, req platformclient.SubscriptionCheckoutRequest) (*platformclient.SubscriptionCheckoutResponse, error) {
+func (s *stubPlatform) SubscriptionCheckout(_ context.Context, req platformclient.SubscriptionCheckoutRequest, idempotencyKey string) (*platformclient.SubscriptionCheckoutResponse, error) {
 	s.gotCheckoutReq = req
+	s.gotIdempotencyKey = idempotencyKey
 	return s.checkoutResp, s.checkoutErr
 }
 
@@ -68,17 +70,21 @@ func TestSubscribe_PropagatesProductIDAndAccountID(t *testing.T) {
 	uc := billing.NewSubscribeUseCase(stub)
 
 	out, err := uc.Execute(context.Background(), billing.SubscribeInput{
-		ZitadelSub:    "sub-abc",
-		PlanCode:      "pro",
-		BillingCycle:  "monthly",
-		PaymentMethod: "wallet",
-		ReturnURL:     "/subscription",
+		ZitadelSub:     "sub-abc",
+		PlanCode:       "pro",
+		BillingCycle:   "monthly",
+		PaymentMethod:  "wallet",
+		ReturnURL:      "/subscription",
+		IdempotencyKey: "idem-key-xyz",
 	})
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if stub.gotCheckoutReq.AccountID != 7 {
 		t.Errorf("AccountID propagation wrong: %d", stub.gotCheckoutReq.AccountID)
+	}
+	if stub.gotIdempotencyKey != "idem-key-xyz" {
+		t.Errorf("IdempotencyKey must be forwarded to platform checkout, got %q", stub.gotIdempotencyKey)
 	}
 	if stub.gotCheckoutReq.ProductID != billing.ProductID {
 		t.Errorf("ProductID must be %s, got %s", billing.ProductID, stub.gotCheckoutReq.ProductID)
