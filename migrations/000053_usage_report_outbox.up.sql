@@ -29,9 +29,20 @@ CREATE INDEX ix_usage_report_outbox_unsent
   WHERE sent_at IS NULL;
 
 ALTER TABLE tally.usage_report_outbox ENABLE ROW LEVEL SECURITY;
+-- FORCE so the policy also binds the table OWNER — the role the app connects as.
+-- ENABLE alone does NOT apply to the owner (the silent-bypass class migration 042
+-- was written to fix); every other tenant table is FORCEd, so this one must be too.
+ALTER TABLE tally.usage_report_outbox FORCE ROW LEVEL SECURITY;
 
+-- USING + WITH CHECK (the form migration 042 standardised) so the 'service' pin /
+-- tenant isolation governs reads AND writes; without WITH CHECK an INSERT under
+-- FORCE would lean on Postgres defaulting it to USING, which is implicit and fragile.
 CREATE POLICY usage_report_outbox_isolation ON tally.usage_report_outbox
   USING (
+    current_setting('app.tenant_id', true) = 'service'
+    OR tenant_id::text = current_setting('app.tenant_id', true)
+  )
+  WITH CHECK (
     current_setting('app.tenant_id', true) = 'service'
     OR tenant_id::text = current_setting('app.tenant_id', true)
   );

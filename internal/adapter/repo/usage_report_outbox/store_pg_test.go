@@ -1,8 +1,10 @@
 // Package usage_report_outbox_test holds the PG integration test for the durable
-// usage-retry store. It needs a real PostgreSQL with the tally schema + FORCE RLS
-// (migrations applied, incl. 000053) and is skipped when DATABASE_DSN is unset.
-// The RLS `SET LOCAL app.tenant_id='service'` drain path cannot be exercised by
-// the hermetic SQLite shim, so the SQL round-trip is proven here.
+// usage-retry store. It needs a real PostgreSQL with the tally schema (migrations
+// applied, incl. 000053) and is skipped when DATABASE_DSN is unset. It proves the
+// SQL round-trip and the `SET LOCAL app.tenant_id='service'` code path execute
+// against real Postgres (which the hermetic SQLite shim cannot). It does NOT
+// assert cross-tenant RLS isolation: the test connects as the schema owner, and
+// proving FORCE-RLS denial would require a separate non-owner role.
 package usage_report_outbox_test
 
 import (
