@@ -53,6 +53,7 @@ type AccountResolver interface {
 // fresh background context (the request ctx is cancelled the moment the LLM
 // response returns).
 type event struct {
+	id               uuid.UUID // stable identity → idempotency key, shared by in-memory post and durable retry
 	tenant           string
 	model            string
 	promptTokens     int
@@ -66,12 +67,16 @@ type Config struct {
 	Workers    int           // drain concurrency (default 2)
 	Timeout    time.Duration // per-post/ resolve timeout (default 5s)
 	Logger     *slog.Logger
+	// Store is the durable retry queue. When nil (degraded config) a
+	// recoverable failure falls back to the legacy loud drop instead of queuing.
+	Store UsageOutbox
 }
 
 // Reporter implements llmgateway.UsageSink.
 type Reporter struct {
 	poster   EventPoster
 	resolver AccountResolver
+	store    UsageOutbox // durable retry queue; nil → legacy drop (degraded config)
 	logger   *slog.Logger
 	timeout  time.Duration
 	workers  int
@@ -84,9 +89,11 @@ type Reporter struct {
 	mu    sync.RWMutex
 	cache map[string]int64
 
-	// Injectable for tests; default to real uuid / wall clock.
-	newKey func() string
-	now    func() time.Time
+	// Injectable for tests; default to real uuid / wall clock. newID mints the
+	// per-event id that seeds the stable idempotency key (so an in-memory post
+	// and its durable retry share one identity → platform dedups).
+	newID func() uuid.UUID
+	now   func() time.Time
 
 	started atomic.Bool
 }
@@ -109,12 +116,13 @@ func New(poster EventPoster, resolver AccountResolver, cfg Config) *Reporter {
 	return &Reporter{
 		poster:   poster,
 		resolver: resolver,
+		store:    cfg.Store,
 		logger:   logger,
 		timeout:  cfg.Timeout,
 		workers:  cfg.Workers,
 		ch:       make(chan event, cfg.BufferSize),
 		cache:    make(map[string]int64),
-		newKey:   func() string { return uuid.NewString() },
+		newID:    func() uuid.UUID { return uuid.New() },
 		now:      func() time.Time { return time.Now().UTC() },
 	}
 }
@@ -149,6 +157,7 @@ func (r *Reporter) Record(ctx context.Context, model string, promptTokens, compl
 	}
 	select {
 	case r.ch <- event{
+		id:               r.newID(),
 		tenant:           tenant,
 		model:            model,
 		promptTokens:     promptTokens,
@@ -172,9 +181,11 @@ func (r *Reporter) process(ev event) {
 		return
 	}
 
-	accountID, ok := r.resolveAccount(tid)
+	accountID, ok, reason := r.resolveAccount(tid)
 	if !ok {
-		// Either unprovisioned or a resolver error (already logged). Skip.
+		// Unprovisioned tenant or resolver error — durably queue for retry
+		// (re-resolved later) instead of silently dropping.
+		r.enqueueForRetry(ev, tid, reason)
 		return
 	}
 
@@ -187,7 +198,7 @@ func (r *Reporter) process(ev event) {
 		Metric:         MetricLLMTokens,
 		Quantity:       int64(ev.promptTokens + ev.completionTokens),
 		OccurredAt:     ev.occurredAt,
-		IdempotencyKey: r.newKey(),
+		IdempotencyKey: usageIdemKey(ev.id),
 		Metadata: map[string]any{
 			"tenant_id":         ev.tenant,
 			"model":             ev.model,
@@ -198,23 +209,57 @@ func (r *Reporter) process(ev event) {
 	}
 	if err := r.poster.ReportUsageEvent(ctx, req); err != nil {
 		metricPostErr.Inc()
-		r.logger.Warn("usage event post failed (shadow; dropped)",
+		r.logger.Warn("usage event post failed; queued for retry",
 			slog.String("tenant", ev.tenant),
 			slog.Int64("account_id", accountID),
 			slog.String("error", err.Error()))
+		r.enqueueForRetry(ev, tid, "post_error")
 		return
 	}
 	metricPosted.Inc()
 }
 
+// enqueueForRetry durably queues a recoverable-failure event so it is retried
+// (with the account re-resolved) instead of silently dropped. With no durable
+// store wired (degraded config) it falls back to the legacy loud drop, so the
+// reporter still works — it just loses the at-least-once guarantee.
+func (r *Reporter) enqueueForRetry(ev event, tid uuid.UUID, reason string) {
+	if r.store == nil {
+		metricSkipped.WithLabelValues(reason).Inc()
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+	defer cancel()
+	if err := r.store.Enqueue(ctx, PendingUsageRow{
+		ID:               ev.id,
+		TenantID:         tid,
+		Model:            ev.model,
+		PromptTokens:     ev.promptTokens,
+		CompletionTokens: ev.completionTokens,
+		OccurredAt:       ev.occurredAt,
+		Reason:           reason,
+	}); err != nil {
+		// Platform AND the local DB are both unreachable — genuine last-resort loss.
+		metricEnqueueFailed.Inc()
+		r.logger.Warn("usage reporter: durable enqueue failed; event lost",
+			slog.String("tenant", ev.tenant),
+			slog.String("reason", reason),
+			slog.String("error", err.Error()))
+		return
+	}
+	metricQueuedForRetry.WithLabelValues(reason).Inc()
+}
+
 // resolveAccount returns the tenant's platform account id, using the positive
-// cache first. Returns ok=false on unprovisioned tenant or resolver error.
-func (r *Reporter) resolveAccount(tid uuid.UUID) (int64, bool) {
+// cache first. On failure it returns ok=false and a reason ("resolve_error" |
+// "no_account") so the caller decides whether to queue or drop — the metric is
+// no longer bumped here (a queued event is not "skipped").
+func (r *Reporter) resolveAccount(tid uuid.UUID) (int64, bool, string) {
 	key := tid.String()
 	r.mu.RLock()
 	if id, hit := r.cache[key]; hit {
 		r.mu.RUnlock()
-		return id, true
+		return id, true, ""
 	}
 	r.mu.RUnlock()
 
@@ -222,19 +267,17 @@ func (r *Reporter) resolveAccount(tid uuid.UUID) (int64, bool) {
 	defer cancel()
 	id, ok, err := r.resolver.GetPlatformAccountID(ctx, tid)
 	if err != nil {
-		metricSkipped.WithLabelValues("resolve_error").Inc()
 		r.logger.Warn("usage reporter: account resolve failed",
 			slog.String("tenant", key), slog.String("error", err.Error()))
-		return 0, false
+		return 0, false, "resolve_error"
 	}
 	if !ok {
-		metricSkipped.WithLabelValues("no_account").Inc()
-		return 0, false
+		return 0, false, "no_account"
 	}
 	r.mu.Lock()
 	r.cache[key] = id
 	r.mu.Unlock()
-	return id, true
+	return id, true, ""
 }
 
 // Stop closes the queue and waits for workers to drain, bounded by ctx. After

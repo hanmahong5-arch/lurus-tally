@@ -67,6 +67,7 @@ import (
 	reposupplier "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/supplier"
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
+	repousageoutbox "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/usage_report_outbox"
 	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/usagereport"
 	appacct "github.com/hanmahong5-arch/lurus-tally/internal/app/account"
@@ -120,14 +121,15 @@ const (
 // App is the application root. It holds all wired dependencies and manages
 // the HTTP server lifecycle. No global variables; all state lives here.
 type App struct {
-	cfg           *config.Config
-	log           *slog.Logger
-	engine        *gin.Engine
-	srv           *http.Server
-	db            *sql.DB
-	stopOutbox    context.CancelFunc // cancels the outbox worker goroutine on Stop
-	auditSub      *adapternats.AuditSubscriber
-	usageReporter *usagereport.Reporter // nil when AI or platform integration is off
+	cfg            *config.Config
+	log            *slog.Logger
+	engine         *gin.Engine
+	srv            *http.Server
+	db             *sql.DB
+	stopOutbox     context.CancelFunc // cancels the outbox worker goroutine on Stop
+	stopUsageRetry context.CancelFunc // cancels the usage durable-retry worker on Stop
+	auditSub       *adapternats.AuditSubscriber
+	usageReporter  *usagereport.Reporter // nil when AI or platform integration is off
 }
 
 // NewApp wires all dependencies together and returns a ready-to-start App.
@@ -348,6 +350,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// The AI plan store reuses the hoisted Redis client above.
 	var aiHandler *handlerai.Handler
 	var usageReporter *usagereport.Reporter
+	var usageRetryCancel context.CancelFunc // cancels the usage durable-retry worker on Stop
 	if cfg.NewAPIKey != "" {
 		if rdb == nil {
 			return nil, fmt.Errorf("lifecycle: AI assistant requires REDIS_URL (NEWAPI_API_KEY is set but Redis is unavailable)")
@@ -433,14 +436,26 @@ func NewApp(cfg *config.Config) (*App, error) {
 		// path is unchanged. The reporter is fail-open: a platform outage or an
 		// unprovisioned tenant never blocks or errors a chat response.
 		if platClient != nil {
+			usageOutboxStore := repousageoutbox.New(db)
 			usageReporter = usagereport.New(
 				platClient,
 				repotenant.NewTenantRepo(db),
-				usagereport.Config{Logger: l},
+				usagereport.Config{Logger: l, Store: usageOutboxStore},
 			)
 			usageReporter.Start()
 			llmgateway.SetUsageSink(usageReporter)
-			l.Info("LLM usage reporter enabled (unified-billing shadow)",
+
+			// Durable-retry worker: re-resolves the account + re-POSTs queued
+			// usage events, so an unprovisioned-tenant / platform-down drop is
+			// back-reported instead of lost. Cancelled by Stop().
+			var usageRetryCtx context.Context
+			usageRetryCtx, usageRetryCancel = context.WithCancel(context.Background())
+			go usagereport.NewRetryWorker(
+				usageOutboxStore, platClient, repotenant.NewTenantRepo(db),
+				usagereport.Config{Logger: l},
+			).Run(usageRetryCtx)
+
+			l.Info("LLM usage reporter enabled (unified-billing shadow, durable retry)",
 				slog.String("product_id", usagereport.ProductID))
 		}
 
@@ -801,14 +816,15 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}
 
 	return &App{
-		cfg:           cfg,
-		log:           l,
-		engine:        r,
-		srv:           srv,
-		db:            db,
-		stopOutbox:    outboxCancel,
-		auditSub:      auditSub,
-		usageReporter: usageReporter,
+		cfg:            cfg,
+		log:            l,
+		engine:         r,
+		srv:            srv,
+		db:             db,
+		stopOutbox:     outboxCancel,
+		stopUsageRetry: usageRetryCancel,
+		auditSub:       auditSub,
+		usageReporter:  usageReporter,
 	}, nil
 }
 

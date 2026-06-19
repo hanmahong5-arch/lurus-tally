@@ -18,6 +18,10 @@ func (a *App) Stop(ctx context.Context) error {
 	if a.stopOutbox != nil {
 		a.stopOutbox()
 	}
+	// Stop the usage durable-retry worker (queries the resolver + store) before DB close.
+	if a.stopUsageRetry != nil {
+		a.stopUsageRetry()
+	}
 	// Drain the audit subscriber too — owns its own JetStream consume goroutines.
 	if a.auditSub != nil {
 		a.auditSub.Stop()
