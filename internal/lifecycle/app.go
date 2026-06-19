@@ -28,6 +28,7 @@ import (
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
 	handleronboarding "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/onboarding"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
+	handlerprivacy "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/privacy"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
 	handlerreplenish "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/replenish"
@@ -50,6 +51,7 @@ import (
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
 	repodau "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dau"
 	repodigest "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/digest"
+	repoerasure "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/erasure"
 	repooutbox "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/event_outbox"
 	repohorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/horticulture"
 	repoimporting "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/importing"
@@ -75,6 +77,7 @@ import (
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
 	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
 	appentitlement "github.com/hanmahong5-arch/lurus-tally/internal/app/entitlement"
+	apperasure "github.com/hanmahong5-arch/lurus-tally/internal/app/erasure"
 	appexport "github.com/hanmahong5-arch/lurus-tally/internal/app/export"
 	apphorticulture "github.com/hanmahong5-arch/lurus-tally/internal/app/horticulture"
 	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
@@ -725,6 +728,17 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// PSI_TELEMETRY.web.* (S0.Q3). Bearer-gated via the same key as metrics.
 	telemetryHandler := handlertelemetry.New(natsPub, cfg.PlatformInternalKey, "anonymous", dauRecorder)
 	telemetryHandler.Register(r)
+
+	// POST /internal/v1/privacy/erase — PIPL §47 erasure cascade driven by
+	// lurus-platform's account-purge worker. Mounted on the root engine (bypasses
+	// the OIDC /api/v1 stack) and fail-closed behind the shared internal key, the
+	// symmetric counterpart of the key tally sends platform. Redacts the data
+	// subject's identity PII; the tenant's business records are untouched.
+	erasureSvc := apperasure.NewService(repoerasure.New(db), l)
+	privacyHandler := handlerprivacy.NewHandler(erasureSvc)
+	privacyGroup := r.Group("/internal/v1/privacy")
+	privacyGroup.Use(middleware.RequireInternalKey(cfg.PlatformInternalKey))
+	privacyGroup.POST("/erase", privacyHandler.Erase)
 
 	// POST /webhooks/shopify/orders — public (HMAC-verified) e-commerce ingest.
 	// Mounted on the root engine so it bypasses the /api/v1 auth middleware.
