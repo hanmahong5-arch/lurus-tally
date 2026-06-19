@@ -74,6 +74,7 @@ import (
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
 	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
+	appentitlement "github.com/hanmahong5-arch/lurus-tally/internal/app/entitlement"
 	appexport "github.com/hanmahong5-arch/lurus-tally/internal/app/export"
 	apphorticulture "github.com/hanmahong5-arch/lurus-tally/internal/app/horticulture"
 	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
@@ -413,6 +414,13 @@ func NewApp(cfg *config.Config) (*App, error) {
 		)
 		reverter := buildReverter(db, repostock.New(db), recordMovementUC, planStore, rdb)
 		aiHandler = handlerai.NewWithLimiter(orchestrator, limiter).WithReverter(reverter)
+		// Gate the AI assistant on the `ai_assistant` plan entitlement so free
+		// accounts cannot spend LLM budget reserved for paid tiers. Only when
+		// platform is wired — otherwise the gate fails open anyway, so skip.
+		if platClient != nil {
+			entSvc := appentitlement.NewService(platClient, l)
+			aiHandler = aiHandler.WithEntitlementGate(middleware.RequireEntitlement(entSvc, "ai_assistant"))
+		}
 		// Attach LLM span tracer (env LANGFUSE_* → OTLP exporter; missing → no-op).
 		WireTracer(orchestrator, BuildTracer(cfg))
 

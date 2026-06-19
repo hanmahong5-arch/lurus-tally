@@ -44,6 +44,7 @@ type Handler struct {
 	orchestrator ChatOrchestrator
 	reverter     PlanReverter            // nil → revert endpoint returns 501
 	limiter      *llmgateway.RateLimiter // nil → no rate limiting (dev / tests)
+	entGate      gin.HandlerFunc         // nil → AI ungated (platform unwired / dev)
 }
 
 // New constructs an AI Handler with no rate limiting. Production callers
@@ -65,10 +66,22 @@ func (h *Handler) WithReverter(r PlanReverter) *Handler {
 	return h
 }
 
+// WithEntitlementGate attaches a middleware that restricts the AI assistant to
+// plans entitled to it (the `ai_assistant` entitlement). When nil — platform
+// unwired or dev — the AI endpoints stay ungated, matching tally's
+// graceful-degrade posture.
+func (h *Handler) WithEntitlementGate(mw gin.HandlerFunc) *Handler {
+	h.entGate = mw
+	return h
+}
+
 // RegisterRoutes mounts AI endpoints onto the given router group.
 // The group must already be guarded by AuthMiddleware so tenant_id is present.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	ai := rg.Group("/ai")
+	if h.entGate != nil {
+		ai.Use(h.entGate)
+	}
 	{
 		ai.POST("/chat", h.Chat)
 		ai.GET("/plans", h.ListPlans)
