@@ -139,12 +139,20 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Supplie
 	return items, total, nil
 }
 
-// Update persists changes to an existing supplier.
+// Update persists changes to an existing supplier AND keeps its tally.partner
+// mirror (name/code) in sync, in one atomic CTE — otherwise a renamed supplier
+// would keep a stale partner name/code on every bill that references it.
 func (r *Repo) Update(ctx context.Context, s *domain.Supplier) error {
 	const q = `
-		UPDATE tally.supplier SET
-			code=$1, name=$2, contact=$3, phone=$4, email=$5, address=$6, remark=$7, updated_at=$8
-		WHERE id=$9 AND tenant_id=$10 AND deleted_at IS NULL`
+		WITH upd AS (
+			UPDATE tally.supplier SET
+				code=$1, name=$2, contact=$3, phone=$4, email=$5, address=$6, remark=$7, updated_at=$8
+			WHERE id=$9 AND tenant_id=$10 AND deleted_at IS NULL
+			RETURNING id, code, name, updated_at
+		)
+		UPDATE tally.partner p
+		SET name=u.name, code=u.code, updated_at=u.updated_at
+		FROM upd u WHERE p.id = u.id`
 
 	db := dbscope.From(ctx, r.db)
 	res, err := db.ExecContext(ctx, q,
@@ -167,9 +175,17 @@ func (r *Repo) Update(ctx context.Context, s *domain.Supplier) error {
 	return nil
 }
 
-// Delete soft-deletes a supplier.
+// Delete soft-deletes a supplier AND its tally.partner mirror, atomically. The
+// partner code-uniqueness index is partial (WHERE deleted_at IS NULL), so soft-
+// deleting the mirror frees the code for re-use and stops a deleted supplier from
+// remaining a live, bill-referenceable partner.
 func (r *Repo) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
-	const q = `UPDATE tally.supplier SET deleted_at = $1 WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NULL`
+	const q = `
+		WITH del AS (
+			UPDATE tally.supplier SET deleted_at=$1 WHERE id=$2 AND tenant_id=$3 AND deleted_at IS NULL
+			RETURNING id
+		)
+		UPDATE tally.partner p SET deleted_at=$1, updated_at=$1 FROM del d WHERE p.id = d.id`
 	db := dbscope.From(ctx, r.db)
 	res, err := db.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
 	if err != nil {
@@ -189,9 +205,15 @@ func (r *Repo) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
 func (r *Repo) Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.Supplier, error) {
 	now := time.Now().UTC()
 	const updateQ = `
-		UPDATE tally.supplier
+		WITH res AS (
+			UPDATE tally.supplier
+			SET deleted_at = NULL, updated_at = $1
+			WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL
+			RETURNING id
+		)
+		UPDATE tally.partner p
 		SET deleted_at = NULL, updated_at = $1
-		WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL`
+		FROM res r WHERE p.id = r.id`
 
 	db := dbscope.From(ctx, r.db)
 	res, err := db.ExecContext(ctx, updateQ, now, id, tenantID)
