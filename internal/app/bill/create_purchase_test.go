@@ -128,6 +128,32 @@ func TestCreatePurchaseDraft_MissingTenantID_ReturnsError(t *testing.T) {
 	}
 }
 
+// TestCreatePurchaseDraft_RejectsProductOutsideTenant verifies S2-A: a product
+// id that is not an active product in this tenant is rejected with ErrValidation
+// BEFORE the bill is written. This closes the cross-tenant FK hole — the
+// bill_item FK alone bypasses RLS and would accept another tenant's product id.
+func TestCreatePurchaseDraft_RejectsProductOutsideTenant(t *testing.T) {
+	repo := newMockBillRepo()
+	foreignProduct := uuid.New()
+	repo.missingRefs = map[uuid.UUID]struct{}{foreignProduct: {}}
+	uc := appbill.NewCreatePurchaseDraftUseCase(repo)
+
+	_, err := uc.Execute(context.Background(), appbill.CreatePurchaseDraftRequest{
+		TenantID:  testTenantID,
+		CreatorID: testCreatorID,
+		BillDate:  time.Now(),
+		Items: []appbill.CreatePurchaseItemInput{
+			{ProductID: foreignProduct, Qty: decimal.NewFromFloat(1), UnitPrice: decimal.NewFromFloat(8), LineNo: 1},
+		},
+	})
+	if !errors.Is(err, appbill.ErrValidation) {
+		t.Fatalf("expected ErrValidation for cross-tenant product, got %T: %v", err, err)
+	}
+	if repo.storedHead != nil {
+		t.Error("bill must NOT be persisted when a product reference is invalid")
+	}
+}
+
 // TestCreatePurchaseDraft_WithUSD_StoresCurrencyAndRate verifies multi-currency fields.
 // Input: currency=USD, exchange_rate=7.25, original total=100 USD
 // Expected: bill_head.currency="USD", exchange_rate=7.25, amount_local=100, total_amount=725 CNY
@@ -247,6 +273,10 @@ type mockBillRepo struct {
 
 	// Error overrides for testing failure paths
 	updateStatusErr error
+
+	// missingRefs marks product/warehouse ids that ProductExists / WarehouseExists
+	// report as absent, modelling a missing or cross-tenant reference.
+	missingRefs map[uuid.UUID]struct{}
 }
 
 func newMockBillRepo() *mockBillRepo {
@@ -337,6 +367,16 @@ func (m *mockBillRepo) NextBillNo(_ context.Context, _ *sql.Tx, _ uuid.UUID, pre
 
 func (m *mockBillRepo) AcquireBillAdvisoryLock(_ context.Context, _ *sql.Tx, _, _ uuid.UUID) error {
 	return nil
+}
+
+func (m *mockBillRepo) ProductExists(_ context.Context, _, id uuid.UUID) (bool, error) {
+	_, missing := m.missingRefs[id]
+	return !missing, nil
+}
+
+func (m *mockBillRepo) WarehouseExists(_ context.Context, _, id uuid.UUID) (bool, error) {
+	_, missing := m.missingRefs[id]
+	return !missing, nil
 }
 
 func (m *mockBillRepo) UpdatePaidAmount(_ context.Context, _ *sql.Tx, _, billID uuid.UUID, paidAmount decimal.Decimal) error {

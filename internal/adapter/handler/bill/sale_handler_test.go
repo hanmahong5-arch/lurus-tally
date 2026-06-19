@@ -120,6 +120,14 @@ func (m *shMockBillRepo) AcquireBillAdvisoryLock(_ context.Context, _ *sql.Tx, _
 	return nil
 }
 
+func (m *shMockBillRepo) ProductExists(_ context.Context, _, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+func (m *shMockBillRepo) WarehouseExists(_ context.Context, _, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
+
 func (m *shMockBillRepo) UpdatePaidAmount(_ context.Context, _ *sql.Tx, _, billID uuid.UUID, paidAmount decimal.Decimal) error {
 	if m.updatePaidErr != nil {
 		return m.updatePaidErr

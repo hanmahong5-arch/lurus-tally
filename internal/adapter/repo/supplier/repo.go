@@ -33,13 +33,26 @@ func New(db *sql.DB) *Repo {
 // Ensure Repo satisfies the interface at compile time.
 var _ appsupp.Repository = (*Repo)(nil)
 
-// Create inserts a new supplier row.
+// Create inserts a new supplier row AND co-creates a mirrored tally.partner
+// row (partner_type='supplier') that shares the supplier's id. This makes a
+// freshly created supplier immediately referenceable as a bill partner —
+// bill_head.partner_id has a FK to tally.partner(id), so without the mirror a
+// bill that points partner_id at a supplier would fail the FK (23503 → 409).
+// Both inserts run in ONE statement via a CTE so they commit atomically: there
+// is never a supplier without its partner mirror, and a uniqueness violation on
+// either side rolls back the whole create.
 func (r *Repo) Create(ctx context.Context, s *domain.Supplier) error {
 	const q = `
-		INSERT INTO tally.supplier
-			(id, tenant_id, code, name, contact, phone, email, address, remark, created_at, updated_at)
-		VALUES
-			($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`
+		WITH ins_supplier AS (
+			INSERT INTO tally.supplier
+				(id, tenant_id, code, name, contact, phone, email, address, remark, created_at, updated_at)
+			VALUES
+				($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+			RETURNING id, tenant_id, code, name, created_at, updated_at
+		)
+		INSERT INTO tally.partner
+			(id, tenant_id, partner_type, name, code, created_at, updated_at)
+		SELECT id, tenant_id, 'supplier', name, code, created_at, updated_at FROM ins_supplier`
 
 	db := dbscope.From(ctx, r.db)
 	_, err := db.ExecContext(ctx, q,

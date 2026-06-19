@@ -139,6 +139,17 @@ func (uc *CreatePurchaseDraftUseCase) Execute(ctx context.Context, req CreatePur
 		totalAmountCNY = amountLocal.Mul(exchangeRate).Round(4)
 	}
 
+	// Reject any product/warehouse reference outside this tenant before opening
+	// the write transaction. validateRefs closes a cross-tenant hole that the
+	// bill_item / bill_head FKs miss because FK checks bypass RLS.
+	productIDs := make([]uuid.UUID, 0, len(req.Items))
+	for _, it := range req.Items {
+		productIDs = append(productIDs, it.ProductID)
+	}
+	if err := validateRefs(ctx, uc.repo, req.TenantID, productIDs, req.WarehouseID); err != nil {
+		return nil, err
+	}
+
 	billID := uuid.New()
 	now := time.Now().UTC()
 

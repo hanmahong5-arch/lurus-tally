@@ -215,6 +215,32 @@ func (r *Repo) GetBill(ctx context.Context, tenantID, billID uuid.UUID) (*domain
 	return scanBillHead(dbscope.From(ctx, r.db).QueryRowContext(ctx, q, billID, tenantID))
 }
 
+// ProductExists reports whether productID is an active (non-deleted) product
+// owned by tenantID. See appbill.BillRepo for the cross-tenant rationale.
+func (r *Repo) ProductExists(ctx context.Context, tenantID, productID uuid.UUID) (bool, error) {
+	const q = `SELECT EXISTS (
+		SELECT 1 FROM tally.product
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL)`
+	var exists bool
+	if err := dbscope.From(ctx, r.db).QueryRowContext(ctx, q, productID, tenantID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("bill repo product exists: %w", err)
+	}
+	return exists, nil
+}
+
+// WarehouseExists reports whether warehouseID is an active (non-deleted)
+// warehouse owned by tenantID.
+func (r *Repo) WarehouseExists(ctx context.Context, tenantID, warehouseID uuid.UUID) (bool, error) {
+	const q = `SELECT EXISTS (
+		SELECT 1 FROM tally.warehouse
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL)`
+	var exists bool
+	if err := dbscope.From(ctx, r.db).QueryRowContext(ctx, q, warehouseID, tenantID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("bill repo warehouse exists: %w", err)
+	}
+	return exists, nil
+}
+
 func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
 	var h domain.BillHead
 	var billType, subType string
@@ -442,7 +468,8 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 	q := `
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at
+		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at,
+		       exchange_rate
 		FROM tally.bill_head
 		WHERE ` + whereClause + `
 		ORDER BY created_at DESC
@@ -459,7 +486,7 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 		var h domain.BillHead
 		var billType, subType string
 		var status int16
-		var subtotal, shippingFee, taxAmount, totalAmount, paidAmount string
+		var subtotal, shippingFee, taxAmount, totalAmount, paidAmount, exchangeRate string
 		if err := rows.Scan(
 			&h.ID, &h.TenantID, &h.BillNo, &billType, &subType, &status,
 			&h.PartnerID, &h.WarehouseID,
@@ -469,6 +496,7 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 			&h.ApprovedAt, &h.ApprovedBy,
 			&h.Revision,
 			&h.Remark, &h.CreatedAt, &h.UpdatedAt,
+			&exchangeRate,
 		); err != nil {
 			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
 		}
@@ -488,6 +516,9 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
 		}
 		if h.PaidAmount, err = decimalutil.Parse(paidAmount, "paid_amount"); err != nil {
+			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
+		}
+		if h.ExchangeRateVal, err = decimalutil.Parse(exchangeRate, "exchange_rate"); err != nil {
 			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
 		}
 		bills = append(bills, h)

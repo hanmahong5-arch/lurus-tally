@@ -58,6 +58,23 @@ func (uc *QuickCheckoutUseCase) Execute(ctx context.Context, req QuickCheckoutRe
 		return nil, fmt.Errorf("%w: at least one item is required", ErrValidation)
 	}
 
+	// Resolve warehouse from the first item (POS is single-warehouse) and reject
+	// any product/warehouse reference outside this tenant before opening the
+	// write transaction. validateRefs closes a cross-tenant hole that the
+	// bill_item / bill_head FKs miss because FK checks bypass RLS.
+	var warehouseID *uuid.UUID
+	if len(req.Items) > 0 && req.Items[0].WarehouseID != uuid.Nil {
+		w := req.Items[0].WarehouseID
+		warehouseID = &w
+	}
+	productIDs := make([]uuid.UUID, 0, len(req.Items))
+	for _, it := range req.Items {
+		productIDs = append(productIDs, it.ProductID)
+	}
+	if err := validateRefs(ctx, uc.repo, req.TenantID, productIDs, warehouseID); err != nil {
+		return nil, err
+	}
+
 	var result QuickCheckoutResult
 
 	if err := uc.repo.WithTx(ctx, func(tx *sql.Tx) error {
@@ -74,13 +91,6 @@ func (uc *QuickCheckoutUseCase) Execute(ctx context.Context, req QuickCheckoutRe
 		}
 
 		now := time.Now().UTC()
-
-		// Resolve warehouse from first item when not set at bill level.
-		var warehouseID *uuid.UUID
-		if len(req.Items) > 0 && req.Items[0].WarehouseID != uuid.Nil {
-			w := req.Items[0].WarehouseID
-			warehouseID = &w
-		}
 
 		head := &domain.BillHead{
 			ID:          billID,
