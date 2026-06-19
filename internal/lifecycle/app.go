@@ -424,7 +424,11 @@ func NewApp(cfg *config.Config) (*App, error) {
 		// accounts cannot spend LLM budget reserved for paid tiers. Only when
 		// platform is wired — otherwise the gate fails open anyway, so skip.
 		if platClient != nil {
-			entSvc := appentitlement.NewService(platClient, l)
+			// Tenant-keyed: tally's plan is per-tenant (the bootstrap owner's
+			// account, migration 000051), so resolve via tenant->account — the same
+			// mapping the usage reporter uses — not per-user sub. This makes the gate
+			// correct for non-owner members and PAT/automation callers too.
+			entSvc := appentitlement.NewService(repotenant.NewTenantRepo(db), platClient, l)
 			aiHandler = aiHandler.WithEntitlementGate(middleware.RequireEntitlement(entSvc, "ai_assistant"))
 		}
 		// Attach LLM span tracer (env LANGFUSE_* → OTLP exporter; missing → no-op).

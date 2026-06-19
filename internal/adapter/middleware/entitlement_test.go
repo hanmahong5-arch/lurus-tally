@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	"github.com/hanmahong5-arch/lurus-tally/internal/app/entitlement"
@@ -17,17 +18,19 @@ type stubChecker struct {
 	err     error
 }
 
-func (s stubChecker) Has(_ context.Context, _, _ string) (bool, error) { return s.allowed, s.err }
+func (s stubChecker) Has(_ context.Context, _ uuid.UUID, _ string) (bool, error) {
+	return s.allowed, s.err
+}
 
 // runGate wires RequireEntitlement behind a tiny middleware that injects the
-// given sub into context (mimicking AuthMiddleware) and returns the status code
-// the gated route produced.
-func runGate(checker middleware.EntitlementChecker, sub string) int {
+// given tenant into context (mimicking AuthMiddleware) and returns the status
+// code the gated route produced.
+func runGate(checker middleware.EntitlementChecker, tenant uuid.UUID) int {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
-		if sub != "" {
-			c.Set(middleware.CtxKeyZitadelSub, sub)
+		if tenant != uuid.Nil {
+			c.Set(middleware.CtxKeyTenantID, tenant)
 		}
 		c.Next()
 	})
@@ -41,19 +44,20 @@ func runGate(checker middleware.EntitlementChecker, sub string) int {
 }
 
 func TestRequireEntitlement_Granted_PassesThrough(t *testing.T) {
-	if code := runGate(stubChecker{allowed: true}, "sub"); code != http.StatusOK {
-		t.Fatalf("granted → 200, got %d", code)
+	if code := runGate(stubChecker{allowed: true}, uuid.New()); code != http.StatusOK {
+		t.Fatalf("granted -> 200, got %d", code)
 	}
 }
 
 func TestRequireEntitlement_Absent_403(t *testing.T) {
-	if code := runGate(stubChecker{allowed: false}, "sub"); code != http.StatusForbidden {
-		t.Fatalf("absent → 403, got %d", code)
+	if code := runGate(stubChecker{allowed: false}, uuid.New()); code != http.StatusForbidden {
+		t.Fatalf("absent -> 403, got %d", code)
 	}
 }
 
 func TestRequireEntitlement_Unauthenticated_401(t *testing.T) {
-	if code := runGate(stubChecker{err: entitlement.ErrUnauthenticated}, ""); code != http.StatusUnauthorized {
-		t.Fatalf("unauthenticated → 401, got %d", code)
+	// No tenant in context → the checker returns ErrUnauthenticated → 401.
+	if code := runGate(stubChecker{err: entitlement.ErrUnauthenticated}, uuid.Nil); code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated -> 401, got %d", code)
 	}
 }
