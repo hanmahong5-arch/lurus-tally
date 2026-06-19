@@ -1,11 +1,14 @@
 // Package digest provides the weekly summary ("Monday card") use case.
 // It aggregates three signals across a tenant's inventory:
-//   - Replenishment candidates (available < safety, positive velocity)
+//   - Replenishment candidates (available below the learned reorder point)
 //   - Oversell risk (available_qty < 0 or on_hand < reserved)
 //   - Dead stock (on_hand > 0, no movement in 90 days)
 //
-// The counting / threshold logic lives here (testable with a stub repo).
-// SQL queries are kept in the adapter/repo/digest layer.
+// The replenishment count + amount come from the SAME replenish engine the
+// dashboard low-stock alert and the /replenish suggestions page use, so the
+// Monday card stays coherent with them (count == low-stock count; amount ==
+// Σ EstAmountCNY). The remaining counting logic lives here (testable with a
+// stub repo); SQL queries are kept in the adapter/repo/digest layer.
 package digest
 
 import (
@@ -14,17 +17,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
-)
 
-// ReplenishRow is one candidate product returned by the repo.
-type ReplenishRow struct {
-	ProductID    uuid.UUID
-	AvailableQty decimal.Decimal
-	SafetyQty    decimal.Decimal
-	// AvgDailySales over the past 30 days (out-direction movements / 30).
-	AvgDailySales decimal.Decimal
-	UnitCost      decimal.Decimal
-}
+	"github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
+)
 
 // ScorecardCounts is the past-week suggestion track record (F4): how many
 // suggestions were made, how many were adopted, and how many ignored
@@ -38,9 +33,10 @@ type ScorecardCounts struct {
 
 // Summary is the computed output of WeeklySummaryUseCase.
 type Summary struct {
-	// ReplenishCount is the number of SKUs below safety line with positive velocity.
+	// ReplenishCount is the number of SKUs below their reorder point — identical
+	// to the dashboard low-stock alert count (same ROP definition).
 	ReplenishCount int
-	// ReplenishAmountCNY is the estimated total purchase cost in CNY.
+	// ReplenishAmountCNY is Σ EstAmountCNY over those SKUs (estimated purchase cost).
 	ReplenishAmountCNY decimal.Decimal
 	// OversellCount is SKUs where available_qty < 0.
 	OversellCount int
@@ -54,11 +50,9 @@ type Summary struct {
 	GeneratedAt    time.Time
 }
 
-// DigestRepo is the read-only port the repo layer must satisfy.
+// DigestRepo is the read-only port the repo layer must satisfy for the counts
+// that are not derived from the replenish engine.
 type DigestRepo interface {
-	// ListReplenishCandidates returns products where available < low_safe_qty
-	// AND avg_daily_sales > 0 (velocity measured over the past 30 days).
-	ListReplenishCandidates(ctx context.Context, tenantID uuid.UUID) ([]ReplenishRow, error)
 	// CountOversell returns the number of products whose available_qty < 0.
 	CountOversell(ctx context.Context, tenantID uuid.UUID) (int, error)
 	// CountDeadStock returns the number of products with on_hand > 0 and no
@@ -72,30 +66,48 @@ type DigestRepo interface {
 
 // WeeklySummaryUseCase computes the Monday-card summary for a tenant.
 type WeeklySummaryUseCase struct {
-	repo DigestRepo
-	// coverageDays is how many days of stock to target per suggested order (default 14).
-	coverageDays int
+	repo     DigestRepo
+	replRepo replenish.SuggestionRepo
 }
 
-// NewWeeklySummaryUseCase constructs the use case with a 14-day coverage default.
-func NewWeeklySummaryUseCase(repo DigestRepo) *WeeklySummaryUseCase {
-	return &WeeklySummaryUseCase{repo: repo, coverageDays: 14}
+// NewWeeklySummaryUseCase wires the digest repo (oversell / dead-stock /
+// scorecard) and the replenish suggestion repo (replenishment count + amount).
+func NewWeeklySummaryUseCase(repo DigestRepo, replRepo replenish.SuggestionRepo) *WeeklySummaryUseCase {
+	return &WeeklySummaryUseCase{repo: repo, replRepo: replRepo}
 }
 
-// Execute runs the four aggregate queries SEQUENTIALLY and assembles the summary.
+// Execute runs the aggregate reads SEQUENTIALLY and assembles the summary.
 //
 // They must be sequential, not concurrent: when middleware.TenantDB has pinned a
-// single *sql.Conn for the request (so RLS is enforced), all four reads resolve
-// to that one connection via dbscope.From — and a *sql.Conn cannot serve queries
-// concurrently (a parallel errgroup yields "driver: bad connection"). Four small
-// aggregates run serially well within the request budget. Returning on the first
-// error also means no other query is left in flight (the original errgroup's F05
-// goal), so this is strictly safer.
+// single *sql.Conn for the request (so RLS is enforced), all reads resolve to
+// that one connection via dbscope.From — and a *sql.Conn cannot serve queries
+// concurrently (a parallel errgroup yields "driver: bad connection"). A few
+// small aggregates run serially well within the request budget. Returning on the
+// first error also means no other query is left in flight.
 func (uc *WeeklySummaryUseCase) Execute(ctx context.Context, tenantID uuid.UUID) (Summary, error) {
-	replRows, err := uc.repo.ListReplenishCandidates(ctx, tenantID)
+	raws, err := uc.replRepo.ListSuggestions(ctx, tenantID)
 	if err != nil {
 		return Summary{}, err
 	}
+
+	// Replenishment = SKUs below the learned reorder point, off the SAME
+	// Forecast + ReorderPoint the low-stock alert uses, so the count equals the
+	// dashboard low-stock count by construction. The amount sums EstAmountCNY
+	// (estimated NEW purchase spend): normally positive, but legitimately 0 when
+	// the shortfall is already covered by in-transit orders or the SKU has no
+	// cost. The count — not the amount — is what lights the Monday card.
+	replenishCount := 0
+	replenishAmount := decimal.Zero
+	for _, raw := range raws {
+		f := replenish.Forecast(raw, replenish.DefaultWeeks)
+		threshold := replenish.ReorderPoint(f)
+		if threshold.IsZero() || f.AvailableQty.GreaterThanOrEqual(threshold) {
+			continue
+		}
+		replenishCount++
+		replenishAmount = replenishAmount.Add(f.EstAmountCNY)
+	}
+
 	oversellN, err := uc.repo.CountOversell(ctx, tenantID)
 	if err != nil {
 		return Summary{}, err
@@ -109,20 +121,9 @@ func (uc *WeeklySummaryUseCase) Execute(ctx context.Context, tenantID uuid.UUID)
 		return Summary{}, err
 	}
 
-	coverage := decimal.NewFromInt(int64(uc.coverageDays))
-	totalAmount := decimal.Zero
-	for _, r := range replRows {
-		// suggestedQty = avgDailySales × coverageDays − available (floor 0)
-		suggested := r.AvgDailySales.Mul(coverage).Sub(r.AvailableQty)
-		if suggested.IsNegative() {
-			suggested = decimal.Zero
-		}
-		totalAmount = totalAmount.Add(suggested.Mul(r.UnitCost))
-	}
-
 	return Summary{
-		ReplenishCount:     len(replRows),
-		ReplenishAmountCNY: totalAmount,
+		ReplenishCount:     replenishCount,
+		ReplenishAmountCNY: replenishAmount,
 		OversellCount:      oversellN,
 		DeadStockCount:     deadStockN,
 		Suggested:          scorecard.Suggested,

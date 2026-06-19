@@ -20,12 +20,14 @@ package integration
 import (
 	"context"
 	"testing"
+	"time"
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 	"github.com/shopspring/decimal"
 
 	repoonboarding "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/onboarding"
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
+	appob "github.com/hanmahong5-arch/lurus-tally/internal/app/onboarding"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domainstock "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
 )
@@ -64,15 +66,54 @@ func TestClearDemo_DeletesDemoProductsWithStock(t *testing.T) {
 		t.Fatalf("seed opening stock: %v", err)
 	}
 
-	// Sanity: the movement exists, so the FK RESTRICT would bite a naive delete.
-	var movements int
-	if err := db.QueryRowContext(ctx,
-		`SELECT count(*) FROM tally.stock_movement WHERE product_id=$1`, productID,
-	).Scan(&movements); err != nil {
-		t.Fatalf("count movements: %v", err)
+	// Record a backdated demo sale the way seed-demo now does: a sale bill
+	// (bill_head remark='DEMO' + bill_item, ON DELETE CASCADE) plus its linked
+	// 'out' movement. clear-demo must remove BOTH — the bill_item.product_id FK
+	// (RESTRICT) would otherwise block the product DELETE.
+	billItemID, err := repoonboarding.New(db).InsertDemoSale(ctx, appob.DemoSaleBill{
+		TenantID:    tenantID,
+		ProductID:   productID,
+		WarehouseID: warehouseID,
+		Qty:         decimal.NewFromInt(5),
+		UnitPrice:   decimal.NewFromInt(10),
+		UnitCost:    decimal.NewFromInt(3),
+		OccurredAt:  time.Now().Add(-3 * 24 * time.Hour),
+	})
+	if err != nil {
+		t.Fatalf("insert demo sale bill: %v", err)
 	}
-	if movements == 0 {
-		t.Fatal("expected at least one stock_movement for the demo product")
+	if _, err := uc.Execute(ctx, appstock.RecordMovementRequest{
+		TenantID:      tenantID,
+		ProductID:     productID,
+		WarehouseID:   warehouseID,
+		Direction:     domainstock.DirectionOut,
+		Qty:           decimal.NewFromInt(5),
+		ConvFactor:    "1",
+		CostStrategy:  domainstock.CostStrategyWAC,
+		ReferenceType: domainstock.RefSale,
+		ReferenceID:   &billItemID,
+	}); err != nil {
+		t.Fatalf("seed demo sale movement: %v", err)
+	}
+
+	// Sanity: the 'out' movement and the demo sale bill both exist, so the
+	// stock_movement + bill_item FKs would bite a naive product delete.
+	var outMovements, demoBills int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM tally.stock_movement WHERE product_id=$1 AND direction='out'`, productID,
+	).Scan(&outMovements); err != nil {
+		t.Fatalf("count out movements: %v", err)
+	}
+	if outMovements == 0 {
+		t.Fatal("expected at least one 'out' (sale) stock_movement for the demo product")
+	}
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM tally.bill_head WHERE tenant_id=$1 AND remark='DEMO'`, tenantID,
+	).Scan(&demoBills); err != nil {
+		t.Fatalf("count demo bills: %v", err)
+	}
+	if demoBills == 0 {
+		t.Fatal("expected at least one DEMO sale bill for the demo product")
 	}
 
 	// clear-demo must succeed (pre-fix: SQLSTATE 23503 from the stock_movement FK).
@@ -80,7 +121,8 @@ func TestClearDemo_DeletesDemoProductsWithStock(t *testing.T) {
 		t.Fatalf("clear-demo must delete demo products that have stock, got: %v", err)
 	}
 
-	// The product and all its stock rows are gone.
+	// The product and all its stock + bill rows are gone (bill_item cascades from
+	// the bill_head delete; bill_head is matched by remark='DEMO').
 	checks := []struct {
 		label string
 		query string
@@ -89,6 +131,7 @@ func TestClearDemo_DeletesDemoProductsWithStock(t *testing.T) {
 		{"stock_movement", `SELECT count(*) FROM tally.stock_movement WHERE product_id=$1`},
 		{"stock_lot", `SELECT count(*) FROM tally.stock_lot WHERE product_id=$1`},
 		{"stock_snapshot", `SELECT count(*) FROM tally.stock_snapshot WHERE product_id=$1`},
+		{"bill_item", `SELECT count(*) FROM tally.bill_item WHERE product_id=$1`},
 	}
 	for _, c := range checks {
 		var n int
@@ -99,6 +142,15 @@ func TestClearDemo_DeletesDemoProductsWithStock(t *testing.T) {
 			t.Errorf("%s still has %d row(s) for the demo product after clear-demo", c.label, n)
 		}
 	}
+	var billsLeft int
+	if err := db.QueryRowContext(ctx,
+		`SELECT count(*) FROM tally.bill_head WHERE tenant_id=$1 AND remark='DEMO'`, tenantID,
+	).Scan(&billsLeft); err != nil {
+		t.Fatalf("count demo bills after clear: %v", err)
+	}
+	if billsLeft != 0 {
+		t.Errorf("bill_head still has %d DEMO bill(s) after clear-demo", billsLeft)
+	}
 
-	t.Logf("PASS: clear-demo removed the demo product and its stock rows")
+	t.Logf("PASS: clear-demo removed the demo product, its stock rows, and its sale bills")
 }

@@ -634,7 +634,9 @@ func NewApp(cfg *config.Config) (*App, error) {
 	importHandler := handlerimporting.New(importUC, uuid.Nil)
 
 	// Wave-2 handlers — weekly digest (Req 9) + onboarding wizard (Req 7).
-	digestHandler := handlerdigest.New(appdigest.NewWeeklySummaryUseCase(repodigest.New(db)))
+	// Monday digest reuses the replenish suggestion repo so its replenishment
+	// count + amount match the dashboard low-stock alert (one ROP definition).
+	digestHandler := handlerdigest.New(appdigest.NewWeeklySummaryUseCase(repodigest.New(db), replenishRepo))
 	onboardingHandler := handleronboarding.New(
 		appproduct.NewCreateUseCase(productRepo),
 		recordMovementUC,

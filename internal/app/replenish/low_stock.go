@@ -44,11 +44,15 @@ func NewListLowStockUseCase(repo SuggestionRepo) *ListLowStockUseCase {
 	return &ListLowStockUseCase{repo: repo}
 }
 
-// lowStockThreshold is the reorder point against which available stock is
-// compared. An explicit per-product low_safe_qty (SafetyQty) wins when set;
-// otherwise the learned ROP is used. Zero means "no demand signal" (new SKU /
-// dead stock) — the caller skips those rather than alerting on noise.
-func lowStockThreshold(f SuggestionRow) decimal.Decimal {
+// ReorderPoint is the reorder point against which available stock is compared.
+// An explicit per-product low_safe_qty (SafetyQty) wins when set; otherwise the
+// learned ROP is used. Zero means "no demand signal" (new SKU / dead stock) —
+// the caller skips those rather than alerting on noise.
+//
+// Exported so the Monday weekly digest reuses the SAME reorder-point definition
+// the low-stock alert uses (one signal, off one definition): the digest's
+// replenish count then equals the dashboard low-stock count by construction.
+func ReorderPoint(f SuggestionRow) decimal.Decimal {
 	if f.SafetyQty.IsPositive() {
 		return f.SafetyQty
 	}
@@ -71,7 +75,7 @@ func (uc *ListLowStockUseCase) Execute(ctx context.Context, tenantID uuid.UUID, 
 	matched := make([]SuggestionRow, 0, len(raws))
 	for _, raw := range raws {
 		f := Forecast(raw, DefaultWeeks)
-		threshold := lowStockThreshold(f)
+		threshold := ReorderPoint(f)
 		// Skip when there is no reorder point (no demand signal) or stock is
 		// still above it.
 		if threshold.IsZero() || f.AvailableQty.GreaterThanOrEqual(threshold) {
@@ -95,7 +99,7 @@ func (uc *ListLowStockUseCase) Execute(ctx context.Context, tenantID uuid.UUID, 
 			ProductCode:   f.ProductCode,
 			ProductName:   f.ProductName,
 			AvailableQty:  f.AvailableQty.String(),
-			ReorderPoint:  lowStockThreshold(f).String(),
+			ReorderPoint:  ReorderPoint(f).String(),
 			AvgDailySales: f.AvgDailySales.String(),
 			DaysOfSupply:  f.UrgencyScore.String(),
 		})

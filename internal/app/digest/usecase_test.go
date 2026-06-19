@@ -6,24 +6,21 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
 	"github.com/shopspring/decimal"
+
+	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
+	"github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
 )
 
-// stubDigestRepo is a test double for DigestRepo.
+// stubDigestRepo is a test double for the (now replenish-free) DigestRepo —
+// oversell / dead-stock / scorecard only.
 type stubDigestRepo struct {
-	replenishRows []appdigest.ReplenishRow
-	replenishErr  error
 	oversellCount int
 	oversellErr   error
 	deadCount     int
 	deadErr       error
 	scorecard     appdigest.ScorecardCounts
 	scorecardErr  error
-}
-
-func (s *stubDigestRepo) ListReplenishCandidates(_ context.Context, _ uuid.UUID) ([]appdigest.ReplenishRow, error) {
-	return s.replenishRows, s.replenishErr
 }
 
 func (s *stubDigestRepo) CountOversell(_ context.Context, _ uuid.UUID) (int, error) {
@@ -38,45 +35,57 @@ func (s *stubDigestRepo) SuggestionScorecard(_ context.Context, _ uuid.UUID) (ap
 	return s.scorecard, s.scorecardErr
 }
 
-// TestWeeklySummary_HappyPath_ComputesAmountCorrectly verifies the
-// suggested-amount formula: Σ(max(avgDaily×14 − available, 0) × unitCost).
-func TestWeeklySummary_HappyPath_ComputesAmountCorrectly(t *testing.T) {
-	// Product A: avgDaily=5, available=10, coverage=14 → suggested=5*14-10=60, cost=20 → 1200
-	// Product B: avgDaily=2, available=25, coverage=14 → suggested=max(2*14-25=3,0), cost=100 → 300
-	rows := []appdigest.ReplenishRow{
-		{
-			ProductID:     uuid.New(),
-			AvailableQty:  decimal.NewFromInt(10),
-			SafetyQty:     decimal.NewFromInt(5),
-			AvgDailySales: decimal.NewFromInt(5),
-			UnitCost:      decimal.NewFromInt(20),
-		},
-		{
-			ProductID:     uuid.New(),
-			AvailableQty:  decimal.NewFromInt(25),
-			SafetyQty:     decimal.NewFromInt(30),
-			AvgDailySales: decimal.NewFromInt(2),
-			UnitCost:      decimal.NewFromInt(100),
-		},
-	}
+// stubSuggestionRepo is a test double for replenish.SuggestionRepo.
+type stubSuggestionRepo struct {
+	rows []replenish.RawRow
+	err  error
+}
 
-	uc := appdigest.NewWeeklySummaryUseCase(&stubDigestRepo{
-		replenishRows: rows,
-		oversellCount: 1,
-		deadCount:     3,
-	})
+func (s *stubSuggestionRepo) ListSuggestions(_ context.Context, _ uuid.UUID) ([]replenish.RawRow, error) {
+	return s.rows, s.err
+}
+
+// rawRow is a compact RawRow builder for the digest filter tests.
+func rawRow(avail, avgDaily, unitCost float64, lead int) replenish.RawRow {
+	return replenish.RawRow{
+		ProductID:     uuid.New(),
+		AvailableQty:  decimal.NewFromFloat(avail),
+		AvgDailySales: decimal.NewFromFloat(avgDaily),
+		UnitCost:      decimal.NewFromFloat(unitCost),
+		LeadTimeDays:  lead,
+	}
+}
+
+// TestWeeklySummary_ReplenishMatchesROP verifies the Monday card counts exactly
+// the SKUs below their learned reorder point (the SAME filter the dashboard
+// low-stock alert uses) and sums their EstAmountCNY.
+func TestWeeklySummary_ReplenishMatchesROP(t *testing.T) {
+	// avgDaily=2, lead 7 → ROP ≈ 16.62.
+	below := rawRow(5, 2, 10, 7)    // 5 < 16.62 → counted, SuggestedQty>0 → amount>0
+	above := rawRow(500, 2, 10, 7)  // 500 > 16.62 → excluded
+	noSignal := rawRow(0, 0, 10, 7) // ROP 0 (no velocity) → skipped
+
+	uc := appdigest.NewWeeklySummaryUseCase(
+		&stubDigestRepo{oversellCount: 1, deadCount: 3},
+		&stubSuggestionRepo{rows: []replenish.RawRow{above, noSignal, below}},
+	)
 
 	s, err := uc.Execute(context.Background(), uuid.New())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if s.ReplenishCount != 2 {
-		t.Errorf("ReplenishCount: want 2 got %d", s.ReplenishCount)
+	if s.ReplenishCount != 1 {
+		t.Errorf("ReplenishCount: want 1 (only the below-ROP SKU), got %d", s.ReplenishCount)
 	}
-	wantAmount := decimal.NewFromInt(1200 + 300) // 1500
-	if !s.ReplenishAmountCNY.Equal(wantAmount) {
-		t.Errorf("ReplenishAmountCNY: want %s got %s", wantAmount, s.ReplenishAmountCNY)
+	// Amount must equal Σ EstAmountCNY over the counted rows — computed through
+	// the same Forecast the use case calls, so it can't drift if constants change.
+	want := replenish.Forecast(below, replenish.DefaultWeeks).EstAmountCNY
+	if !s.ReplenishAmountCNY.Equal(want) {
+		t.Errorf("ReplenishAmountCNY: want %s got %s", want, s.ReplenishAmountCNY)
+	}
+	if !s.ReplenishAmountCNY.IsPositive() {
+		t.Errorf("ReplenishAmountCNY must be positive for a below-ROP SKU, got %s", s.ReplenishAmountCNY)
 	}
 	if s.OversellCount != 1 {
 		t.Errorf("OversellCount: want 1 got %d", s.OversellCount)
@@ -86,44 +95,20 @@ func TestWeeklySummary_HappyPath_ComputesAmountCorrectly(t *testing.T) {
 	}
 }
 
-// TestWeeklySummary_SuggestedQtyFlooredAtZero verifies that when available > 14*daily
-// the suggested qty is clamped to zero and does not contribute negative amount.
-func TestWeeklySummary_SuggestedQtyFlooredAtZero(t *testing.T) {
-	// available=200, avgDaily=5, coverage=14 → 5*14=70 < 200 → suggested=0
-	rows := []appdigest.ReplenishRow{
-		{
-			ProductID:     uuid.New(),
-			AvailableQty:  decimal.NewFromInt(200),
-			SafetyQty:     decimal.NewFromInt(10),
-			AvgDailySales: decimal.NewFromInt(5),
-			UnitCost:      decimal.NewFromInt(50),
-		},
-	}
-
-	uc := appdigest.NewWeeklySummaryUseCase(&stubDigestRepo{replenishRows: rows})
-	s, err := uc.Execute(context.Background(), uuid.New())
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if !s.ReplenishAmountCNY.IsZero() {
-		t.Errorf("expected zero amount when available > coverage target, got %s", s.ReplenishAmountCNY)
-	}
-}
-
-// TestWeeklySummary_RepoError_Propagates verifies that a repo error is surfaced.
+// TestWeeklySummary_RepoError_Propagates verifies a suggestion-repo error is surfaced.
 func TestWeeklySummary_RepoError_Propagates(t *testing.T) {
-	uc := appdigest.NewWeeklySummaryUseCase(&stubDigestRepo{
-		replenishErr: errors.New("connection reset"),
-	})
+	uc := appdigest.NewWeeklySummaryUseCase(
+		&stubDigestRepo{},
+		&stubSuggestionRepo{err: errors.New("connection reset")},
+	)
 	_, err := uc.Execute(context.Background(), uuid.New())
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
 }
 
-// TestWeeklySummary_Execute_ScorecardPassthrough verifies the repo's
-// scorecard counts land unchanged in the Summary (table-driven, including
-// the empty-ledger zero-value path).
+// TestWeeklySummary_Execute_ScorecardPassthrough verifies the repo's scorecard
+// counts land unchanged in the Summary (including the empty-ledger zero path).
 func TestWeeklySummary_Execute_ScorecardPassthrough(t *testing.T) {
 	cases := []struct {
 		name      string
@@ -141,7 +126,10 @@ func TestWeeklySummary_Execute_ScorecardPassthrough(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			uc := appdigest.NewWeeklySummaryUseCase(&stubDigestRepo{scorecard: tc.scorecard})
+			uc := appdigest.NewWeeklySummaryUseCase(
+				&stubDigestRepo{scorecard: tc.scorecard},
+				&stubSuggestionRepo{},
+			)
 			s, err := uc.Execute(context.Background(), uuid.New())
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
@@ -162,18 +150,19 @@ func TestWeeklySummary_Execute_ScorecardPassthrough(t *testing.T) {
 // TestWeeklySummary_Execute_ScorecardError_Propagates verifies a scorecard
 // repo error surfaces like the other aggregate errors.
 func TestWeeklySummary_Execute_ScorecardError_Propagates(t *testing.T) {
-	uc := appdigest.NewWeeklySummaryUseCase(&stubDigestRepo{
-		scorecardErr: errors.New("connection reset"),
-	})
+	uc := appdigest.NewWeeklySummaryUseCase(
+		&stubDigestRepo{scorecardErr: errors.New("connection reset")},
+		&stubSuggestionRepo{},
+	)
 	_, err := uc.Execute(context.Background(), uuid.New())
 	if err == nil {
 		t.Error("expected error, got nil")
 	}
 }
 
-// TestWeeklySummary_EmptyRepo_ReturnsAllZeros verifies no-data case.
+// TestWeeklySummary_EmptyRepo_ReturnsAllZeros verifies the no-data case.
 func TestWeeklySummary_EmptyRepo_ReturnsAllZeros(t *testing.T) {
-	uc := appdigest.NewWeeklySummaryUseCase(&stubDigestRepo{})
+	uc := appdigest.NewWeeklySummaryUseCase(&stubDigestRepo{}, &stubSuggestionRepo{})
 	s, err := uc.Execute(context.Background(), uuid.New())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)

@@ -23,6 +23,7 @@ import (
 	replenishrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/replenish"
 	reportsrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/reports"
 	searchrepo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/search"
+	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
 	"github.com/hanmahong5-arch/lurus-tally/internal/lifecycle"
 )
 
@@ -433,30 +434,25 @@ func TestSQLReal(t *testing.T) {
 		t.Logf("PASS: ai SQLProductRepo.ListAllProducts row count=%d", len(rows))
 	})
 
-	// ── 4. digest/repo.go → ListReplenishCandidates ─────────────────────────
-	// productA: available=3, safety=20, avg_daily>0  → should appear.
-	t.Run("digest/ListReplenishCandidates", func(t *testing.T) {
-		repo := digestrepo.New(db)
-		rows, err := repo.ListReplenishCandidates(ctx, tenantID)
+	// ── 4. digest WeeklySummary → replenishment count via the replenish ROP ──
+	// productA: available=3, below its reorder point (low_safe_qty=20 override)
+	// with positive velocity → must contribute ≥1 to the Monday card count, the
+	// SAME signal the dashboard low-stock alert shows.
+	t.Run("digest/WeeklySummary_replenish_count", func(t *testing.T) {
+		uc := appdigest.NewWeeklySummaryUseCase(
+			digestrepo.New(db),
+			replenishrepo.NewSQLSuggestionRepo(db),
+		)
+		s, err := uc.Execute(ctx, tenantID)
 		if err != nil {
-			t.Fatalf("FAIL digest.ListReplenishCandidates: %v", err)
+			t.Fatalf("FAIL digest.WeeklySummary: %v", err)
 		}
-		t.Logf("digest.ListReplenishCandidates returned %d rows", len(rows))
-		if len(rows) == 0 {
-			t.Fatal("FAIL: expected ≥1 row (productA is below safety qty and has velocity), got 0")
+		t.Logf("WeeklySummary: replenish_count=%d amount=%s oversell=%d dead=%d",
+			s.ReplenishCount, s.ReplenishAmountCNY, s.OversellCount, s.DeadStockCount)
+		if s.ReplenishCount < 1 {
+			t.Fatalf("FAIL: expected ≥1 replenish candidate (productA below ROP with velocity), got %d", s.ReplenishCount)
 		}
-		found := false
-		for _, r := range rows {
-			t.Logf("  candidate: product=%s avail=%s safety=%s avgDaily=%s cost=%s",
-				r.ProductID, r.AvailableQty, r.SafetyQty, r.AvgDailySales, r.UnitCost)
-			if r.ProductID == productA {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("FAIL: productA expected in replenish candidates (avail<safety AND velocity>0)")
-		}
-		t.Logf("PASS: digest ListReplenishCandidates row count=%d", len(rows))
+		t.Logf("PASS: digest WeeklySummary replenish_count=%d", s.ReplenishCount)
 	})
 
 	// ── 4b. digest/repo.go → CountOversell ──────────────────────────────────
