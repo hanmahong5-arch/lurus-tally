@@ -34,7 +34,7 @@ const (
 //   - tally://bills/sales/recent          recent sale bills
 //   - tally://bills/purchases/recent      recent purchase bills
 //   - tally://alerts/stockouts            on_hand_qty <= 0 (client-derived)
-//   - tally://alerts/low-stock            available_qty < low_safe_qty (backend join)
+//   - tally://alerts/low-stock            available_qty <= learned reorder point (backend)
 //   - tally://ai/plans/pending            destructive plans awaiting confirmation
 func registerResources(s *server.MCPServer, c *tallyClient) {
 	s.AddResource(
@@ -77,7 +77,7 @@ func registerResources(s *server.MCPServer, c *tallyClient) {
 		mcp.NewResource(
 			uriAlertsLowStock,
 			"Low-stock alerts",
-			mcp.WithResourceDescription("SKUs whose available_qty has fallen below the per-warehouse low_safe_qty threshold (configured on stock_initial). Backend joins snapshot + threshold and orders most-deficient first."),
+			mcp.WithResourceDescription("SKUs whose available stock has fallen to or below their auto-computed reorder point (learned demand + lead time; zero-config). An explicit per-product low_safe_qty override wins when set. Ordered most-urgent first (days-of-supply ascending)."),
 			mcp.WithMIMEType(mimeJSON),
 		),
 		makeLowStockHandler(c),

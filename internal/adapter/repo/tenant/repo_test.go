@@ -2,7 +2,6 @@ package tenant_test
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 
 	"github.com/google/uuid"
@@ -57,13 +56,6 @@ func (s *stubTenantProfileRepo) GetByTenantID(ctx context.Context, tenantID uuid
 func (s *stubTenantProfileRepo) Create(ctx context.Context, p *domain.TenantProfile) error {
 	s.profile = p
 	return s.err
-}
-
-func (s *stubTenantProfileRepo) QueryProfileType(ctx context.Context, tenantID uuid.UUID) (string, error) {
-	if s.profile == nil {
-		return "", sql.ErrNoRows
-	}
-	return string(s.profile.ProfileType), nil
 }
 
 // Ensure stubTenantProfileRepo satisfies the required interfaces at compile time.

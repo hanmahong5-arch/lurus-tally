@@ -19,7 +19,6 @@ import (
 type TenantProfileRepository interface {
 	GetByTenantID(ctx context.Context, tenantID uuid.UUID) (*domain.TenantProfile, error)
 	Create(ctx context.Context, p *domain.TenantProfile) error
-	QueryProfileType(ctx context.Context, tenantID uuid.UUID) (string, error)
 }
 
 // UserMappingRepository defines the persistence contract for UserIdentityMapping.
@@ -82,19 +81,6 @@ func (r *ProfileRepo) Create(ctx context.Context, p *domain.TenantProfile) error
 		return fmt.Errorf("tenant profile repo create: %w", err)
 	}
 	return nil
-}
-
-// QueryProfileType returns only the profile_type string for a tenant.
-// Returns "", sql.ErrNoRows when no record exists.
-// This satisfies the ProfileQuerier interface used by the profile middleware.
-func (r *ProfileRepo) QueryProfileType(ctx context.Context, tenantID uuid.UUID) (string, error) {
-	const q = `SELECT profile_type FROM tally.tenant_profile WHERE tenant_id = $1`
-	var pt string
-	err := r.db.QueryRowContext(ctx, q, tenantID).Scan(&pt)
-	if err != nil {
-		return "", err
-	}
-	return pt, nil
 }
 
 // TenantRepository defines the persistence contract for tally.tenant rows.

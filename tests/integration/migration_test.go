@@ -66,7 +66,9 @@ func startPostgres(t *testing.T) (string, func()) {
 }
 
 // TestMigration_AllTablesExist verifies that running migrate up on an empty database
-// creates all 27 base tables + 1 view (≥27 total) and at least 1 materialized view.
+// creates the full set of tally base tables (≥27). Migration 000053 removed the two
+// dead reorder objects (the ai_reorder_suggestions view and the report_stock_summary
+// materialized view), so the schema intentionally carries no views or matviews.
 func TestMigration_AllTablesExist(t *testing.T) {
 	dsn, cleanup := startPostgres(t)
 	defer cleanup()
@@ -92,12 +94,14 @@ func TestMigration_AllTablesExist(t *testing.T) {
 	if err != nil {
 		t.Fatalf("count tables: %v", err)
 	}
-	t.Logf("tables in tally schema: %d (27 base + 1 view expected)", tableCount)
+	t.Logf("base tables + views in tally schema: %d (expect ≥27 base tables)", tableCount)
 	if tableCount < 27 {
 		t.Errorf("expected ≥27 tables/views in tally schema, got %d", tableCount)
 	}
 
-	// AC-1: materialized views
+	// Migration 000053 dropped the dead report_stock_summary materialized view
+	// (created empty, never refreshed, never read). The schema now carries none —
+	// this guards against a dead matview being reintroduced.
 	var mvCount int
 	err = db.QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM pg_matviews WHERE schemaname = 'tally'
@@ -106,8 +110,8 @@ func TestMigration_AllTablesExist(t *testing.T) {
 		t.Fatalf("count materialized views: %v", err)
 	}
 	t.Logf("materialized views: %d", mvCount)
-	if mvCount < 1 {
-		t.Errorf("expected ≥1 materialized view in tally schema, got %d", mvCount)
+	if mvCount != 0 {
+		t.Errorf("expected 0 materialized views in tally schema (000053 removed the dead one), got %d", mvCount)
 	}
 }
 
