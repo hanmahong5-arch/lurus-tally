@@ -9,7 +9,6 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/lifecycle"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
@@ -48,8 +47,7 @@ func main() {
 
 	slog.Info("shutdown signal received")
 
-	shutdownTimeout := 5 * time.Second
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
 	if err := app.Stop(shutdownCtx); err != nil {

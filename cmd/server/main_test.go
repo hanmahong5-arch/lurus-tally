@@ -70,7 +70,7 @@ func TestMain_Integration_HealthEndpointReturns200(t *testing.T) {
 		LogLevel:        "info",
 		GinMode:         "release",
 		ServiceVersion:  "test",
-		ShutdownTimeout: "5s",
+		ShutdownTimeout: 5 * time.Second,
 	}
 
 	app, err := lifecycle.NewApp(cfg)

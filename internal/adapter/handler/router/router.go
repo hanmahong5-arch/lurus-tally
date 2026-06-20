@@ -229,6 +229,7 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 			api.GET("/ai/plans", notImplemented)
 			api.POST("/ai/plans/:plan_id/confirm", notImplemented)
 			api.POST("/ai/plans/:plan_id/cancel", notImplemented)
+			api.POST("/ai/plans/:plan_id/revert", notImplemented)
 		}
 
 		// Horticulture — nursery dictionary (Story 28.1).

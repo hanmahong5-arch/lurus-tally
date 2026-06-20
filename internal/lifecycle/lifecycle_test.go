@@ -41,7 +41,7 @@ func testConfig(t *testing.T) *config.Config {
 		LogLevel:        "info",
 		GinMode:         "release",
 		ServiceVersion:  "test",
-		ShutdownTimeout: "5s",
+		ShutdownTimeout: 5 * time.Second,
 	}
 }
 

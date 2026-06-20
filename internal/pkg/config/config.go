@@ -6,6 +6,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"time"
 )
 
 // Config holds all runtime configuration for lurus-tally.
@@ -17,12 +18,12 @@ type Config struct {
 	NATSURL     string // NATS_URL: NATS server URL
 
 	// Optional with defaults
-	Port            string // PORT: HTTP listen port (default "18200")
-	LogLevel        string // LOG_LEVEL: log verbosity debug|info|warn|error (default "info")
-	GinMode         string // GIN_MODE: gin mode release|debug (default "release")
-	ServiceVersion  string // SERVICE_VERSION: build version label (default "dev")
-	ShutdownTimeout string // SHUTDOWN_TIMEOUT: graceful shutdown deadline (default "5s")
-	MigrateOnBoot   bool   // MIGRATE_ON_BOOT: run migrations on startup, default true
+	Port            string        // PORT: HTTP listen port (default "18200")
+	LogLevel        string        // LOG_LEVEL: log verbosity debug|info|warn|error (default "info")
+	GinMode         string        // GIN_MODE: gin mode release|debug (default "release")
+	ServiceVersion  string        // SERVICE_VERSION: build version label (default "dev")
+	ShutdownTimeout time.Duration // SHUTDOWN_TIMEOUT: graceful shutdown deadline (default 5s)
+	MigrateOnBoot   bool          // MIGRATE_ON_BOOT: run migrations on startup, default true
 
 	// Billing — Tally calls into 2l-svc-platform /internal/v1/* for subscription
 	// checkout. When PlatformInternalKey is empty the billing routes return 503
@@ -111,6 +112,17 @@ func Load() (*Config, error) {
 		fmt.Sscanf(v, "%d", &aiPlanTTL) //nolint:errcheck
 	}
 
+	// SHUTDOWN_TIMEOUT bounds the graceful-shutdown deadline. Parse + validate at
+	// boot so an operator's typo fails fast here instead of being silently ignored
+	// (the value was previously read into Config but never used by the server).
+	shutdownTimeoutRaw := optional("SHUTDOWN_TIMEOUT", "5s")
+	shutdownTimeout, err := time.ParseDuration(shutdownTimeoutRaw)
+	if err != nil || shutdownTimeout <= 0 {
+		return nil, fmt.Errorf(
+			"SHUTDOWN_TIMEOUT is invalid (%q): set a positive Go duration such as 5s or 30s",
+			shutdownTimeoutRaw)
+	}
+
 	// Auth — when ZITADEL_DOMAIN is set, auth is enabled and ZITADEL_AUDIENCE
 	// MUST also be set so the JWT aud claim is enforced; without it tokens
 	// minted for other apps on the shared issuer would be accepted. When
@@ -147,7 +159,7 @@ func Load() (*Config, error) {
 		LogLevel:        optional("LOG_LEVEL", "info"),
 		GinMode:         optional("GIN_MODE", "release"),
 		ServiceVersion:  optional("SERVICE_VERSION", "dev"),
-		ShutdownTimeout: optional("SHUTDOWN_TIMEOUT", "5s"),
+		ShutdownTimeout: shutdownTimeout,
 		MigrateOnBoot:   optional("MIGRATE_ON_BOOT", "true") != "false",
 		PlatformBaseURL: optional("PLATFORM_BASE_URL",
 			"http://platform-core.lurus-platform.svc:18104"),

@@ -3,6 +3,7 @@ package config_test
 import (
 	"os"
 	"testing"
+	"time"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
 )
@@ -210,5 +211,43 @@ func TestConfig_MigrateOnBoot_FalseWhenSet(t *testing.T) {
 	}
 	if cfg.MigrateOnBoot {
 		t.Error("MigrateOnBoot: want false when MIGRATE_ON_BOOT=false, got true")
+	}
+}
+
+func TestConfig_ShutdownTimeout_DefaultIs5s(t *testing.T) {
+	env := fullEnv()
+	env["SHUTDOWN_TIMEOUT"] = ""
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.ShutdownTimeout != 5*time.Second {
+		t.Errorf("default ShutdownTimeout: want 5s, got %s", cfg.ShutdownTimeout)
+	}
+}
+
+func TestConfig_ShutdownTimeout_CustomValueParsed(t *testing.T) {
+	env := fullEnv()
+	env["SHUTDOWN_TIMEOUT"] = "30s"
+	setEnv(t, env)
+
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.ShutdownTimeout != 30*time.Second {
+		t.Errorf("ShutdownTimeout: want 30s, got %s", cfg.ShutdownTimeout)
+	}
+}
+
+func TestConfig_ShutdownTimeout_InvalidReturnsError(t *testing.T) {
+	env := fullEnv()
+	env["SHUTDOWN_TIMEOUT"] = "not-a-duration"
+	setEnv(t, env)
+
+	if _, err := config.Load(); err == nil {
+		t.Fatal("expected error when SHUTDOWN_TIMEOUT is not a valid duration, got nil")
 	}
 }

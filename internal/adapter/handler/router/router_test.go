@@ -231,6 +231,10 @@ func TestRouter_AIRoutesRegistered(t *testing.T) {
 		{http.MethodPost, "/api/v1/ai/chat"},
 		{http.MethodPost, "/api/v1/ai/plans/some-id/confirm"},
 		{http.MethodPost, "/api/v1/ai/plans/some-id/cancel"},
+		// revert must be stubbed too when aih==nil (regression: it was missing
+		// from the else block → 404 instead of 501, while the frontend PlanCard
+		// calls it). It is registered by aih.RegisterRoutes when wired.
+		{http.MethodPost, "/api/v1/ai/plans/some-id/revert"},
 	}
 
 	for _, tc := range routes {
