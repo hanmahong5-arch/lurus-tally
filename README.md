@@ -1,4 +1,4 @@
-# Lurus Tally (2b-svc-psi)
+# Lurus Tally (2b-svc-tally)
 
 > 智能进销存系统 (Smart Purchase-Sales-Inventory)
 
@@ -55,7 +55,7 @@ Tests: `make test` (or `go test -count=1 ./...`); CI uses `go test -race -count=
 ## Directory Structure (Story 1.1 scope)
 
 ```
-2b-svc-psi/
+2b-svc-tally/
 ├── cmd/server/
 │   ├── main.go              # Entry point — config → DI → signal → shutdown
 │   └── main_test.go         # Integration tests
