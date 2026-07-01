@@ -1,4 +1,4 @@
-# Lurus Tally (2b-svc-psi)
+# Lurus Tally (2b-svc-tally)
 
 AI-native 智能进销存 SaaS (Web only)，面向中小企业（制造/批发/零售/电商）。Platform 产品组 (P0)。domain `tally.lurus.cn`（stage R6 `tally-stage.lurus.cn`），ns `lurus-tally`。Go 1.25 + Gin + GORM / Next.js 14 + shadcn/ui + Bun。License Apache-2.0。Migration head 48；RLS Wave 3 strict-flip 全租户表生效。
 
