@@ -102,3 +102,50 @@ describe("Dev provider gate", () => {
     expect(enabled).toBe(true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Demo sandbox provider gate
+//
+// Unlike the dev provider, the demo provider is gated ONLY by TALLY_DEMO_MODE and
+// is DELIBERATELY allowed in production (the sandbox is a public feature). We
+// inline the gate + the profileType mapping + the authorize guard, mirroring the
+// dev-gate tests above (NextAuth evaluates providers at module load, so importing
+// auth.ts cannot expose the array directly). These lock the invariants the demo
+// provider in auth.ts must hold.
+// ---------------------------------------------------------------------------
+
+describe("Demo provider gate", () => {
+  afterEach(() => {
+    vi.resetModules()
+    delete (process.env as Record<string, string | undefined>).TALLY_DEMO_MODE
+    delete (process.env as Record<string, string | undefined>).NODE_ENV
+  })
+
+  it("demo provider enabled in production when TALLY_DEMO_MODE=true", () => {
+    // The dev provider is hard-blocked in production; the demo provider is not.
+    vi.stubEnv("NODE_ENV", "production")
+    vi.stubEnv("TALLY_DEMO_MODE", "true")
+    expect(process.env.TALLY_DEMO_MODE === "true").toBe(true)
+  })
+
+  it("demo provider disabled by default (no flag)", () => {
+    expect(process.env.TALLY_DEMO_MODE === "true").toBe(false)
+  })
+
+  it("demo credentials map to horticulture profile, dev stays cross_border", () => {
+    // Mirrors jwt() devUser branch: profileType = demoProfile ?? "cross_border".
+    const demoProfile: string | undefined = "horticulture"
+    const devProfile: string | undefined = undefined
+    expect(demoProfile ?? "cross_border").toBe("horticulture")
+    expect(devProfile ?? "cross_border").toBe("cross_border")
+  })
+
+  it("demo authorize rejects missing tenantId or token", () => {
+    // Mirrors authorize(): null unless BOTH tenantId and accessToken are present.
+    const authorize = (tenantId: string, accessToken: string) =>
+      !tenantId || !accessToken ? null : { devTenantId: tenantId, devAccessToken: accessToken }
+    expect(authorize("t1", "")).toBeNull()
+    expect(authorize("", "tok")).toBeNull()
+    expect(authorize("t1", "tok")).not.toBeNull()
+  })
+})

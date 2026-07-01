@@ -65,6 +65,18 @@ function devProviderEnabled(): boolean {
   return true
 }
 
+// demoProviderEnabled gates the public no-OIDC sandbox credentials provider.
+// Unlike the dev provider it is DELIBERATELY allowed in production (NODE_ENV is
+// not checked): the sandbox is a public feature switched on per-deployment by the
+// same operator flag the backend reads (TALLY_DEMO_MODE). Safe in production
+// because the session it mints is useless on its own — every backend call is
+// gated by the demo PAT it carries, which the backend validates (real, active,
+// tenant-scoped) on each request; a forged session with a bogus token just 401s.
+// Off by default; an operator must opt in.
+function demoProviderEnabled(): boolean {
+  return process.env.TALLY_DEMO_MODE === "true"
+}
+
 // Profile cache TTL — re-fetch /api/v1/me at most once every 60s on session
 // access. We invalidate eagerly via NextAuth update() after /setup submit.
 const PROFILE_TTL_MS = 60_000
@@ -134,6 +146,40 @@ function devCredentialsProvider() {
   })
 }
 
+// demoCredentialsProvider is the public sandbox provider. It is handed the
+// {tenantId, accessToken} that the backend's POST /api/v1/demo/start just minted
+// (an ephemeral tenant + a short-lived PAT) and turns them into a session whose
+// accessToken is that PAT — so /api/proxy forwards it as the bearer and the
+// dashboard works without OIDC. profileType is forced to "horticulture" so the
+// nursery vertical presents and middleware does not bounce the visitor to /setup.
+// Returns null on missing inputs so no blank session is ever created.
+function demoCredentialsProvider() {
+  return Credentials({
+    id: "demo",
+    name: "Demo Sandbox (no-OIDC)",
+    credentials: {
+      tenantId: { label: "Tenant ID", type: "text" },
+      accessToken: { label: "Demo PAT", type: "password" },
+    },
+    async authorize(raw) {
+      const tenantId = typeof raw?.tenantId === "string" && raw.tenantId ? raw.tenantId : ""
+      const accessToken =
+        typeof raw?.accessToken === "string" && raw.accessToken ? raw.accessToken : ""
+      if (!tenantId || !accessToken) return null
+      return {
+        id: "demo-" + tenantId,
+        email: "demo@tally.sandbox",
+        name: "Demo",
+        // Reuse the dev/credentials jwt branch (keyed on devTenantId); demoProfile
+        // distinguishes the nursery sandbox from the dev provider's cross_border.
+        devTenantId: tenantId,
+        devAccessToken: accessToken,
+        demoProfile: "horticulture",
+      }
+    },
+  })
+}
+
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
     Zitadel({
@@ -145,6 +191,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
     // is enforced inside devProviderEnabled(); the provider is never present in
     // the array unless both NODE_ENV !== "production" AND AUTH_DEV_PROVIDER=true.
     ...(devProviderEnabled() ? [devCredentialsProvider()] : []),
+    // Public no-OIDC sandbox provider — gated by TALLY_DEMO_MODE (prod-allowed).
+    ...(demoProviderEnabled() ? [demoCredentialsProvider()] : []),
   ],
   pages: {
     signIn: "/login",
@@ -162,12 +210,13 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // The `user` object from authorize() carries devTenantId; we detect this
       // path by the absence of an OIDC account object.
       const devUser = user as
-        | (typeof user & { devTenantId?: string; devAccessToken?: string })
+        | (typeof user & { devTenantId?: string; devAccessToken?: string; demoProfile?: string })
         | undefined
       if (devUser?.devTenantId !== undefined) {
         t.sub = typeof user?.id === "string" ? user.id : DEV_USER_ID
         t.tenantId = devUser.devTenantId
-        t.profileType = "cross_border"
+        // demo sandbox → horticulture; dev/E2E provider → cross_border (default).
+        t.profileType = devUser.demoProfile ?? "cross_border"
         t.isFirstTime = false
         t.role = "owner"
         t.isOwner = true

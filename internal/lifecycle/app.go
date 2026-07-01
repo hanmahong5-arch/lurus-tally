@@ -14,12 +14,14 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	demoadapter "github.com/hanmahong5-arch/lurus-tally/internal/adapter/demo"
 	handleracct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/account"
 	handlerai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/ai"
 	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
+	handlerdemo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/demo"
 	handlerdigest "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/digest"
 	handlerexport "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/export"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
@@ -76,6 +78,7 @@ import (
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
+	demoapp "github.com/hanmahong5-arch/lurus-tally/internal/app/demo"
 	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
 	appentitlement "github.com/hanmahong5-arch/lurus-tally/internal/app/entitlement"
 	apperasure "github.com/hanmahong5-arch/lurus-tally/internal/app/erasure"
@@ -763,6 +766,27 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// Mounted on the root engine so it bypasses the /api/v1 auth middleware.
 	shopifyHandler := BuildShopifyHandler(db, importUC, cfg.ShopifyWebhookSecret, l)
 	shopifyHandler.RegisterRoutes(r)
+
+	// POST /api/v1/demo/start — PUBLIC no-OIDC sandbox provisioning. Mounted on the
+	// root engine so it bypasses the /api/v1 auth + idempotency stack (the point is
+	// to be reachable without a session). Gated by TALLY_DEMO_MODE: when off we do
+	// not even register it. Demo tenants use a ChooseProfile built with a NIL
+	// platform upserter so throwaway sandboxes are never registered as billable
+	// accounts on lurus-platform.
+	if cfg.DemoMode {
+		const demoStartsPerMinute = 10 // process-wide sandbox-creation cap (abuse guard)
+		demoChoose := apptenant.NewChooseProfileUseCase(tenantStore, nil, l)
+		demoProvisioner := demoadapter.Build(
+			demoChoose,
+			db,
+			repoauth.New(db),
+			appproduct.NewCreateUseCase(productRepo),
+			recordMovementUC,
+			demoapp.DefaultPATTTL,
+		)
+		handlerdemo.New(demoProvisioner, true, demoStartsPerMinute).RegisterRoutes(r)
+		l.Warn("demo sandbox ENABLED (TALLY_DEMO_MODE): POST /api/v1/demo/start provisions throwaway no-OIDC tenants — must be OFF in any real-customer production")
+	}
 
 	// /api/v1/shopify/shops — tenant-scoped shop-binding admin (auth-gated).
 	// Mounted via a dedicated /api/v1 group so the route inherits the same

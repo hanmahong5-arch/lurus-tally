@@ -63,6 +63,12 @@ type Config struct {
 	// When empty the /webhooks/shopify/orders route still mounts but rejects
 	// every request as misconfigured (handler logs once at startup).
 	ShopifyWebhookSecret string // SHOPIFY_WEBHOOK_SECRET: raw secret from Shopify Partner Dashboard
+
+	// Demo sandbox — when true, mount the PUBLIC no-OIDC provisioning endpoint
+	// POST /api/v1/demo/start, which creates throwaway, write-isolated demo
+	// tenants for prospect walkthroughs. Default false. MUST stay false in any
+	// deployment holding real customer data: it provisions tenants without auth.
+	DemoMode bool // TALLY_DEMO_MODE
 }
 
 // required reads an environment variable and returns a descriptive error when absent.
@@ -163,5 +169,6 @@ func Load() (*Config, error) {
 		MemoryBaseURL:        optional("MEMORUS_BASE_URL", "http://memorus.lurus-system.svc:8880"),
 		MemoryAPIKey:         optional("MEMORUS_API_KEY", ""),
 		ShopifyWebhookSecret: optional("SHOPIFY_WEBHOOK_SECRET", ""),
+		DemoMode:             optional("TALLY_DEMO_MODE", "") == "true",
 	}, nil
 }
