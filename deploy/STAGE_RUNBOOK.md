@@ -46,6 +46,13 @@ ArgoCD ApplicationSet 不接管 Tally STAGE，部署走人工 `ssh + kubectl app
 
 > **2026-06-16 STAGE 边缘漂移 (webhook 路由, 非 GitOps)**: PR #16 给 `IngressRoute` 加了 `PathPrefix(/webhooks)` → 后端,**那是 PROD(Traefik)真源**。R6 STAGE 用 node-level nginx(Traefik CRD 缺失,IngressRoute inert),故 STAGE 边缘**手工**改 `/etc/nginx/sites-enabled/lurus-stage`:backend location 正则 `^/(api/v1|internal)/` → `^/(api/v1|internal|webhooks)/`(`nginx -t` + `systemctl reload`)。修前 `POST /webhooks/shopify/orders` 被 Next.js auth middleware **307 → /login**(Go HMAC 校验不可达);修后 **401 `invalid_signature`**(直达后端 HMAC),`/api`+`/`+`/internal` 路由无回归。⚠️ 这是 R6 上的配置漂移,不在 git;重装 nginx 须重做。备份在 R6 `/root/lurus-stage.bak-20260616`。
 
+> **2026-06-20 change (self-service registration visibility, branch `feat/roadmap-multi-client-autonomy-2026-06-20`)**: 让匿名访客能看 `/pricing` 自助注册入口。三处改动，**待部署**——线上当前 `curl -I https://tally-stage.lurus.cn/pricing` 仍 **307 → /login**（旧 web 镜像 main-e02788a 强制鉴权），须按下面 注册→patch→rollout 生效后才会 200。
+> 1. **注册（一次性，浏览器）**：按 §1 在 Zitadel（STAGE issuer `test-auth.lurus.cn`）注册 Web 客户端，拿 `client_id`。
+> 2. **patch（GitOps，已入 overlay）**：`overlays/stage/kustomization.yaml` 新增 `ZITADEL_AUDIENCE` configmap patch，占位 `<OIDC_CLIENT_ID>` 标 **MUST_SET**。`apply` 前把占位替换为第 1 步的 `client_id`（= secret `ZITADEL_CLIENT_ID`；⚠️ envFrom 中 secret 覆盖 configmap，两处须一致）。此前 audience 仅靠手工注入 secret（drift，见 §2 2026-06-04），现 overlay 自描述。⚠️ main 上 backend 读 `ZITADEL_AUDIENCE`（feat 分支改名 `OIDC_AUDIENCE` 未并入 main）。
+> 3. **web `/pricing` 公开**：`web/middleware.ts` matcher 加 `pricing` 豁免 → `/((?!login|pricing|api|_next|favicon.ico).*)`，匿名直达 `/pricing` 不再 307→login。**须重新构建 `tally-web` 镜像**并 bump `kustomization.yaml` 的 `images.newTag`（`ghcr.io/.../lurus-tally-web`），否则线上仍跑旧镜像。注：`/pricing` 公开**只**依赖 web 镜像，与后端 IdP 无关——**不受 Casdoor STAGE 是否就绪影响**（豁免路径 middleware 根本不跑、不碰鉴权）。
+> ⚠️ **IdP 现实更新（2026-06-20，ADR-0018）**：平台已 Zitadel→**Casdoor**。本节第 1/2 步的"Zitadel 注册 / `test-auth.lurus.cn` issuer"已陈旧——STAGE 后端鉴权应指 **Casdoor STAGE issuer**（待 Casdoor pod 起，ADR-0018 Phase 0），audience = Tally 的 **Casdoor** client id。但这条仅影响**登录/鉴权**，**不影响 `/pricing` 200**（见上）。
+> 4. **rollout**：替换 audience 占位 + bump web tag 后，按 §3 `kubectl kustomize deploy/k8s/overlays/stage | ssh root@100.122.83.20 "kubectl apply -f -"`，§4 `rollout status`。验收：`curl -I https://tally-stage.lurus.cn/pricing` → **HTTP 200**（非 307→login）；`/internal/v1/tally/ready` 200；`/api/v1/me`（无 token）401。回滚见 §6。
+
 替换尖括号内的实际值后整段执行：
 
 ```bash

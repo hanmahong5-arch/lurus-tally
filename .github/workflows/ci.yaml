@@ -68,6 +68,11 @@ jobs:
       - name: Install dependencies
         working-directory: web
         run: bun install --frozen-lockfile
+      - name: Regenerate API types from OpenAPI spec
+        working-directory: web
+        run: bun run gen:api
+      - name: Fail if generated API types are out of sync with the spec
+        run: git diff --exit-code web/lib/api/_generated/
       - name: Typecheck
         working-directory: web
         run: bunx tsc --noEmit

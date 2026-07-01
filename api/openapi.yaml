@@ -1,0 +1,271 @@
+openapi: 3.0.3
+info:
+  title: Lurus Tally API
+  version: "1.0.0"
+  description: >-
+    Client-facing REST surface (/api/v1) for the Tally 进销存 SaaS — the contract
+    shared by the web app, mobile app, desktop GUI and edge devices.
+
+    This document is GATE-ENFORCED: tests/contract/openapi_coverage_test.go fails
+    if any registered /api/v1 route is undocumented here, or if any operation here
+    has no matching route. Path + method coverage is the invariant; request and
+    response schemas are filled in incrementally and are not yet exhaustive.
+
+    Auth: all /api/v1 routes require `Authorization: Bearer <token>` — either an
+    OIDC access token (browser) or a Personal Access Token `tally_pat_...`
+    (headless / mobile / GUI / device). The /internal/v1 and /webhooks surfaces
+    are intentionally out of scope.
+
+servers:
+  - url: https://tally.lurus.cn
+    description: Production
+  - url: https://tally-stage.lurus.cn
+    description: Stage (R6)
+  - url: http://localhost:18200
+    description: Local dev
+
+components:
+  parameters:
+    PathID:
+      name: id
+      in: path
+      required: true
+      schema: {type: string, format: uuid}
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      description: OIDC access token or Personal Access Token (tally_pat_...)
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ── Auth & tenant profile ────────────────────────────────────────────────
+  /api/v1/me:
+    get: {summary: "Current user and tenant profile", responses: {'200': {description: OK}}}
+  /api/v1/tenant/profile:
+    post: {summary: "Choose / set tenant business profile", responses: {'200': {description: OK}}}
+  /api/v1/auth/logout:
+    post: {summary: "Log out current session", responses: {'200': {description: OK}}}
+  /api/v1/auth/pats:
+    get: {summary: "List active Personal Access Tokens", responses: {'200': {description: OK}}}
+    post: {summary: "Create a Personal Access Token (plaintext returned once)", responses: {'200': {description: OK}}}
+  /api/v1/auth/pats/{id}:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    delete: {summary: "Revoke a Personal Access Token", responses: {'200': {description: OK}}}
+
+  # ── Products & units ─────────────────────────────────────────────────────
+  /api/v1/products:
+    get: {summary: "List products", responses: {'200': {description: OK}}}
+    post: {summary: "Create product", responses: {'200': {description: OK}}}
+  /api/v1/products/{id}:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    get: {summary: "Get product", responses: {'200': {description: OK}}}
+    put: {summary: "Update product", responses: {'200': {description: OK}}}
+    delete: {summary: "Soft-delete product", responses: {'200': {description: OK}}}
+  /api/v1/products/{id}/restore:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    post: {summary: "Restore soft-deleted product", responses: {'200': {description: OK}}}
+  /api/v1/units:
+    get: {summary: "List units", responses: {'200': {description: OK}}}
+    post: {summary: "Create unit", responses: {'200': {description: OK}}}
+  /api/v1/units/{id}:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    delete: {summary: "Delete unit", responses: {'200': {description: OK}}}
+
+  # ── Stock ────────────────────────────────────────────────────────────────
+  /api/v1/stock/snapshots:
+    get: {summary: "List stock snapshots", responses: {'200': {description: OK}}}
+  /api/v1/stock/snapshots/{product_id}/{warehouse_id}:
+    parameters:
+      - {name: product_id, in: path, required: true, schema: {type: string, format: uuid}}
+      - {name: warehouse_id, in: path, required: true, schema: {type: string, format: uuid}}
+    get: {summary: "Get one stock snapshot", responses: {'200': {description: OK}}}
+  /api/v1/stock/movements:
+    get: {summary: "List stock movements", responses: {'200': {description: OK}}}
+  /api/v1/stock/alerts/low-stock:
+    get: {summary: "List products at or below reorder point", responses: {'200': {description: OK}}}
+
+  # ── Purchase bills ───────────────────────────────────────────────────────
+  /api/v1/purchase-bills:
+    get: {summary: "List purchase bills", responses: {'200': {description: OK}}}
+    post: {summary: "Create purchase bill (draft)", responses: {'200': {description: OK}}}
+  /api/v1/purchase-bills/{id}:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    get: {summary: "Get purchase bill", responses: {'200': {description: OK}}}
+    put: {summary: "Update purchase bill draft", responses: {'200': {description: OK}}}
+  /api/v1/purchase-bills/{id}/approve:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    post: {summary: "Approve purchase bill (records inbound stock)", responses: {'200': {description: OK}}}
+  /api/v1/purchase-bills/{id}/cancel:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    post: {summary: "Cancel purchase bill", responses: {'200': {description: OK}}}
+  /api/v1/purchase-bills/{id}/restore:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    post: {summary: "Restore cancelled purchase bill to draft", responses: {'200': {description: OK}}}
+
+  # ── Currency & exchange rates ────────────────────────────────────────────
+  /api/v1/currencies:
+    get: {summary: "List currencies", responses: {'200': {description: OK}}}
+  /api/v1/exchange-rates:
+    get: {summary: "Get current exchange rate", responses: {'200': {description: OK}}}
+    post: {summary: "Set exchange rate", responses: {'200': {description: OK}}}
+  /api/v1/exchange-rates/history:
+    get: {summary: "List exchange rate history", responses: {'200': {description: OK}}}
+
+  # ── Sale bills ───────────────────────────────────────────────────────────
+  /api/v1/sale-bills/quick-checkout:
+    post: {summary: "Quick checkout (one-shot sale)", responses: {'200': {description: OK}}}
+  /api/v1/sale-bills:
+    get: {summary: "List sale bills", responses: {'200': {description: OK}}}
+    post: {summary: "Create sale bill (draft)", responses: {'200': {description: OK}}}
+  /api/v1/sale-bills/{id}:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    get: {summary: "Get sale bill", responses: {'200': {description: OK}}}
+    put: {summary: "Update sale bill draft", responses: {'200': {description: OK}}}
+  /api/v1/sale-bills/{id}/approve:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    post: {summary: "Approve sale bill (records outbound stock)", responses: {'200': {description: OK}}}
+  /api/v1/sale-bills/{id}/cancel:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    post: {summary: "Cancel sale bill", responses: {'200': {description: OK}}}
+
+  # ── Payments ─────────────────────────────────────────────────────────────
+  /api/v1/payments:
+    get: {summary: "List payments", responses: {'200': {description: OK}}}
+    post: {summary: "Record payment against a bill", responses: {'200': {description: OK}}}
+
+  # ── Billing (platform subscription) ──────────────────────────────────────
+  /api/v1/billing/overview:
+    get: {summary: "Subscription / wallet overview", responses: {'200': {description: OK}}}
+  /api/v1/billing/subscribe:
+    post: {summary: "Start subscription checkout", responses: {'200': {description: OK}}}
+
+  # ── AI assistant ─────────────────────────────────────────────────────────
+  /api/v1/ai/chat:
+    post: {summary: "AI assistant chat (SSE stream)", responses: {'200': {description: "text/event-stream"}}}
+  /api/v1/ai/plans:
+    get: {summary: "List AI-proposed plans by status", responses: {'200': {description: OK}}}
+  /api/v1/ai/plans/{plan_id}/confirm:
+    parameters: [{name: plan_id, in: path, required: true, schema: {type: string, format: uuid}}]
+    post: {summary: "Confirm and execute an AI plan", responses: {'200': {description: OK}}}
+  /api/v1/ai/plans/{plan_id}/cancel:
+    parameters: [{name: plan_id, in: path, required: true, schema: {type: string, format: uuid}}]
+    post: {summary: "Cancel an AI plan", responses: {'200': {description: OK}}}
+  /api/v1/ai/plans/{plan_id}/revert:
+    parameters: [{name: plan_id, in: path, required: true, schema: {type: string, format: uuid}}]
+    post: {summary: "Revert an executed AI plan (30s undo window)", responses: {'200': {description: OK}}}
+
+  # ── Horticulture nursery dictionary ──────────────────────────────────────
+  /api/v1/nursery-dict:
+    get: {summary: "List nursery species", responses: {'200': {description: OK}}}
+    post: {summary: "Create nursery species", responses: {'200': {description: OK}}}
+  /api/v1/nursery-dict/{id}:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    get: {summary: "Get nursery species", responses: {'200': {description: OK}}}
+    put: {summary: "Update nursery species", responses: {'200': {description: OK}}}
+    delete: {summary: "Soft-delete nursery species", responses: {'200': {description: OK}}}
+  /api/v1/nursery-dict/{id}/restore:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    post: {summary: "Restore nursery species", responses: {'200': {description: OK}}}
+
+  # ── Projects ─────────────────────────────────────────────────────────────
+  /api/v1/projects:
+    get: {summary: "List projects", responses: {'200': {description: OK}}}
+    post: {summary: "Create project", responses: {'200': {description: OK}}}
+  /api/v1/projects/{id}:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    get: {summary: "Get project", responses: {'200': {description: OK}}}
+    put: {summary: "Update project", responses: {'200': {description: OK}}}
+    delete: {summary: "Soft-delete project", responses: {'200': {description: OK}}}
+  /api/v1/projects/{id}/restore:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    post: {summary: "Restore project", responses: {'200': {description: OK}}}
+
+  # ── Suppliers ────────────────────────────────────────────────────────────
+  /api/v1/suppliers:
+    get: {summary: "List suppliers", responses: {'200': {description: OK}}}
+    post: {summary: "Create supplier", responses: {'200': {description: OK}}}
+  /api/v1/suppliers/{id}:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    get: {summary: "Get supplier", responses: {'200': {description: OK}}}
+    put: {summary: "Update supplier", responses: {'200': {description: OK}}}
+    delete: {summary: "Soft-delete supplier", responses: {'200': {description: OK}}}
+  /api/v1/suppliers/{id}/restore:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    post: {summary: "Restore supplier", responses: {'200': {description: OK}}}
+
+  # ── Warehouses ───────────────────────────────────────────────────────────
+  /api/v1/warehouses:
+    get: {summary: "List warehouses", responses: {'200': {description: OK}}}
+    post: {summary: "Create warehouse", responses: {'200': {description: OK}}}
+  /api/v1/warehouses/{id}:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    get: {summary: "Get warehouse", responses: {'200': {description: OK}}}
+    put: {summary: "Update warehouse", responses: {'200': {description: OK}}}
+    delete: {summary: "Soft-delete warehouse", responses: {'200': {description: OK}}}
+  /api/v1/warehouses/{id}/restore:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    post: {summary: "Restore warehouse", responses: {'200': {description: OK}}}
+
+  # ── CSV exports ──────────────────────────────────────────────────────────
+  /api/v1/exports/bills.csv:
+    get: {summary: "Export bills as CSV", responses: {'200': {description: "text/csv"}}}
+  /api/v1/exports/stock.csv:
+    get: {summary: "Export stock as CSV", responses: {'200': {description: "text/csv"}}}
+  /api/v1/exports/payments.csv:
+    get: {summary: "Export payments as CSV", responses: {'200': {description: "text/csv"}}}
+
+  # ── Account center ───────────────────────────────────────────────────────
+  /api/v1/account/sessions:
+    get: {summary: "List account sessions", responses: {'200': {description: OK}}}
+  /api/v1/account/sessions/{id}:
+    parameters: [{$ref: '#/components/parameters/PathID'}]
+    delete: {summary: "Revoke account session", responses: {'200': {description: OK}}}
+  /api/v1/account/audit-log:
+    get: {summary: "List account audit log", responses: {'200': {description: OK}}}
+  /api/v1/account/profile:
+    get: {summary: "Get account profile", responses: {'200': {description: OK}}}
+    put: {summary: "Update account profile", responses: {'200': {description: OK}}}
+  /api/v1/account/avatar:
+    get: {summary: "Download account avatar", responses: {'200': {description: OK}}}
+    post: {summary: "Upload account avatar", responses: {'200': {description: OK}}}
+
+  # ── Replenishment ────────────────────────────────────────────────────────
+  /api/v1/replenish/suggestions:
+    get: {summary: "Weekly replenishment suggestions", responses: {'200': {description: OK}}}
+  /api/v1/replenish/draft-batch:
+    post: {summary: "Create purchase draft(s) from suggestions", responses: {'200': {description: OK}}}
+  /api/v1/replenish/scorecard:
+    get: {summary: "Replenishment adoption scorecard", responses: {'200': {description: OK}}}
+
+  # ── Reports ──────────────────────────────────────────────────────────────
+  /api/v1/reports/gross-margin:
+    get: {summary: "Gross margin report", responses: {'200': {description: OK}}}
+  /api/v1/reports/abc:
+    get: {summary: "ABC classification report", responses: {'200': {description: OK}}}
+  /api/v1/reports/dead-stock:
+    get: {summary: "Dead stock report", responses: {'200': {description: OK}}}
+  /api/v1/reports/sales-top:
+    get: {summary: "Top sales report", responses: {'200': {description: OK}}}
+
+  # ── Search ───────────────────────────────────────────────────────────────
+  /api/v1/search:
+    get: {summary: "Cross-entity search (Cmd-K palette)", responses: {'200': {description: OK}}}
+
+  # ── Imports ──────────────────────────────────────────────────────────────
+  /api/v1/imports/orders:
+    post: {summary: "Import orders (CSV upload)", responses: {'200': {description: OK}}}
+  /api/v1/imports/mappings:
+    get: {summary: "List import SKU mappings", responses: {'200': {description: OK}}}
+
+  # ── Weekly digest ────────────────────────────────────────────────────────
+  /api/v1/weekly-summary:
+    get: {summary: "Weekly summary (Monday card)", responses: {'200': {description: OK}}}
+
+  # ── Onboarding ───────────────────────────────────────────────────────────
+  /api/v1/onboarding/seed-demo:
+    post: {summary: "Seed demo data", responses: {'200': {description: OK}}}
+  /api/v1/onboarding/clear-demo:
+    post: {summary: "Clear demo data", responses: {'200': {description: OK}}}

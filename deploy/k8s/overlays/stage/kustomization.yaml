@@ -13,6 +13,25 @@ patches:
     target:
       kind: ConfigMap
       name: tally-config
+  # STAGE backend hard-requires the audience: config.go fail-fasts at boot when
+  # ZITADEL_DOMAIN is set (it is, above) but ZITADEL_AUDIENCE is empty. base
+  # configmap ships "" and base secret.yaml does NOT define it, so a clean
+  # `apply -k` boots into the "ZITADEL_AUDIENCE is required" error — live only
+  # works via a hand-injected tally-secrets key (drift; STAGE_RUNBOOK §2 2026-06-04).
+  # Pin it here so GitOps is self-describing instead of relying on that drift.
+  #   MUST_SET: replace <OIDC_CLIENT_ID> with Tally's real Zitadel/OIDC client id
+  #   (must equal secret ZITADEL_CLIENT_ID) BEFORE apply/sync.
+  #   Precedence: envFrom lists configMapRef then secretRef, so a
+  #   tally-secrets.ZITADEL_AUDIENCE OVERRIDES this — keep the two consistent.
+  #   Naming: the feat branch renames this env to OIDC_AUDIENCE; on main the
+  #   backend still reads ZITADEL_AUDIENCE (config.go), so this patches that key.
+  - patch: |-
+      - op: replace
+        path: /data/ZITADEL_AUDIENCE
+        value: "<OIDC_CLIENT_ID>"  # MUST_SET before sync — see comment above
+    target:
+      kind: ConfigMap
+      name: tally-config
   # STAGE web must sign users in against the STAGE issuer too, or the id_token's
   # `iss` won't match the backend's ZITADEL_DOMAIN (test-auth) → backend 401.
   - patch: |-
