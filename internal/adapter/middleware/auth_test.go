@@ -121,7 +121,7 @@ func TestAuthMiddleware_NoToken_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://identity.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -139,7 +139,7 @@ func TestAuthMiddleware_InvalidJWT_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://identity.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -158,10 +158,10 @@ func TestAuthMiddleware_ExpiredToken_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://identity.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
-	token := signToken(t, priv, "test-kid", "user-sub-123", "https://auth.lurus.cn",
+	token := signToken(t, priv, "test-kid", "user-sub-123", "https://identity.lurus.cn",
 		time.Now().Add(-1*time.Hour), nil)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -180,11 +180,11 @@ func TestAuthMiddleware_ValidJWT_InjectsUserID(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://identity.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	tenantID := uuid.New().String()
-	token := signToken(t, priv, "test-kid", "user-sub-abc", "https://auth.lurus.cn",
+	token := signToken(t, priv, "test-kid", "user-sub-abc", "https://identity.lurus.cn",
 		time.Now().Add(1*time.Hour),
 		map[string]any{"tally_tenant_id": tenantID, "aud": testAudience})
 
@@ -224,11 +224,11 @@ func TestAuthMiddleware_TenantLookupFallback_InjectsTenantID(t *testing.T) {
 		return expectedTenant, nil
 	}
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, lookup, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://identity.lurus.cn", testAudience, lookup, nil)
 	engine := newEngineWithAuth(t, m)
 
 	// Token has NO tally_tenant_id claim — lookup must fill the gap.
-	token := signToken(t, priv, "test-kid", "user-sub-abc", "https://auth.lurus.cn",
+	token := signToken(t, priv, "test-kid", "user-sub-abc", "https://identity.lurus.cn",
 		time.Now().Add(1*time.Hour), map[string]any{"aud": testAudience})
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -262,10 +262,10 @@ func TestAuthMiddleware_TenantLookup_FirstTimeUser_NoTenantInjected(t *testing.T
 		return uuid.Nil, nil
 	}
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, lookup, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://identity.lurus.cn", testAudience, lookup, nil)
 	engine := newEngineWithAuth(t, m)
 
-	token := signToken(t, priv, "test-kid", "first-time-user", "https://auth.lurus.cn",
+	token := signToken(t, priv, "test-kid", "first-time-user", "https://identity.lurus.cn",
 		time.Now().Add(1*time.Hour), map[string]any{"aud": testAudience})
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -290,7 +290,7 @@ func TestAuthMiddleware_WrongIssuer_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://identity.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	// Token signed with correct key but wrong issuer.
@@ -316,11 +316,11 @@ func TestAuthMiddleware_WrongAudience_Returns401(t *testing.T) {
 	jwksJSON := buildJWKS(t, priv, "test-kid")
 	srv := mockJWKSServer(t, jwksJSON)
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://identity.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	// Valid key, valid issuer, valid expiry — but aud is for another app.
-	token := signToken(t, priv, "test-kid", "user-sub-other", "https://auth.lurus.cn",
+	token := signToken(t, priv, "test-kid", "user-sub-other", "https://identity.lurus.cn",
 		time.Now().Add(1*time.Hour), map[string]any{"aud": "other-app-client-id"})
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -348,7 +348,7 @@ func TestAuthMiddleware_PATBearer_ResolvesTenant(t *testing.T) {
 		return wantTenant, nil
 	}
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, resolver)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://identity.lurus.cn", testAudience, nil, resolver)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -376,7 +376,7 @@ func TestAuthMiddleware_PATInvalid_Returns401(t *testing.T) {
 		return uuid.Nil, middleware.ErrInvalidPAT
 	}
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, resolver)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://identity.lurus.cn", testAudience, nil, resolver)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)
@@ -395,7 +395,7 @@ func TestAuthMiddleware_PATInvalid_Returns401(t *testing.T) {
 func TestAuthMiddleware_PATWithNilResolver_FallsThrough(t *testing.T) {
 	srv := mockJWKSServer(t, buildJWKS(t, generateTestRSAKey(t), "kid"))
 
-	m := middleware.NewAuthMiddleware(srv.URL, "https://auth.lurus.cn", testAudience, nil, nil)
+	m := middleware.NewAuthMiddleware(srv.URL, "https://identity.lurus.cn", testAudience, nil, nil)
 	engine := newEngineWithAuth(t, m)
 
 	req, _ := http.NewRequest(http.MethodGet, "/protected", nil)

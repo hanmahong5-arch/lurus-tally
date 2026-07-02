@@ -76,11 +76,12 @@ func (h *Handler) Subscribe(c *gin.Context) {
 	}
 
 	out, err := h.subscribe.Execute(c.Request.Context(), appbilling.SubscribeInput{
-		ZitadelSub:    sub,
-		PlanCode:      req.PlanCode,
-		BillingCycle:  req.BillingCycle,
-		PaymentMethod: req.PaymentMethod,
-		ReturnURL:     req.ReturnURL,
+		ZitadelSub:     sub,
+		PlanCode:       req.PlanCode,
+		BillingCycle:   req.BillingCycle,
+		PaymentMethod:  req.PaymentMethod,
+		ReturnURL:      req.ReturnURL,
+		IdempotencyKey: c.GetHeader(middleware.HeaderIdempotencyKey),
 	})
 	if err != nil {
 		writePlatformError(c, err)

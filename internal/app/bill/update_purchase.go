@@ -48,6 +48,16 @@ func (uc *UpdatePurchaseDraftUseCase) Execute(ctx context.Context, req UpdatePur
 		return nil, fmt.Errorf("%w: at least one item is required", ErrValidation)
 	}
 
+	// Reject any product/warehouse reference outside this tenant before opening
+	// the write transaction (validateRefs — same cross-tenant rationale as create).
+	productIDs := make([]uuid.UUID, 0, len(req.Items))
+	for _, it := range req.Items {
+		productIDs = append(productIDs, it.ProductID)
+	}
+	if err := validateRefs(ctx, uc.repo, req.TenantID, productIDs, req.WarehouseID); err != nil {
+		return nil, err
+	}
+
 	var result *domain.BillHead
 	if err := uc.repo.WithTx(ctx, func(tx *sql.Tx) error {
 		head, err := uc.repo.GetBillForUpdate(ctx, tx, req.TenantID, req.BillID)

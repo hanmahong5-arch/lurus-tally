@@ -138,7 +138,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
     Zitadel({
       clientId: process.env.ZITADEL_CLIENT_ID!,
-      issuer: process.env.ZITADEL_ISSUER ?? "https://auth.lurus.cn",
+      issuer: process.env.ZITADEL_ISSUER ?? "https://identity.lurus.cn",
       // PKCE is enabled by default for Zitadel provider.
     }),
     // Dev/E2E Credentials provider — conditionally appended. Production gate

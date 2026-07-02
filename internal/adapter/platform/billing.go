@@ -124,9 +124,29 @@ func (c *Client) GetAccountOverview(ctx context.Context, accountID int64, produc
 	return &out, nil
 }
 
+// GetEntitlements fetches the entitlement key→value map for an account+product
+// from platform's dedicated endpoint (Redis-cached server-side). Platform
+// returns {"plan_code":"free"} for accounts with no active paid entitlements,
+// so a successful call never yields a nil map for a known account.
+func (c *Client) GetEntitlements(ctx context.Context, accountID int64, productID string) (map[string]string, error) {
+	if accountID <= 0 {
+		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "account_id must be positive"}
+	}
+	if productID == "" {
+		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "product_id is required"}
+	}
+	var out map[string]string
+	if err := c.do(ctx, http.MethodGet,
+		"/internal/v1/accounts/"+itoa(accountID)+"/entitlements/"+url.PathEscape(productID),
+		nil, &out); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // SubscriptionCheckout posts a checkout intent and returns either an activated
 // subscription (wallet) or a payment URL the user should be redirected to.
-func (c *Client) SubscriptionCheckout(ctx context.Context, req SubscriptionCheckoutRequest) (*SubscriptionCheckoutResponse, error) {
+func (c *Client) SubscriptionCheckout(ctx context.Context, req SubscriptionCheckoutRequest, idempotencyKey string) (*SubscriptionCheckoutResponse, error) {
 	if req.AccountID <= 0 {
 		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "account_id is required"}
 	}
@@ -134,7 +154,7 @@ func (c *Client) SubscriptionCheckout(ctx context.Context, req SubscriptionCheck
 		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "product_id, plan_code, billing_cycle, payment_method are required"}
 	}
 	var out SubscriptionCheckoutResponse
-	if err := c.do(ctx, http.MethodPost, "/internal/v1/subscriptions/checkout", req, &out); err != nil {
+	if err := c.doWithIdem(ctx, http.MethodPost, "/internal/v1/subscriptions/checkout", req, idempotencyKey, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

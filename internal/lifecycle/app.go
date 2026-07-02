@@ -28,6 +28,7 @@ import (
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
 	handleronboarding "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/onboarding"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
+	handlerprivacy "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/privacy"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
 	handlerreplenish "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/replenish"
@@ -50,6 +51,7 @@ import (
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
 	repodau "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dau"
 	repodigest "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/digest"
+	repoerasure "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/erasure"
 	repooutbox "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/event_outbox"
 	repohorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/horticulture"
 	repoimporting "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/importing"
@@ -65,6 +67,7 @@ import (
 	reposupplier "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/supplier"
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
+	repousageoutbox "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/usage_report_outbox"
 	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/usagereport"
 	appacct "github.com/hanmahong5-arch/lurus-tally/internal/app/account"
@@ -74,6 +77,8 @@ import (
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
 	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
+	appentitlement "github.com/hanmahong5-arch/lurus-tally/internal/app/entitlement"
+	apperasure "github.com/hanmahong5-arch/lurus-tally/internal/app/erasure"
 	appexport "github.com/hanmahong5-arch/lurus-tally/internal/app/export"
 	apphorticulture "github.com/hanmahong5-arch/lurus-tally/internal/app/horticulture"
 	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
@@ -116,14 +121,15 @@ const (
 // App is the application root. It holds all wired dependencies and manages
 // the HTTP server lifecycle. No global variables; all state lives here.
 type App struct {
-	cfg           *config.Config
-	log           *slog.Logger
-	engine        *gin.Engine
-	srv           *http.Server
-	db            *sql.DB
-	stopOutbox    context.CancelFunc // cancels the outbox worker goroutine on Stop
-	auditSub      *adapternats.AuditSubscriber
-	usageReporter *usagereport.Reporter // nil when AI or platform integration is off
+	cfg            *config.Config
+	log            *slog.Logger
+	engine         *gin.Engine
+	srv            *http.Server
+	db             *sql.DB
+	stopOutbox     context.CancelFunc // cancels the outbox worker goroutine on Stop
+	stopUsageRetry context.CancelFunc // cancels the usage durable-retry worker on Stop
+	auditSub       *adapternats.AuditSubscriber
+	usageReporter  *usagereport.Reporter // nil when AI or platform integration is off
 }
 
 // NewApp wires all dependencies together and returns a ready-to-start App.
@@ -344,6 +350,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// The AI plan store reuses the hoisted Redis client above.
 	var aiHandler *handlerai.Handler
 	var usageReporter *usagereport.Reporter
+	var usageRetryCancel context.CancelFunc // cancels the usage durable-retry worker on Stop
 	if cfg.NewAPIKey != "" {
 		if rdb == nil {
 			return nil, fmt.Errorf("lifecycle: AI assistant requires REDIS_URL (NEWAPI_API_KEY is set but Redis is unavailable)")
@@ -413,6 +420,17 @@ func NewApp(cfg *config.Config) (*App, error) {
 		)
 		reverter := buildReverter(db, repostock.New(db), recordMovementUC, planStore, rdb)
 		aiHandler = handlerai.NewWithLimiter(orchestrator, limiter).WithReverter(reverter)
+		// Gate the AI assistant on the `ai_assistant` plan entitlement so free
+		// accounts cannot spend LLM budget reserved for paid tiers. Only when
+		// platform is wired — otherwise the gate fails open anyway, so skip.
+		if platClient != nil {
+			// Tenant-keyed: tally's plan is per-tenant (the bootstrap owner's
+			// account, migration 000051), so resolve via tenant->account — the same
+			// mapping the usage reporter uses — not per-user sub. This makes the gate
+			// correct for non-owner members and PAT/automation callers too.
+			entSvc := appentitlement.NewService(repotenant.NewTenantRepo(db), platClient, l)
+			aiHandler = aiHandler.WithEntitlementGate(middleware.RequireEntitlement(entSvc, "ai_assistant"))
+		}
 		// Attach LLM span tracer (env LANGFUSE_* → OTLP exporter; missing → no-op).
 		WireTracer(orchestrator, BuildTracer(cfg))
 
@@ -422,14 +440,26 @@ func NewApp(cfg *config.Config) (*App, error) {
 		// path is unchanged. The reporter is fail-open: a platform outage or an
 		// unprovisioned tenant never blocks or errors a chat response.
 		if platClient != nil {
+			usageOutboxStore := repousageoutbox.New(db)
 			usageReporter = usagereport.New(
 				platClient,
 				repotenant.NewTenantRepo(db),
-				usagereport.Config{Logger: l},
+				usagereport.Config{Logger: l, Store: usageOutboxStore},
 			)
 			usageReporter.Start()
 			llmgateway.SetUsageSink(usageReporter)
-			l.Info("LLM usage reporter enabled (unified-billing shadow)",
+
+			// Durable-retry worker: re-resolves the account + re-POSTs queued
+			// usage events, so an unprovisioned-tenant / platform-down drop is
+			// back-reported instead of lost. Cancelled by Stop().
+			var usageRetryCtx context.Context
+			usageRetryCtx, usageRetryCancel = context.WithCancel(context.Background())
+			go usagereport.NewRetryWorker(
+				usageOutboxStore, platClient, repotenant.NewTenantRepo(db),
+				usagereport.Config{Logger: l},
+			).Run(usageRetryCtx)
+
+			l.Info("LLM usage reporter enabled (unified-billing shadow, durable retry)",
 				slog.String("product_id", usagereport.ProductID))
 		}
 
@@ -514,7 +544,47 @@ func NewApp(cfg *config.Config) (*App, error) {
 			sessionMW(c)
 		}
 	} else {
-		l.Warn("auth middleware disabled (ZITADEL_DOMAIN not set) — /api/v1 is unauthenticated")
+		// Dev mode: config.Load rejects an empty ZITADEL_DOMAIN unless
+		// TALLY_DEV_MODE=true, so reaching this branch means dev is explicitly on.
+		// Inject identity from trusted headers (X-Zitadel-Sub / X-Email /
+		// X-Display-Name / X-Tenant-ID) so EVERY handler reading
+		// middleware.GetZitadelSub / GetTenantID works consistently — previously
+		// only the billing handler's ad-hoc callerSub() honoured the header, so
+		// /tenant/profile (ChooseProfile) and other setup endpoints 401'd in dev,
+		// making first-time onboarding impossible to exercise locally.
+		// NEVER reachable in prod (ZITADEL_DOMAIN is always set there).
+		l.Warn("auth middleware: DEV header-injection mode (X-Zitadel-Sub / X-Tenant-ID trusted) — local only, never prod")
+		authMW = func(c *gin.Context) {
+			if sub := c.GetHeader("X-Zitadel-Sub"); sub != "" {
+				c.Set(middleware.CtxKeyZitadelSub, sub)
+			}
+			if email := c.GetHeader("X-Email"); email != "" {
+				c.Set(middleware.CtxKeyEmail, email)
+			}
+			if name := c.GetHeader("X-Display-Name"); name != "" {
+				c.Set(middleware.CtxKeyDisplayName, name)
+			}
+			var tenantID uuid.UUID
+			if tid := c.GetHeader("X-Tenant-ID"); tid != "" {
+				if parsed, err := uuid.Parse(tid); err == nil {
+					tenantID = parsed
+				}
+			}
+			// No explicit tenant header: resolve via the same user_identity_mapping
+			// lookup the real middleware uses, so onboarded dev users get their
+			// tenant_id without having to pass it on every call.
+			if tenantID == uuid.Nil {
+				if sub := c.GetHeader("X-Zitadel-Sub"); sub != "" {
+					if m, err := tenantStore.GetMappingBySub(c.Request.Context(), sub); err == nil && m != nil {
+						tenantID = m.TenantID
+					}
+				}
+			}
+			if tenantID != uuid.Nil {
+				c.Set(middleware.CtxKeyTenantID, tenantID)
+			}
+			c.Next()
+		}
 	}
 
 	// Wire horticulture nursery dictionary (Story 28.1).
@@ -678,6 +748,17 @@ func NewApp(cfg *config.Config) (*App, error) {
 	telemetryHandler := handlertelemetry.New(natsPub, cfg.PlatformInternalKey, "anonymous", dauRecorder)
 	telemetryHandler.Register(r)
 
+	// POST /internal/v1/privacy/erase — PIPL §47 erasure cascade driven by
+	// lurus-platform's account-purge worker. Mounted on the root engine (bypasses
+	// the OIDC /api/v1 stack) and fail-closed behind the shared internal key, the
+	// symmetric counterpart of the key tally sends platform. Redacts the data
+	// subject's identity PII; the tenant's business records are untouched.
+	erasureSvc := apperasure.NewService(repoerasure.New(db), l)
+	privacyHandler := handlerprivacy.NewHandler(erasureSvc)
+	privacyGroup := r.Group("/internal/v1/privacy")
+	privacyGroup.Use(middleware.RequireInternalKey(cfg.PlatformInternalKey))
+	privacyGroup.POST("/erase", privacyHandler.Erase)
+
 	// POST /webhooks/shopify/orders — public (HMAC-verified) e-commerce ingest.
 	// Mounted on the root engine so it bypasses the /api/v1 auth middleware.
 	shopifyHandler := BuildShopifyHandler(db, importUC, cfg.ShopifyWebhookSecret, l)
@@ -739,14 +820,15 @@ func NewApp(cfg *config.Config) (*App, error) {
 	}
 
 	return &App{
-		cfg:           cfg,
-		log:           l,
-		engine:        r,
-		srv:           srv,
-		db:            db,
-		stopOutbox:    outboxCancel,
-		auditSub:      auditSub,
-		usageReporter: usageReporter,
+		cfg:            cfg,
+		log:            l,
+		engine:         r,
+		srv:            srv,
+		db:             db,
+		stopOutbox:     outboxCancel,
+		stopUsageRetry: usageRetryCancel,
+		auditSub:       auditSub,
+		usageReporter:  usageReporter,
 	}, nil
 }
 

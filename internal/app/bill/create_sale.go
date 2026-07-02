@@ -107,6 +107,24 @@ func (uc *CreateSaleUseCase) Execute(ctx context.Context, req CreateSaleRequest)
 	taxAmount := req.TaxAmount
 	totalAmount := subtotal.Add(shippingFee).Add(taxAmount).Round(4)
 
+	// Resolve warehouse: prefer per-item warehouse if bill-level is absent.
+	warehouseID := req.WarehouseID
+	if warehouseID == nil && len(req.Items) > 0 && req.Items[0].WarehouseID != uuid.Nil {
+		w := req.Items[0].WarehouseID
+		warehouseID = &w
+	}
+
+	// Reject any product/warehouse reference outside this tenant before opening
+	// the write transaction. validateRefs closes a cross-tenant hole that the
+	// bill_item / bill_head FKs miss because FK checks bypass RLS.
+	productIDs := make([]uuid.UUID, 0, len(req.Items))
+	for _, it := range req.Items {
+		productIDs = append(productIDs, it.ProductID)
+	}
+	if err := validateRefs(ctx, uc.repo, req.TenantID, productIDs, warehouseID); err != nil {
+		return nil, err
+	}
+
 	billID := uuid.New()
 	now := time.Now().UTC()
 
@@ -116,13 +134,6 @@ func (uc *CreateSaleUseCase) Execute(ctx context.Context, req CreateSaleRequest)
 		billNo, err := uc.repo.NextBillNo(ctx, tx, req.TenantID, "SL")
 		if err != nil {
 			return fmt.Errorf("create sale draft: generate bill_no: %w", err)
-		}
-
-		// Resolve warehouse: prefer per-item warehouse if bill-level is absent.
-		warehouseID := req.WarehouseID
-		if warehouseID == nil && len(req.Items) > 0 && req.Items[0].WarehouseID != uuid.Nil {
-			w := req.Items[0].WarehouseID
-			warehouseID = &w
 		}
 
 		head := &domain.BillHead{

@@ -125,6 +125,14 @@ func (m *mockBillRepo) AcquireBillAdvisoryLock(_ context.Context, _ *sql.Tx, _, 
 	return nil
 }
 
+func (m *mockBillRepo) ProductExists(_ context.Context, _, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+func (m *mockBillRepo) WarehouseExists(_ context.Context, _, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
+
 func (m *mockBillRepo) UpdatePaidAmount(_ context.Context, _ *sql.Tx, _, _ uuid.UUID, _ decimal.Decimal) error {
 	return nil
 }

@@ -14,7 +14,7 @@ import (
 //
 // Field contract (platform usage_report_handler.go):
 //   - AccountID  required, > 0
-//   - ProductID  required, ≤ 64 chars (Tally = "lurus-tally")
+//   - ProductID  required, ≤ 64 chars (Tally = "tally")
 //   - Metric     required, ≤ 64 chars (Tally = "llm_tokens")
 //   - Quantity   ≥ 0
 //   - OccurredAt optional; platform rejects > 7 days old or > 1h in the future

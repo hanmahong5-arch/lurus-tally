@@ -9,7 +9,12 @@ data:
   GIN_MODE: "release"
   KOVA_URL: ""
   MEMORUS_URL: "http://memorus.lurus-system.svc:8880"
-  ZITADEL_DOMAIN: "auth.lurus.cn"
+  # Canonical Lurus identity issuer. Zitadel issues iss=identity.lurus.cn since
+  # the 2026-05-21 cutover; auth.lurus.cn is now a 301 alias, so a backend that
+  # derives its issuer/JWKS from auth.lurus.cn rejects every token (strict iss
+  # mismatch) and its code-exchange loses Authorization across the 301. Must be
+  # the bare host (issuer + JWKS are derived from it).
+  ZITADEL_DOMAIN: "identity.lurus.cn"
   # Tally's own Zitadel client/project id = the expected JWT `aud` claim.
   # MUST equal secret ZITADEL_CLIENT_ID. The backend reads ZITADEL_AUDIENCE
   # (config.go); while ZITADEL_DOMAIN is set, an empty value makes Load()

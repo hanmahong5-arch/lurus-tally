@@ -67,4 +67,15 @@ type BillRepo interface {
 	// UpdatePaidAmount sets the bill_head.paid_amount column within tx.
 	// Replaces the current value (caller should pass the new cumulative total).
 	UpdatePaidAmount(ctx context.Context, tx *sql.Tx, tenantID, billID uuid.UUID, paidAmount decimal.Decimal) error
+
+	// ProductExists reports whether productID is an active (non-deleted) product
+	// owned by tenantID. Bill creation calls this to reject references to a
+	// missing or cross-tenant product before insert: the bill_item.product_id FK
+	// guarantees the row exists but FK validation bypasses RLS, so it would
+	// otherwise accept another tenant's product id.
+	ProductExists(ctx context.Context, tenantID, productID uuid.UUID) (bool, error)
+
+	// WarehouseExists reports whether warehouseID is an active (non-deleted)
+	// warehouse owned by tenantID. Same cross-tenant rationale as ProductExists.
+	WarehouseExists(ctx context.Context, tenantID, warehouseID uuid.UUID) (bool, error)
 }

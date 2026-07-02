@@ -69,6 +69,13 @@ func New(cfg Config) (*Client, error) {
 // do executes an HTTP request against the platform and decodes JSON into out.
 // payload may be nil; out may be nil when the caller does not care about the body.
 func (c *Client) do(ctx context.Context, method, path string, payload, out any) error {
+	return c.doWithIdem(ctx, method, path, payload, "", out)
+}
+
+// doWithIdem is do plus an optional Idempotency-Key header. Platform mandates
+// the key on financial mutations (e.g. subscription checkout); reads and
+// non-financial writes pass "" and behave exactly as before.
+func (c *Client) doWithIdem(ctx context.Context, method, path string, payload any, idempotencyKey string, out any) error {
 	var body io.Reader
 	if payload != nil {
 		buf, err := json.Marshal(payload)
@@ -83,6 +90,9 @@ func (c *Client) do(ctx context.Context, method, path string, payload, out any) 
 		return &Error{Code: ErrCodeUnknown, Message: fmt.Sprintf("build request: %v", err)}
 	}
 	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if idempotencyKey != "" {
+		req.Header.Set("Idempotency-Key", idempotencyKey)
+	}
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}

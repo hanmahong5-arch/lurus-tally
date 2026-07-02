@@ -115,7 +115,7 @@ func TestConfig_AllSet_ReturnsConfig(t *testing.T) {
 
 func TestConfig_ZitadelDomainSet_RequiresAudience(t *testing.T) {
 	env := fullEnv()
-	env["ZITADEL_DOMAIN"] = "auth.lurus.cn"
+	env["ZITADEL_DOMAIN"] = "identity.lurus.cn"
 	// ZITADEL_AUDIENCE intentionally left unset.
 	setEnv(t, env)
 
@@ -127,7 +127,7 @@ func TestConfig_ZitadelDomainSet_RequiresAudience(t *testing.T) {
 
 func TestConfig_ZitadelDomainAndAudienceSet_ReturnsConfig(t *testing.T) {
 	env := fullEnv()
-	env["ZITADEL_DOMAIN"] = "auth.lurus.cn"
+	env["ZITADEL_DOMAIN"] = "identity.lurus.cn"
 	env["ZITADEL_AUDIENCE"] = "tally-client-id"
 	setEnv(t, env)
 
@@ -135,8 +135,8 @@ func TestConfig_ZitadelDomainAndAudienceSet_ReturnsConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error when both ZITADEL_DOMAIN and ZITADEL_AUDIENCE are set, got: %v", err)
 	}
-	if cfg.ZitadelDomain != "auth.lurus.cn" {
-		t.Errorf("ZitadelDomain: want auth.lurus.cn, got %q", cfg.ZitadelDomain)
+	if cfg.ZitadelDomain != "identity.lurus.cn" {
+		t.Errorf("ZitadelDomain: want identity.lurus.cn, got %q", cfg.ZitadelDomain)
 	}
 	if cfg.ZitadelAudience != "tally-client-id" {
 		t.Errorf("ZitadelAudience: want tally-client-id, got %q", cfg.ZitadelAudience)
