@@ -122,7 +122,7 @@ func ToolDefs() []llmclient.Tool {
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "list_low_stock",
-			Description: "Lists SKUs where current quantity is below the re-order point (ROP). Returns product name, qty, ROP, and days of supply.",
+			Description: "Lists SKUs where current quantity is below the re-order point (ROP). Returns product name, qty, ROP, and days of supply. Call this for 补货/该进多少货/复库/缺货预警/库存不够 questions — it IS the replenishment calculation.",
 			Parameters: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -132,7 +132,7 @@ func ToolDefs() []llmclient.Tool {
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "list_dead_stock",
-			Description: "Lists SKUs with no stock movement in the past N days (dead stock / slow-moving inventory).",
+			Description: "Lists SKUs with no stock movement in the past N days (dead stock / slow-moving inventory). Call this for 滞销/呆滞/库存积压/卖不动 questions.",
 			Parameters: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -142,12 +142,12 @@ func ToolDefs() []llmclient.Tool {
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "abc_classify",
-			Description: "ABC classification of products by sales revenue: A=top 80%, B=next 15%, C=bottom 5%. Returns SKU count and cumulative revenue share per tier.",
+			Description: "ABC classification of products by sales revenue: A=top 80%, B=next 15%, C=bottom 5%. Returns SKU count and cumulative revenue share per tier. Call this for ABC分类/帕累托 questions.",
 			Parameters:  mustJSON(map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "recent_sales_top",
-			Description: "Top-N products by revenue, margin, or quantity over recent N days.",
+			Description: "Top-N products by revenue, margin, or quantity over recent N days. Call this for 畅销/爆款/排行/卖得最好 questions.",
 			Parameters: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -160,7 +160,7 @@ func ToolDefs() []llmclient.Tool {
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "gross_margin_summary",
-			Description: "Overall gross margin over the past N days, plus top-10 highest margin and bottom-10 lowest margin products.",
+			Description: "Overall gross margin over the past N days, plus top-10 highest margin and bottom-10 lowest margin products. Call this for 毛利/利润率最低/最高 questions.",
 			Parameters: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
