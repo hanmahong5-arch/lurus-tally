@@ -26,7 +26,7 @@
 | 1 | **identity** | ✅ 已接 | `POST /internal/v1/accounts/upsert` via `platformclient.Client` (Task #39) | account upsert 在用，但 `validate-session` / `account_overview` 没用 |
 | 2 | **billing** | ✅ 已接 | `POST /api/v1/subscriptions/checkout`、`/api/v1/billing/{overview,subscribe}` (Story 10.1) | `internal/pkg/platformclient/billing.go` |
 | 3 | **llm-inference** | ✅ 已接 | `POST https://newapi.lurus.cn/v1/chat/completions` (AI Drawer + ⌘K, Story 11.1) | `internal/pkg/llmclient/client.go` |
-| 4 | **auth** | ✅ 已接 | Zitadel OIDC PKCE → `web/auth.ts` (NextAuth v5) | id_token 转 backend Bearer |
+| 4 | **auth** | ✅ 已接 | 厂商中性 OIDC PKCE (provider id `oidc`) → `web/auth.ts` (NextAuth v5) | id_token 转 backend Bearer；issuer/clientId 部署期注入 |
 | 5 | **notification** | 🟡 **client ready, 待业务调用** | `POST http://notification.lurus-platform.svc:18900/internal/v1/notify`<br>或发 NATS `PSI_EVENTS` 让 notification 消费 | Track A done: `internal/adapter/nats/publisher.go` + `internal/adapter/platform/notification.go`; PSI_EVENTS schema in contracts.md |
 | 6 | **memory** | ✅ 已接 (Track C) | `http://memorus.lurus-system.svc:8880` (REST) via `internal/pkg/memorusclient/` | AI Drawer recall+write-back；MEMORUS_API_KEY 空→降级，AI 继续工作 |
 | 7 | **agent-execution** | ❌ **待接** | `kova-rest:3002` | E17 (V1 计划) + E31.2 项目缺口预警 (V3-Horticulture) |
@@ -127,7 +127,7 @@ Tally write op → state change → publish PSI_EVENTS event
 | Tally 自己写 SMTP 发邮件 | 发 NATS / 调 platform notification |
 | Tally 自己存"用户偏好"到 user_settings 表 | 存 memorus（跨设备同步）|
 | Tally 自己写 OpenAI client | 走 newapi gateway（已做 ✅）|
-| Tally 自建 Zitadel 客户端 / 自己签 JWT | 用 NextAuth + platform validate-session |
+| Tally 自建 OIDC 客户端 / 自己签 JWT | 用 NextAuth + platform validate-session |
 | Tally 直接读 platform DB（identity/billing schema）| 永远走 internal HTTP/gRPC API |
 | Tally 复制 platform 的 wallet 表自己做余额 | 调 `/internal/v1/accounts/{id}/wallet/balance` |
 

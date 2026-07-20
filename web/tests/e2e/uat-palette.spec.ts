@@ -5,7 +5,7 @@
  *
  * Auth note: the Next.js FE proxy (/api/proxy/*) requires a NextAuth session
  * and will return 401 without one. The backend at http://localhost:18200 runs
- * with auth disabled in UAT mode (ZITADEL_DOMAIN unset). Therefore:
+ * with auth disabled in UAT mode (OIDC_ISSUER unset). Therefore:
  *   - API-level checks (seeding, search latency) use the `playwright` fixture
  *     to open a new APIRequestContext pointed directly at the backend.
  *   - UI tests load the dashboard page directly; because the FE also has no

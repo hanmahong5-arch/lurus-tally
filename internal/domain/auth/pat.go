@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	// Scheme is the bearer prefix that distinguishes a PAT from a Zitadel JWT.
+	// Scheme is the bearer prefix that distinguishes a PAT from an OIDC JWT.
 	Scheme = "tally_pat_"
 	// PrefixLen is the length (in URL-safe chars) of the plaintext prefix used
 	// for row lookup. 8 chars over 64-symbol alphabet ≈ 48 bits of entropy —

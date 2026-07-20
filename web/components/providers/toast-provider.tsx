@@ -1,7 +1,7 @@
 'use client'
 
 import { Toaster, toast } from 'sonner'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef } from 'react'
 
 const FLASH_COOKIE = 'tally-flash'
 
@@ -28,12 +28,14 @@ function consumeFlashCookie(): { level: FlashLevel; text: string } | null {
 }
 
 /**
- * ToastProvider mounts the global sonner Toaster and a top-of-page banner
- * that surfaces network connectivity loss. Also consumes one-shot `tally-flash`
- * cookies set by middleware redirects so the user sees a reason for the bounce.
+ * ToastProvider mounts the global sonner Toaster and consumes one-shot
+ * `tally-flash` cookies set by middleware redirects so the user sees a reason
+ * for the bounce. The persistent "you are offline" banner lives solely in
+ * components/ui/offline-banner.tsx (mounted once, app-wide) — this provider
+ * only fires a one-shot toast when connectivity is restored, so the two
+ * implementations never race or disagree on copy/colour.
  */
 export function ToastProvider({ children }: { children: React.ReactNode }) {
-  const [online, setOnline] = useState(true)
   const wasOffline = useRef(false)
 
   useEffect(() => {
@@ -44,7 +46,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     }
     const update = () => {
       const isOnline = navigator.onLine
-      setOnline(isOnline)
       if (!isOnline) {
         wasOffline.current = true
       } else if (wasOffline.current) {
@@ -63,15 +64,6 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   return (
     <>
-      {!online && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="fixed top-0 inset-x-0 bg-amber-600 text-white text-sm py-1 text-center z-50"
-        >
-          网络已断开 — 您的修改将无法保存
-        </div>
-      )}
       {children}
       <Toaster position="top-right" theme="dark" richColors closeButton />
     </>

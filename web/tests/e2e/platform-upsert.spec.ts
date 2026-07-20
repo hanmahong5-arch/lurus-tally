@@ -3,7 +3,7 @@ import { test, expect } from "@playwright/test"
 // Verifies P0 wiring: re-calling POST /api/v1/tenant/profile for an already
 // onboarded user is idempotent (returns 200) AND triggers the platform
 // account heal path so /billing/overview succeeds afterwards. Empty-email
-// Zitadel users (admin / phone-OTP) get a synthesized <sub>@zitadel.local
+// OIDC users (admin / phone-OTP) get a synthesized <sub>@idp.local
 // placeholder so platform always owns a canonical account row.
 test("upsert heals returning user → /billing/overview 200", async ({ request }) => {
   const sessionRes = await request.get("/api/auth/session")

@@ -1,4 +1,4 @@
-// Package tenant — bootstrap.go: atomic first-time onboarding for a Zitadel
+// Package tenant — bootstrap.go: atomic first-time onboarding for an OIDC
 // user. Creates tenant + user_identity_mapping + tenant_profile in a single tx.
 package tenant
 
@@ -17,7 +17,7 @@ import (
 type BootstrapInput struct {
 	TenantID    uuid.UUID
 	TenantName  string
-	ZitadelSub  string
+	IDPSubject  string
 	Email       string
 	DisplayName string
 	ProfileType domain.ProfileType
@@ -49,7 +49,7 @@ func NewSQLBootstrapStore(db *sql.DB) *SQLBootstrapStore {
 
 // GetMappingBySub delegates to MappingRepo using the underlying *sql.DB.
 func (s *SQLBootstrapStore) GetMappingBySub(ctx context.Context, sub string) (*domain.UserIdentityMapping, error) {
-	return NewMappingRepo(s.db).GetByZitadelSub(ctx, sub)
+	return NewMappingRepo(s.db).GetByIDPSubject(ctx, sub)
 }
 
 // GetProfileByTenantID delegates to ProfileRepo using the underlying *sql.DB.
@@ -104,11 +104,12 @@ func (s *SQLBootstrapStore) Bootstrap(ctx context.Context, in BootstrapInput) er
 	}
 
 	// 2. Create user_identity_mapping (sub → tenant, owner role).
+	// TODO(idp-migration): physical column still `zitadel_sub` (owner-gated rename).
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO tally.user_identity_mapping
 			(id, tenant_id, zitadel_sub, email, display_name, role, is_owner, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, 'admin', true, $6, $6)
-	`, uuid.New(), in.TenantID, in.ZitadelSub, in.Email, in.DisplayName, now); err != nil {
+	`, uuid.New(), in.TenantID, in.IDPSubject, in.Email, in.DisplayName, now); err != nil {
 		return fmt.Errorf("bootstrap: insert mapping: %w", err)
 	}
 

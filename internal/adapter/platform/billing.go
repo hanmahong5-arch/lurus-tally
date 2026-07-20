@@ -8,8 +8,10 @@ import (
 
 // Account is the subset of platform's account record Tally cares about.
 type Account struct {
-	ID          int64  `json:"id"`
-	ZitadelSub  string `json:"zitadel_sub"`
+	ID int64 `json:"id"`
+	// IDPSubject is the upstream OIDC `sub`. Vendor-neutral wire field
+	// `idp_subject`, aligned with platform's canonical naming.
+	IDPSubject  string `json:"idp_subject"`
 	Username    string `json:"username"`
 	Email       string `json:"email"`
 	DisplayName string `json:"display_name,omitempty"`
@@ -63,9 +65,9 @@ type SubscriptionCheckoutResponse struct {
 }
 
 // UpsertAccountRequest is the body for POST /internal/v1/accounts/upsert.
-// Platform requires zitadel_sub + email; the rest are best-effort metadata.
+// Platform requires idp_subject + email; the rest are best-effort metadata.
 type UpsertAccountRequest struct {
-	ZitadelSub      string `json:"zitadel_sub"`
+	IDPSubject      string `json:"idp_subject"`
 	Email           string `json:"email"`
 	DisplayName     string `json:"display_name,omitempty"`
 	AvatarURL       string `json:"avatar_url,omitempty"`
@@ -73,12 +75,12 @@ type UpsertAccountRequest struct {
 }
 
 // UpsertAccount creates or updates the platform account record keyed by
-// zitadel_sub. Idempotent — second call with the same sub returns the same
+// idp_subject. Idempotent — second call with the same sub returns the same
 // account row. Tally calls this on first /setup so platform owns the
 // canonical wallet / subscription / VIP record from the very first login.
 func (c *Client) UpsertAccount(ctx context.Context, req UpsertAccountRequest) (*Account, error) {
-	if req.ZitadelSub == "" {
-		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "zitadel_sub is required"}
+	if req.IDPSubject == "" {
+		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "idp_subject is required"}
 	}
 	if req.Email == "" {
 		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "email is required"}
@@ -90,15 +92,15 @@ func (c *Client) UpsertAccount(ctx context.Context, req UpsertAccountRequest) (*
 	return &out, nil
 }
 
-// GetAccountByZitadelSub looks up the platform account record for a Zitadel sub.
-// Returns *Error{Code: ErrCodeNotFound} when no account is provisioned yet.
-func (c *Client) GetAccountByZitadelSub(ctx context.Context, sub string) (*Account, error) {
+// GetAccountByIDPSubject looks up the platform account record for an OIDC IdP
+// subject. Returns *Error{Code: ErrCodeNotFound} when no account is provisioned yet.
+func (c *Client) GetAccountByIDPSubject(ctx context.Context, sub string) (*Account, error) {
 	if sub == "" {
-		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "zitadel_sub is required"}
+		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "idp_subject is required"}
 	}
 	var out Account
 	if err := c.do(ctx, http.MethodGet,
-		"/internal/v1/accounts/by-zitadel-sub/"+url.PathEscape(sub),
+		"/internal/v1/accounts/by-idp-sub/"+url.PathEscape(sub),
 		nil, &out); err != nil {
 		return nil, err
 	}

@@ -85,11 +85,15 @@ func NewTenantProfile(tenantID uuid.UUID, pt ProfileType) (*TenantProfile, error
 	}, nil
 }
 
-// UserIdentityMapping maps a Zitadel OIDC sub to an internal tally tenant.
+// UserIdentityMapping maps an OIDC IdP subject to an internal tally tenant.
 type UserIdentityMapping struct {
-	ID          uuid.UUID `json:"id"`
-	TenantID    uuid.UUID `json:"tenant_id"`
-	ZitadelSub  string    `json:"zitadel_sub"`
+	ID       uuid.UUID `json:"id"`
+	TenantID uuid.UUID `json:"tenant_id"`
+	// IDPSubject is the OIDC `sub` claim of the upstream identity provider.
+	// JSON wire field is vendor-neutral `idp_subject`. The DB physical column
+	// is still `zitadel_sub` (see repo.go / migrations) pending an owner-gated
+	// migration ID to rename it.
+	IDPSubject  string    `json:"idp_subject"`
 	Email       string    `json:"email"`
 	DisplayName string    `json:"display_name"`
 	Role        string    `json:"role"`

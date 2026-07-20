@@ -5,7 +5,7 @@
 // against a Postgres where the app connects as a NON-SUPERUSER role that OWNS the
 // tally tables (so FORCE ROW LEVEL SECURITY is operative, mirroring production),
 // authenticates as a tenant via a Personal Access Token (the real auth path, no
-// Zitadel needed), and drives real HTTP endpoints through httptest.
+// OIDC provider needed), and drives real HTTP endpoints through httptest.
 //
 // Unlike the table-level RLS tests, this exercises the full
 // auth -> TenantDB-pin -> repo(dbscope) -> RLS chain. It is the only harness that
@@ -76,8 +76,8 @@ func bootRLSApp(t *testing.T) (http.Handler, *sql.DB, func()) {
 		LogLevel:             "warn", // surface auth-resolver warnings if this ever regresses
 		ServiceVersion:       "e2e",
 		Port:                 "0",
-		ZitadelDomain:        "auth.dummy.local", // wires authMW + patResolver; JWKS fetched lazily (never, for PAT)
-		ZitadelAudience:      "tally",
+		OIDCIssuer:           "auth.dummy.local", // wires authMW + patResolver; JWKS fetched lazily (never, for PAT)
+		OIDCAudience:         "tally",
 		ShopifyWebhookSecret: rlsWebhookSecret, // enables the public webhook for the import-isolation test
 		// Redis / NATS / NewAPI / Platform deliberately empty: idempotency no-op,
 		// NATS noop, AI + billing disabled. The converted CRUD/read endpoints

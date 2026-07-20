@@ -41,7 +41,7 @@ func TestGetMe_ReturningUser_FullPayload(t *testing.T) {
 	store.mappings["sub-onboarded"] = &domain.UserIdentityMapping{
 		ID:          uuid.New(),
 		TenantID:    tenantID,
-		ZitadelSub:  "sub-onboarded",
+		IDPSubject:  "sub-onboarded",
 		Email:       "bob@example.com",
 		DisplayName: "Bob",
 		Role:        "admin",

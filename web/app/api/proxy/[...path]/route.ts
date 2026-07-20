@@ -8,9 +8,20 @@ const BACKEND_URL = process.env.BACKEND_URL ?? "http://tally-backend:18200"
 // accessToken) as a Bearer header. This lets client components fetch backend
 // data without exposing the token to the browser or wiring useSession into
 // every API client.
+// Dev/E2E offline fallback. The offline Credentials provider (auth.ts) issues
+// sessions WITHOUT a backend bearer; the backend in TALLY_DEV_MODE trusts
+// X-IDP-Subject / X-Tenant-ID headers instead of a JWT. Mirror that contract
+// here so a fully-local stack (dev web + TALLY_DEV_MODE backend) works
+// end-to-end. Same double gate as devProviderEnabled() in auth.ts: explicit
+// AUTH_DEV_PROVIDER opt-in AND a production hard-block.
+function devHeaderFallbackEnabled(): boolean {
+  return process.env.AUTH_DEV_PROVIDER === "true" && process.env.NODE_ENV !== "production"
+}
+
 async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] }> }) {
   const session = await auth()
-  if (!session?.accessToken) {
+  const devTenantId = devHeaderFallbackEnabled() ? session?.user?.tenantId : undefined
+  if (!session?.accessToken && !devTenantId) {
     return NextResponse.json({ error: "unauthorized", detail: "no session" }, { status: 401 })
   }
 
@@ -20,7 +31,13 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   const url = `${BACKEND_URL}/api/v1/${subPath}${search}`
 
   const headers = new Headers()
-  headers.set("Authorization", `Bearer ${session.accessToken}`)
+  if (session?.accessToken) {
+    headers.set("Authorization", `Bearer ${session.accessToken}`)
+  } else if (devTenantId) {
+    // Offline dev session: speak the TALLY_DEV_MODE header contract.
+    headers.set("X-Tenant-ID", devTenantId)
+    headers.set("X-IDP-Subject", session?.user?.id || "dev-user")
+  }
   const ct = req.headers.get("content-type")
   if (ct) headers.set("Content-Type", ct)
 

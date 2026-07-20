@@ -1,4 +1,5 @@
 import Link from "next/link"
+import { OfflineBanner } from "@/components/ui/offline-banner"
 
 /**
  * POS layout — independent route segment, does NOT inherit the dashboard layout.
@@ -24,6 +25,8 @@ export default async function POSLayout({
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-900" data-testid="pos-layout">
+      {/* Single offline-detection implementation, shared with the dashboard layout. */}
+      <OfflineBanner />
       <header className="absolute right-2 top-1.5 z-10 flex items-center gap-1.5">
         <Link
           href="/pos/history"

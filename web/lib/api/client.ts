@@ -99,7 +99,7 @@ async function triggerSignIn(): Promise<void> {
     const mod = await import("next-auth/react")
     const callbackUrl =
       typeof window !== "undefined" ? window.location.pathname + window.location.search : "/"
-    await mod.signIn("zitadel", { callbackUrl })
+    await mod.signIn("oidc", { callbackUrl })
   } catch {
     // In jsdom / SSR there is no real session — swallow, caller still gets the throw
   }

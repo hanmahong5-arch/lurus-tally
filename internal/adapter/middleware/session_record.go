@@ -26,7 +26,7 @@ func SessionRecord(fn SessionRecorderFn) gin.HandlerFunc {
 	}
 	return func(c *gin.Context) {
 		tenantID := GetTenantID(c)
-		userID := GetZitadelSub(c)
+		userID := GetIDPSubject(c)
 		if tenantID != uuid.Nil && userID != "" {
 			_ = fn(c.Request.Context(), tenantID, userID, c.Request.UserAgent(), parseClientIP(c))
 		}

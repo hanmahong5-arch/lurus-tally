@@ -8,18 +8,27 @@ data:
   LOG_LEVEL: "info"
   GIN_MODE: "release"
   KOVA_URL: ""
-  MEMORUS_URL: "http://memorus.lurus-system.svc:8880"
-  # Canonical Lurus identity issuer. Zitadel issues iss=identity.lurus.cn since
-  # the 2026-05-21 cutover; auth.lurus.cn is now a 301 alias, so a backend that
-  # derives its issuer/JWKS from auth.lurus.cn rejects every token (strict iss
-  # mismatch) and its code-exchange loses Authorization across the 301. Must be
-  # the bare host (issuer + JWKS are derived from it).
-  ZITADEL_DOMAIN: "identity.lurus.cn"
-  # Tally's own Zitadel client/project id = the expected JWT `aud` claim.
-  # MUST equal secret ZITADEL_CLIENT_ID. The backend reads ZITADEL_AUDIENCE
-  # (config.go); while ZITADEL_DOMAIN is set, an empty value makes Load()
+  # memorus Rust 版 (memorus-r, R6 lurus-system)。config.go 读 MEMORUS_BASE_URL
+  # （旧 key MEMORUS_URL 无人读，已移除）；client 直接拼 {base}/memories，
+  # 故 base 须含 /api/v1 前缀。配对的 MEMORUS_API_KEY 在 tally-secrets。
+  MEMORUS_BASE_URL: "http://memorus-r.lurus-system.svc:8880/api/v1"
+  # Canonical Lurus identity issuer (vendor-neutral OIDC). The provider issues
+  # iss=identity.lurus.cn since the 2026-05-21 cutover; auth.lurus.cn is now a
+  # 301 alias, so a backend that derives its issuer/JWKS from auth.lurus.cn
+  # rejects every token (strict iss mismatch) and its code-exchange loses
+  # Authorization across the 301. May be the bare host or a full https:// URL
+  # (issuer + JWKS are derived from it). Injected at deploy time — never bind
+  # this to any one IdP vendor's instance URL in code.
+  OIDC_ISSUER: "identity.lurus.cn"
+  # Tally's own OIDC client/project id = the expected JWT `aud` claim.
+  # MUST equal secret OIDC_CLIENT_ID. The backend reads OIDC_AUDIENCE
+  # (config.go); while OIDC_ISSUER is set, an empty value makes Load()
   # fail-fast at boot. Set the real per-env value at deploy time.
-  ZITADEL_AUDIENCE: ""
+  OIDC_AUDIENCE: ""
+  # JWKS endpoint path appended to the issuer. Canonically discovered from
+  # <issuer>/.well-known/openid-configuration (jwks_uri); kept overridable so
+  # no vendor endpoint is hardcoded. Default in config.go is /oauth/v2/keys.
+  OIDC_JWKS_PATH: "/oauth/v2/keys"
   SHUTDOWN_TIMEOUT: "5s"
   MIGRATE_ON_BOOT: "true"
   # AI assistant — routes LLM calls through lurus newapi (never upstream directly)

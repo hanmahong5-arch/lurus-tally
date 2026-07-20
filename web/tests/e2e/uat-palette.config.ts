@@ -7,7 +7,7 @@ import { defineConfig, devices } from "@playwright/test"
  *   Frontend: http://localhost:3030  (Next.js dev)
  *   Backend:  http://localhost:18200 (Go server, auth disabled)
  *
- * No auth setup project — backend UAT mode skips Zitadel middleware.
+ * No auth setup project — backend UAT mode skips OIDC middleware.
  * No storageState — palette tests hit the backend directly via the
  *   `request` fixture's newContext, bypassing the FE proxy auth check.
  */

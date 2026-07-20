@@ -61,7 +61,7 @@ type chooseProfileRequest struct {
 //	401           — no sub in context (auth missing)
 //	500           — internal failure
 func (h *Handler) ChooseProfile(c *gin.Context) {
-	sub := middleware.GetZitadelSub(c)
+	sub := middleware.GetIDPSubject(c)
 	if sub == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error":  "unauthorized",
@@ -80,7 +80,7 @@ func (h *Handler) ChooseProfile(c *gin.Context) {
 	}
 
 	in := appTenant.ChooseProfileInput{
-		ZitadelSub:  sub,
+		IDPSubject:  sub,
 		Email:       middleware.GetEmail(c),
 		DisplayName: middleware.GetDisplayName(c),
 		ProfileType: req.ProfileType,
@@ -124,7 +124,7 @@ func (h *Handler) ChooseProfile(c *gin.Context) {
 // Returns current user context. For first-time users (no mapping yet),
 // IsFirstTime=true and TenantID/ProfileType are empty.
 func (h *Handler) GetMe(c *gin.Context) {
-	sub := middleware.GetZitadelSub(c)
+	sub := middleware.GetIDPSubject(c)
 	if sub == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error":  "unauthorized",

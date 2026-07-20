@@ -1,4 +1,13 @@
 import Link from "next/link"
+import {
+  PackageIcon,
+  ShoppingCartIcon,
+  TrendingUpIcon,
+  WalletIcon,
+  CreditCardIcon,
+  MonitorIcon,
+  type LucideIcon,
+} from "lucide-react"
 import { auth } from "@/auth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ErrorBanner } from "@/components/ui/error-banner"
@@ -26,15 +35,15 @@ export default async function DashboardPage({
     accessToken ? fetchWeeklySummary(accessToken) : Promise.resolve(null),
   ])
 
-  const cards: { href: string; title: string; description: string; emoji: string }[] = [
-    { href: "/products", title: "商品管理", description: "SKU、单位、分类、价格", emoji: "📦" },
-    { href: "/purchases", title: "采购管理", description: "进货单、入库、批次", emoji: "🛒" },
-    { href: "/sales", title: "销售管理", description: "销售单、出库、对账", emoji: "📊" },
-    { href: "/finance/exchange-rates", title: "财务管理", description: "汇率、币种、成本", emoji: "💰" },
-    { href: "/subscription", title: "订阅与计费", description: "套餐、钱包、账单", emoji: "💳" },
+  const cards: { href: string; title: string; description: string; icon: LucideIcon }[] = [
+    { href: "/products", title: "商品管理", description: "SKU、单位、分类、价格", icon: PackageIcon },
+    { href: "/purchases", title: "采购管理", description: "进货单、入库、批次", icon: ShoppingCartIcon },
+    { href: "/sales", title: "销售管理", description: "销售单、出库、对账", icon: TrendingUpIcon },
+    { href: "/finance/exchange-rates", title: "财务管理", description: "汇率、币种、成本", icon: WalletIcon },
+    { href: "/subscription", title: "订阅与计费", description: "套餐、钱包、账单", icon: CreditCardIcon },
   ]
   if (profileType === "retail") {
-    cards.unshift({ href: "/pos", title: "POS 收银", description: "门店即时收银", emoji: "🖥️" })
+    cards.unshift({ href: "/pos", title: "POS 收银", description: "门店即时收银", icon: MonitorIcon })
   }
 
   return (
@@ -71,7 +80,7 @@ export default async function DashboardPage({
               <Card className="h-full transition-colors hover:bg-muted/50">
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2 text-base">
-                    <span aria-hidden="true">{c.emoji}</span>
+                    <c.icon className="h-4 w-4" aria-hidden="true" />
                     {c.title}
                   </CardTitle>
                   <CardDescription>{c.description}</CardDescription>
@@ -92,9 +101,10 @@ export default async function DashboardPage({
             </CardHeader>
             <CardContent>
               {lowStock.items.length === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">
-                  暂无低库存商品
-                </p>
+                <div className="flex flex-col items-center gap-1.5 py-6 text-center">
+                  <span aria-hidden="true" className="text-xl opacity-60">✅</span>
+                  <p className="text-sm text-muted-foreground">库存充足,暂无预警</p>
+                </div>
               ) : (
                 <ul className="divide-y divide-border">
                   {lowStock.items.map((item) => (
@@ -140,9 +150,10 @@ export default async function DashboardPage({
             </CardHeader>
             <CardContent>
               {draftPurchaseCount === 0 ? (
-                <p className="text-sm text-muted-foreground py-4 text-center">
-                  暂无待审采购单
-                </p>
+                <div className="flex flex-col items-center gap-1.5 py-6 text-center">
+                  <span aria-hidden="true" className="text-xl opacity-60">📭</span>
+                  <p className="text-sm text-muted-foreground">没有待审单据</p>
+                </div>
               ) : (
                 <div className="flex items-center justify-between py-2">
                   <div>

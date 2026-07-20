@@ -16,7 +16,7 @@
  *   - /api/auth/session returns HTTP 500 in the UAT FE: NEXTAUTH_URL +
  *     AUTH_SECRET not injected into the web process. Path A (real session)
  *     is blocked. Path B (synthetic session via page.route) is used here.
- *   - Backend auth is disabled (ZITADEL_DOMAIN unset) but Gin context still
+ *   - Backend auth is disabled (OIDC_ISSUER unset) but Gin context still
  *     returns 401 when tenant_id is not in context — so all /api/proxy calls
  *     are stubbed rather than forwarded to localhost:18200.
  *   - The /setup server component calls auth() at render time; the meta

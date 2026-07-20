@@ -21,7 +21,7 @@ test("authenticate via dev credentials provider", async ({ page }) => {
 
   // 1. POST to NextAuth credentials sign-in endpoint directly.
   //    This bypasses the /login page UI and avoids the OIDC redirect entirely,
-  //    which is exactly what we need for offline E2E runs (no Zitadel reachable).
+  //    which is exactly what we need for offline E2E runs (no OIDC provider reachable).
   console.log("→ signing in via dev credentials provider")
 
   // NextAuth v5 sign-in via API route. We navigate to the credentials callback

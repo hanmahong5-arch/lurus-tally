@@ -29,7 +29,7 @@ func (s *stubUpserter) UpsertAccount(_ context.Context, req platformclient.Upser
 	if s.returnErr != nil {
 		return nil, s.returnErr
 	}
-	return &platformclient.Account{ID: 42, ZitadelSub: req.ZitadelSub, Email: req.Email}, nil
+	return &platformclient.Account{ID: 42, IDPSubject: req.IDPSubject, Email: req.Email}, nil
 }
 
 func (s *stubUpserter) callCount() int {
@@ -85,10 +85,10 @@ func (s *stubBootstrapStore) Bootstrap(_ context.Context, in repoTenant.Bootstra
 	if s.bootstrapEr != nil {
 		return s.bootstrapEr
 	}
-	s.mappings[in.ZitadelSub] = &domain.UserIdentityMapping{
+	s.mappings[in.IDPSubject] = &domain.UserIdentityMapping{
 		ID:          uuid.New(),
 		TenantID:    in.TenantID,
-		ZitadelSub:  in.ZitadelSub,
+		IDPSubject:  in.IDPSubject,
 		Email:       in.Email,
 		DisplayName: in.DisplayName,
 		Role:        "admin",
@@ -109,7 +109,7 @@ func TestChooseProfile_FreshUser_BootstrapsTenantAndProfile(t *testing.T) {
 	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 
 	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub:  "sub-fresh-001",
+		IDPSubject:  "sub-fresh-001",
 		Email:       "alice@example.com",
 		DisplayName: "Alice",
 		ProfileType: "cross_border",
@@ -134,7 +134,7 @@ func TestChooseProfile_IdempotentSameType(t *testing.T) {
 	store := newStubBootstrapStore()
 	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 	in := appTenant.ChooseProfileInput{
-		ZitadelSub:  "sub-idem-002",
+		IDPSubject:  "sub-idem-002",
 		ProfileType: "retail",
 	}
 
@@ -159,13 +159,13 @@ func TestChooseProfile_DifferentTypeAfterSet_ReturnsConflict(t *testing.T) {
 	sub := "sub-conflict-003"
 
 	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub: sub, ProfileType: "retail",
+		IDPSubject: sub, ProfileType: "retail",
 	}); err != nil {
 		t.Fatalf("first call failed: %v", err)
 	}
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub: sub, ProfileType: "cross_border",
+		IDPSubject: sub, ProfileType: "cross_border",
 	})
 	if !errors.Is(err, domain.ErrProfileAlreadySet) {
 		t.Errorf("expected ErrProfileAlreadySet, got %v", err)
@@ -178,7 +178,7 @@ func TestChooseProfile_InvalidType_ReturnsInvalidProfileType(t *testing.T) {
 	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub: "sub-bad", ProfileType: "invalid_type",
+		IDPSubject: "sub-bad", ProfileType: "invalid_type",
 	})
 	if !errors.Is(err, domain.ErrInvalidProfileType) {
 		t.Errorf("expected ErrInvalidProfileType, got %v", err)
@@ -191,7 +191,7 @@ func TestChooseProfile_HybridRejected(t *testing.T) {
 	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub: "sub-hyb", ProfileType: "hybrid",
+		IDPSubject: "sub-hyb", ProfileType: "hybrid",
 	})
 	if !errors.Is(err, domain.ErrInvalidProfileType) {
 		t.Errorf("expected ErrInvalidProfileType for hybrid, got %v", err)
@@ -218,7 +218,7 @@ func TestChooseProfile_BootstrapFailure_Surfaces(t *testing.T) {
 	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub: "sub-fail", ProfileType: "retail",
+		IDPSubject: "sub-fail", ProfileType: "retail",
 	})
 	if err == nil {
 		t.Error("expected bootstrap error to propagate, got nil")
@@ -234,7 +234,7 @@ func TestChooseProfile_FreshUser_UpsertsPlatformAccount(t *testing.T) {
 	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
 
 	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub:  "sub-platform-001",
+		IDPSubject:  "sub-platform-001",
 		Email:       "bob@example.com",
 		DisplayName: "Bob",
 		ProfileType: "retail",
@@ -245,7 +245,7 @@ func TestChooseProfile_FreshUser_UpsertsPlatformAccount(t *testing.T) {
 		t.Fatalf("expected exactly 1 platform upsert call, got %d", upserter.callCount())
 	}
 	got := upserter.calls[0]
-	if got.ZitadelSub != "sub-platform-001" || got.Email != "bob@example.com" || got.DisplayName != "Bob" {
+	if got.IDPSubject != "sub-platform-001" || got.Email != "bob@example.com" || got.DisplayName != "Bob" {
 		t.Errorf("upsert payload mismatch: %+v", got)
 	}
 
@@ -268,7 +268,7 @@ func TestChooseProfile_ReturningUser_BackfillsPlatformAccountID(t *testing.T) {
 	store := newStubBootstrapStore()
 	upserter := &stubUpserter{}
 	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
-	in := appTenant.ChooseProfileInput{ZitadelSub: "sub-heal-051", ProfileType: "retail"}
+	in := appTenant.ChooseProfileInput{IDPSubject: "sub-heal-051", ProfileType: "retail"}
 
 	if _, err := uc.Execute(context.Background(), in); err != nil {
 		t.Fatalf("first call failed: %v", err)
@@ -296,7 +296,7 @@ func TestChooseProfile_PersistAccountIDFailure_DoesNotBlock(t *testing.T) {
 	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
 
 	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub: "sub-persist-fail", ProfileType: "retail",
+		IDPSubject: "sub-persist-fail", ProfileType: "retail",
 	})
 	if err != nil {
 		t.Fatalf("account-id persist failure must not block onboarding: %v", err)
@@ -315,7 +315,7 @@ func TestChooseProfile_PlatformUpsertFailure_DoesNotBlockOnboarding(t *testing.T
 	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
 
 	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub:  "sub-blip-002",
+		IDPSubject:  "sub-blip-002",
 		Email:       "carol@example.com",
 		ProfileType: "retail",
 	})
@@ -338,7 +338,7 @@ func TestChooseProfile_ReturningUser_HealsByReUpserting(t *testing.T) {
 	// Pre-seed: tenant + mapping + profile already exist (returning user).
 	tenantID := uuid.New()
 	store.mappings["sub-return-003"] = &domain.UserIdentityMapping{
-		ID: uuid.New(), TenantID: tenantID, ZitadelSub: "sub-return-003",
+		ID: uuid.New(), TenantID: tenantID, IDPSubject: "sub-return-003",
 		Email: "dave@example.com", Role: "admin", IsOwner: true,
 	}
 	prof, _ := domain.NewTenantProfile(tenantID, domain.ProfileTypeCrossBorder)
@@ -348,7 +348,7 @@ func TestChooseProfile_ReturningUser_HealsByReUpserting(t *testing.T) {
 	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
 
 	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub:  "sub-return-003",
+		IDPSubject:  "sub-return-003",
 		Email:       "dave@example.com",
 		ProfileType: "cross_border",
 	}); err != nil {
@@ -366,7 +366,7 @@ func TestChooseProfile_NilUpserter_NoOp(t *testing.T) {
 	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 
 	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub:  "sub-nil-004",
+		IDPSubject:  "sub-nil-004",
 		Email:       "eve@example.com",
 		ProfileType: "retail",
 	}); err != nil {
@@ -404,7 +404,7 @@ func tenantSignupValue(t *testing.T, profileType string) float64 {
 func TestChooseProfile_FreshUser_CountsSignupOnce(t *testing.T) {
 	store := newStubBootstrapStore()
 	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
-	in := appTenant.ChooseProfileInput{ZitadelSub: "sub-signup-001", ProfileType: "retail"}
+	in := appTenant.ChooseProfileInput{IDPSubject: "sub-signup-001", ProfileType: "retail"}
 
 	before := tenantSignupValue(t, "retail")
 
@@ -431,7 +431,7 @@ func TestChooseProfile_AcceptsHorticulture(t *testing.T) {
 	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
 
 	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub:  "sub-horti-001",
+		IDPSubject:  "sub-horti-001",
 		Email:       "nursery@example.com",
 		DisplayName: "Green Thumb",
 		ProfileType: "horticulture",
@@ -444,7 +444,7 @@ func TestChooseProfile_AcceptsHorticulture(t *testing.T) {
 	}
 }
 
-// TestChooseProfile_EmptyEmail_SynthesizesPlaceholder verifies that a Zitadel
+// TestChooseProfile_EmptyEmail_SynthesizesPlaceholder verifies that an OIDC
 // user with no email claim (admin / username-only / phone-OTP) still gets a
 // platform account upsert with a stable placeholder email so wallet and
 // subscription can attach. The placeholder is overwritten on a later call
@@ -455,7 +455,7 @@ func TestChooseProfile_EmptyEmail_SynthesizesPlaceholder(t *testing.T) {
 	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
 
 	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
-		ZitadelSub:  "sub-no-email-005",
+		IDPSubject:  "sub-no-email-005",
 		Email:       "",
 		ProfileType: "retail",
 	}); err != nil {
@@ -465,7 +465,7 @@ func TestChooseProfile_EmptyEmail_SynthesizesPlaceholder(t *testing.T) {
 		t.Fatalf("expected upsert with synthesized email, got %d calls", upserter.callCount())
 	}
 	got := upserter.calls[0]
-	want := "sub-no-email-005@zitadel.local"
+	want := "sub-no-email-005@idp.local"
 	if got.Email != want {
 		t.Errorf("expected synthesized email %q, got %q", want, got.Email)
 	}

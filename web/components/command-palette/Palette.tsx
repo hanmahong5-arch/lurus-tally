@@ -9,6 +9,7 @@ import {
 } from "react"
 import { useRouter } from "next/navigation"
 import { useGlobalShortcut } from "@/hooks/useGlobalShortcut"
+import { useFocusTrap } from "@/hooks/useFocusTrap"
 import {
   PAGE_ACTIONS,
   QUICK_ACTIONS,
@@ -19,8 +20,18 @@ import {
 import { searchEntities, type EntityResult } from "@/lib/api/search"
 import { trackEvent } from "@/lib/telemetry"
 
-// Characters required before AI mode is offered on Tab press.
-const AI_TRIGGER_MIN_CHARS = 5
+// Minimum chars before the "问 AI" row surfaces. 1 = the AI row appears the
+// instant the user types, so ⌘K → type → Enter asks AI with no Tab detour.
+const AI_TRIGGER_MIN_CHARS = 1
+
+// Starter questions shown in the empty ⌘K AI state — one keystroke to a live
+// natural-language query. Tapping (or Enter) sends straight to the AI drawer.
+const AI_STARTERS = [
+  "上月哪些 SKU 滞销?",
+  "帮我算 A 仓补货",
+  "这个月卖得最好的 5 个商品",
+  "毛利最低的商品有哪些?",
+]
 
 // Debounce delay in ms before firing the entity search API call.
 const ENTITY_SEARCH_DEBOUNCE_MS = 150
@@ -53,16 +64,24 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
 
   const inputRef = useRef<HTMLInputElement>(null)
   const abortRef = useRef<AbortController | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
 
-  // Cmd+K opens palette.
+  // Tab/Shift+Tab cycles within the panel while open — this is a hand-rolled
+  // aria-modal panel (not built on Base UI Dialog), so without this Tab would
+  // leak focus onto the page behind it.
+  useFocusTrap(panelRef, open)
+
+  // Cmd+K opens the palette already in AI-ask posture: whatever the user types
+  // is an AI question, Enter sends it — no Tab detour. Page/entity nav is still
+  // reachable below (arrow down), so ⌘K stays a full command palette.
   useGlobalShortcut({
     key: "k",
     onTrigger: () => {
       setOpen(true)
       setQuery("")
       setSelectedIdx(0)
-      setAiMode(false)
+      setAiMode(true)
       setEntityResults([])
       openedAtRef.current = performance.now()
       firstRenderFiredRef.current = false
@@ -128,12 +147,18 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
     )
   }, [query])
 
-  // Ordering: AI (when long query) → entities → static pages/actions.
+  // Ordering: AI ask (primary) → entities → static pages/actions. When the
+  // query is empty we surface tappable AI starter questions so ⌘K lands on a
+  // "just ask" screen rather than a blank search.
   const allItems = useMemo((): PaletteAction[] => {
-    const aiItem: PaletteAction[] =
-      query.length >= AI_TRIGGER_MIN_CHARS ? [AI_ASK_ACTION(query)] : []
-    return [...aiItem, ...entityActions, ...staticItems]
-  }, [query, entityActions, staticItems])
+    if (query.length >= AI_TRIGGER_MIN_CHARS) {
+      return [AI_ASK_ACTION(query), ...entityActions, ...staticItems]
+    }
+    const starters: PaletteAction[] = aiMode
+      ? AI_STARTERS.map((s) => ({ id: `ai-starter-${s}`, label: s, group: "actions" as const, icon: "✨" }))
+      : []
+    return [...starters, ...entityActions, ...staticItems]
+  }, [query, aiMode, entityActions, staticItems])
 
   // Fire first-render latency telemetry once entity results appear.
   useEffect(() => {
@@ -179,6 +204,12 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
         onAIQuery?.(query)
         return
       }
+      // Empty-state starter chip: its label IS the question to ask.
+      if (item.id.startsWith("ai-starter-")) {
+        close("query")
+        onAIQuery?.(item.label)
+        return
+      }
       if (item.href) {
         close("navigate")
         router.push(item.href)
@@ -205,14 +236,6 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
           activate(allItems[selectedIdx])
         }
         break
-      case "Tab":
-        // Tab on a long query enters AI mode.
-        if (query.length >= AI_TRIGGER_MIN_CHARS && !aiMode) {
-          e.preventDefault()
-          setAiMode(true)
-          setSelectedIdx(0)
-        }
-        break
       case "Escape":
         close("none")
         break
@@ -223,7 +246,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
   const groups = useMemo(() => {
     const g: Record<string, PaletteAction[]> = {}
     for (const item of allItems) {
-      const key = item.id === "ai-ask" ? "ai" : item.group
+      const key = item.id === "ai-ask" || item.id.startsWith("ai-starter-") ? "ai" : item.group
       if (!g[key]) g[key] = []
       g[key].push(item)
     }
@@ -231,7 +254,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
   }, [allItems])
 
   const groupLabels: Record<string, string> = {
-    ai: "AI 模式",
+    ai: query ? "AI 助手" : "试试这样问",
     entities: "实体",
     pages: "页面",
     actions: "操作",
@@ -254,6 +277,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
 
       {/* Palette panel */}
       <div
+        ref={panelRef}
         role="dialog"
         aria-label="命令面板"
         aria-modal="true"
@@ -272,10 +296,9 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
             onChange={(e) => {
               setQuery(e.target.value)
               setSelectedIdx(0)
-              if (!e.target.value) setAiMode(false)
             }}
             onKeyDown={handleKeyDown}
-            placeholder={aiMode ? "Ask AI..." : "搜索页面、实体、操作..."}
+            placeholder={aiMode ? "问 AI:上月哪些 SKU 滞销? / 帮我算 A 仓补货" : "搜索页面、实体、操作..."}
             data-testid="palette-input"
             className="flex-1 bg-transparent py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
             aria-autocomplete="list"
@@ -283,14 +306,12 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
             aria-expanded={true}
             aria-controls="palette-listbox"
           />
-          {!aiMode && (
+          {aiMode && (
             <span
-              className={`ml-2 rounded border border-border bg-muted px-1 py-0.5 text-[10px] text-muted-foreground transition-opacity ${
-                query.length >= AI_TRIGGER_MIN_CHARS ? "opacity-100" : "opacity-40"
-              }`}
-              title="输入 ≥5 字后按 Tab 进入 AI 模式"
+              className="ml-2 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
+              title="⌘K 已进入 AI 提问态 — 直接输入问题回车即可"
             >
-              Tab = AI
+              ✨ AI 提问态
             </span>
           )}
           <kbd className="ml-2 rounded border border-border bg-muted px-1 py-0.5 text-[10px] text-muted-foreground">
@@ -363,10 +384,9 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
 
         {/* Footer */}
         <div className="flex gap-3 border-t border-border px-3 py-2 text-[10px] text-muted-foreground">
-          <span>↑↓ 导航</span>
-          <span>↵ 确认</span>
-          <span>Tab AI 模式</span>
-          <span>Esc 关闭</span>
+          <span><kbd className="font-mono">↵</kbd> 问 AI</span>
+          <span><kbd className="font-mono">↑↓</kbd> 选页面/实体</span>
+          <span><kbd className="font-mono">Esc</kbd> 关闭</span>
         </div>
       </div>
     </>

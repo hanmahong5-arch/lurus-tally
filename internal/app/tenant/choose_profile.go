@@ -17,7 +17,7 @@ import (
 // PlatformAccountUpserter abstracts the platform account upsert call so this
 // use case stays testable without a real HTTP client. lurus-platform is the
 // canonical owner of account / wallet / subscription / VIP records — Tally
-// must register every Zitadel sub there on first onboarding so the user can
+// must register every IdP subject there on first onboarding so the user can
 // subscribe, top up wallet, and receive notifications.
 type PlatformAccountUpserter interface {
 	UpsertAccount(ctx context.Context, req platformclient.UpsertAccountRequest) (*platformclient.Account, error)
@@ -34,7 +34,7 @@ var ErrInconsistentTenantState = errors.New("tenant has mapping but no profile (
 // onboarding (creates tenant + mapping + profile in one tx) and the idempotent
 // no-op case (caller already has a profile).
 type ChooseProfileInput struct {
-	ZitadelSub  string // required
+	IDPSubject  string // required (OIDC `sub`)
 	Email       string // optional but recommended
 	DisplayName string // optional
 	ProfileType string // "cross_border" | "retail" | "horticulture"
@@ -69,8 +69,8 @@ func NewChooseProfileUseCase(store repoTenant.BootstrapStore, upserter PlatformA
 
 // Execute runs the onboarding logic. See type doc for idempotency guarantees.
 func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInput) (*domain.TenantProfile, error) {
-	if in.ZitadelSub == "" {
-		return nil, fmt.Errorf("choose profile: zitadel_sub is required")
+	if in.IDPSubject == "" {
+		return nil, fmt.Errorf("choose profile: idp_subject is required")
 	}
 
 	pt := domain.ProfileType(in.ProfileType)
@@ -80,7 +80,7 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 
 	// Lookup existing mapping (sub → tenant). RLS on user_identity_mapping is
 	// relaxed (migration 000016) so this works without a pre-set tenant_id.
-	mapping, err := uc.store.GetMappingBySub(ctx, in.ZitadelSub)
+	mapping, err := uc.store.GetMappingBySub(ctx, in.IDPSubject)
 	if err != nil {
 		return nil, fmt.Errorf("choose profile: lookup mapping: %w", err)
 	}
@@ -111,12 +111,12 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 
 	// First-time user — atomic bootstrap.
 	tenantID := uuid.New()
-	tenantName := deriveTenantName(in.DisplayName, in.Email, in.ZitadelSub)
+	tenantName := deriveTenantName(in.DisplayName, in.Email, in.IDPSubject)
 
 	if err := uc.store.Bootstrap(ctx, repoTenant.BootstrapInput{
 		TenantID:    tenantID,
 		TenantName:  tenantName,
-		ZitadelSub:  in.ZitadelSub,
+		IDPSubject:  in.IDPSubject,
 		Email:       in.Email,
 		DisplayName: in.DisplayName,
 		ProfileType: pt,
@@ -152,10 +152,10 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 // returns an error to the caller — failures are logged at WARN so the user
 // can still finish onboarding even if platform is briefly unavailable. The
 // next ChooseProfile invocation (and any future reconcile worker) will
-// re-attempt because platform's upsert is idempotent on zitadel_sub.
+// re-attempt because platform's upsert is idempotent on idp_subject.
 //
-// When the JWT carries no `email` claim (Zitadel admin users, username-only
-// or phone-OTP logins) we synthesize a placeholder so platform still owns a
+// When the JWT carries no `email` claim (admin users, username-only or
+// phone-OTP logins) we synthesize a placeholder so platform still owns a
 // canonical account row. The placeholder will be overwritten on a future
 // call once the user adds a real email and signs in again.
 func (uc *ChooseProfileUseCase) upsertPlatformAccount(ctx context.Context, tenantID uuid.UUID, in ChooseProfileInput) {
@@ -166,24 +166,24 @@ func (uc *ChooseProfileUseCase) upsertPlatformAccount(ctx context.Context, tenan
 	}
 	email := in.Email
 	if email == "" {
-		email = in.ZitadelSub + "@zitadel.local"
+		email = in.IDPSubject + "@idp.local"
 		uc.logger.Info("platform account upsert: synthesized email placeholder",
-			slog.String("zitadel_sub", in.ZitadelSub),
+			slog.String("idp_subject", in.IDPSubject),
 			slog.String("synthesized_email", email))
 	}
 	acc, err := uc.upserter.UpsertAccount(ctx, platformclient.UpsertAccountRequest{
-		ZitadelSub:  in.ZitadelSub,
+		IDPSubject:  in.IDPSubject,
 		Email:       email,
 		DisplayName: in.DisplayName,
 	})
 	if err != nil {
 		uc.logger.Warn("platform account upsert failed (non-blocking)",
-			slog.String("zitadel_sub", in.ZitadelSub),
+			slog.String("idp_subject", in.IDPSubject),
 			slog.String("error", err.Error()))
 		return
 	}
 	uc.logger.Info("platform account upserted",
-		slog.String("zitadel_sub", in.ZitadelSub),
+		slog.String("idp_subject", in.IDPSubject),
 		slog.Int64("account_id", acc.ID))
 
 	// Pin the account id on the tenant so the LLM usage reporter can attribute

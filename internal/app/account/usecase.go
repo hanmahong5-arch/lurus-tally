@@ -183,7 +183,7 @@ func (uc *ListAuditLog) Execute(ctx context.Context, tenantID uuid.UUID, limit, 
 
 // GetProfile returns the editable profile fields, or a zero-value profile
 // when the row is missing. The /me endpoint composes this on top of the
-// Zitadel-sourced identity, so a missing row is not an error.
+// OIDC-sourced identity, so a missing row is not an error.
 type GetProfile struct{ repo ProfileRepo }
 
 // NewGetProfile constructs the use case.

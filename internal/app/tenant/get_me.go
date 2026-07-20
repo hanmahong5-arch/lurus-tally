@@ -11,7 +11,7 @@ import (
 	domainacct "github.com/hanmahong5-arch/lurus-tally/internal/domain/account"
 )
 
-// GetMeInput carries the authenticated user's Zitadel sub.
+// GetMeInput carries the authenticated user's OIDC subject.
 // TenantID is intentionally not on the input — it is derived from the mapping.
 type GetMeInput struct {
 	UserSub string
@@ -23,7 +23,7 @@ type GetMeInput struct {
 // onboarding (no mapping), TenantID + ProfileType are empty strings and
 // IsFirstTime is true so the frontend can route to /setup.
 type GetMeOutput struct {
-	UserSub     string `json:"user_id"`       // Zitadel sub
+	UserSub     string `json:"user_id"`       // OIDC subject
 	TenantID    string `json:"tenant_id"`     // "" when not yet onboarded
 	Email       string `json:"email"`         // "" when not in mapping
 	DisplayName string `json:"display_name"`  // ""
@@ -44,7 +44,7 @@ type ProfileGetter interface {
 	Execute(ctx context.Context, tenantID uuid.UUID, userID string) (*domainacct.Profile, error)
 }
 
-// GetMeUseCase looks up a user's full identity context by Zitadel sub.
+// GetMeUseCase looks up a user's full identity context by OIDC subject.
 //
 // When profileGetter is supplied, the use case also fans out to the
 // account.user_profile table to surface display_name overrides, phone, and

@@ -61,10 +61,11 @@ export const QUICK_ACTIONS: PaletteAction[] = [
   { id: "act-new-product",  label: "新建商品",   group: "actions", icon: "➕", href: "/products/new", shortcut: "" },
 ]
 
-/** AI mode sentinel — shown when the user types >5 chars + Tab. */
+/** AI-ask sentinel — the primary ⌘K action; sends the query to the AI drawer. */
 export const AI_ASK_ACTION = (query: string): PaletteAction => ({
   id: "ai-ask",
-  label: `Ask AI: ${query}`,
+  label: query ? `问 AI:${query}` : "问 AI",
+  sublabel: query ? "回车用大白话查库存 / 分析销售" : undefined,
   group: "actions",
   icon: "✨",
 })

@@ -171,9 +171,20 @@ export default function PosPage() {
 
   return (
     <div className="flex min-h-screen flex-col pt-8 md:h-screen md:overflow-hidden">
-      {/* Header */}
-      <div className="shrink-0 border-b border-border bg-background px-4 py-2">
-        <h1 className="text-base font-semibold">POS 收银台</h1>
+      {/* Header — title left, live cart summary right (POS-grade at-a-glance total) */}
+      <div className="flex shrink-0 items-center justify-between gap-4 border-b border-border bg-background px-4 py-2">
+        <div className="flex items-center gap-2">
+          <span aria-hidden="true" className="text-base">🖥️</span>
+          <h1 className="text-base font-semibold">POS 收银台</h1>
+        </div>
+        <div className="flex items-baseline gap-2 tabular-nums" aria-live="polite">
+          <span className="text-xs text-muted-foreground">
+            {cartState.items.length} 件
+          </span>
+          <span className="font-mono text-lg font-semibold text-foreground">
+            ¥{cartNetTotal(cartState).toFixed(2)}
+          </span>
+        </div>
       </div>
 
       {/* Checkout error banner */}
@@ -204,7 +215,21 @@ export default function PosPage() {
             onSelect={addToCart}
             tenantId={tenantId}
           />
-          <Suspense fallback={<div className="text-sm text-muted-foreground">加载商品...</div>}>
+          <Suspense
+            fallback={
+              <div
+                className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4"
+                aria-label="加载商品中"
+              >
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div
+                    key={i}
+                    className="h-24 animate-pulse rounded-xl border border-border bg-muted/40"
+                  />
+                ))}
+              </div>
+            }
+          >
             <ProductGrid products={allProducts} onAdd={addToCart} />
           </Suspense>
         </div>
@@ -233,9 +258,13 @@ export default function PosPage() {
 
       {/* Loading overlay during checkout API call */}
       {checkoutLoading && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30">
-          <div className="rounded-xl bg-background p-6 text-center shadow-xl">
-            <div className="text-lg font-medium">处理中...</div>
+        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/30 backdrop-blur-sm" role="status" aria-live="polite">
+          <div className="flex flex-col items-center gap-3 rounded-2xl bg-background px-8 py-6 shadow-xl">
+            <span
+              className="h-8 w-8 animate-spin rounded-full border-[3px] border-muted border-t-primary"
+              aria-hidden="true"
+            />
+            <div className="text-sm font-medium">正在结账并出库…</div>
           </div>
         </div>
       )}

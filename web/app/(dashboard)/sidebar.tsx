@@ -3,6 +3,28 @@
 import { useEffect, useState } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
+import {
+  LayoutDashboardIcon,
+  SparklesIcon,
+  BellIcon,
+  PackageIcon,
+  WarehouseIcon,
+  ClipboardListIcon,
+  ShoppingCartIcon,
+  TrendingUpIcon,
+  CreditCardIcon,
+  LineChartIcon,
+  FactoryIcon,
+  StoreIcon,
+  RulerIcon,
+  ShoppingBagIcon,
+  KeyRoundIcon,
+  WalletIcon,
+  LeafIcon,
+  FolderKanbanIcon,
+  MonitorIcon,
+  type LucideIcon,
+} from "lucide-react"
 import { useProfile } from "@/lib/profile"
 
 import { AccountCard } from "@/components/account/account-card"
@@ -10,7 +32,7 @@ import { AccountCard } from "@/components/account/account-card"
 interface NavItem {
   href: string
   label: string
-  icon?: string
+  icon?: LucideIcon
   /** Only shown when the current profileType is in this list. */
   industry?: string[]
   /** Small badge text to the right of the label (e.g. "NEW"). */
@@ -27,34 +49,34 @@ const SECTIONS: NavSection[] = [
   {
     title: "WORKSPACE",
     items: [
-      { href: "/dashboard", label: "仪表盘", icon: "📊" },
-      { href: "/ai", label: "AI 助手", icon: "🤖", badge: "NEW" },
-      { href: "/todo", label: "待办", icon: "🔔" },
+      { href: "/dashboard", label: "仪表盘", icon: LayoutDashboardIcon },
+      { href: "/ai", label: "AI 助手", icon: SparklesIcon, badge: "NEW" },
+      { href: "/todo", label: "待办", icon: BellIcon },
     ],
   },
   {
     title: "经营",
     items: [
-      { href: "/products", label: "商品", icon: "📦" },
-      { href: "/stock", label: "库存", icon: "🏬" },
-      { href: "/replenish", label: "补货", icon: "📋" },
-      { href: "/purchases", label: "采购", icon: "🛒" },
-      { href: "/sales", label: "销售", icon: "📊" },
-      { href: "/payments", label: "付款", icon: "💳", badge: "NEW" },
-      { href: "/reports", label: "报表", icon: "📈", badge: "NEW" },
+      { href: "/products", label: "商品", icon: PackageIcon },
+      { href: "/stock", label: "库存", icon: WarehouseIcon },
+      { href: "/replenish", label: "补货", icon: ClipboardListIcon },
+      { href: "/purchases", label: "采购", icon: ShoppingCartIcon },
+      { href: "/sales", label: "销售", icon: TrendingUpIcon },
+      { href: "/payments", label: "付款", icon: CreditCardIcon, badge: "NEW" },
+      { href: "/reports", label: "报表", icon: LineChartIcon, badge: "NEW" },
     ],
   },
   {
     title: "设置",
     items: [
-      { href: "/suppliers", label: "供应商", icon: "🏭" },
-      { href: "/warehouses", label: "仓库", icon: "🏪" },
-      { href: "/units", label: "单位", icon: "📐", badge: "NEW" },
-      { href: "/settings/shopify", label: "Shopify 店铺", icon: "🛍️" },
-      { href: "/account?tab=api-keys", label: "API 密钥", icon: "🔑" },
-      { href: "/account?tab=subscription", label: "订阅", icon: "💰" },
-      { href: "/dictionary", label: "苗木字典", icon: "🌿", industry: ["horticulture"] },
-      { href: "/projects", label: "项目", icon: "🏗️", industry: ["horticulture"] },
+      { href: "/suppliers", label: "供应商", icon: FactoryIcon },
+      { href: "/warehouses", label: "仓库", icon: StoreIcon },
+      { href: "/units", label: "单位", icon: RulerIcon, badge: "NEW" },
+      { href: "/settings/shopify", label: "Shopify 店铺", icon: ShoppingBagIcon },
+      { href: "/account?tab=api-keys", label: "API 密钥", icon: KeyRoundIcon },
+      { href: "/account?tab=subscription", label: "订阅", icon: WalletIcon },
+      { href: "/dictionary", label: "苗木字典", icon: LeafIcon, industry: ["horticulture"] },
+      { href: "/projects", label: "项目", icon: FolderKanbanIcon, industry: ["horticulture"] },
     ],
   },
 ]
@@ -75,6 +97,7 @@ function filterSections(sections: NavSection[], profileType: string): NavSection
  * query (so `/account?tab=api-keys` highlights when on `/account`).
  */
 function NavLink({ item, active }: { item: NavItem; active: boolean }) {
+  const Icon = item.icon
   return (
     <Link
       href={item.href}
@@ -84,11 +107,7 @@ function NavLink({ item, active }: { item: NavItem; active: boolean }) {
           : "text-muted-foreground hover:bg-muted hover:text-foreground"
       }`}
     >
-      {item.icon && (
-        <span className="text-base" aria-hidden="true">
-          {item.icon}
-        </span>
-      )}
+      {Icon && <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />}
       <span className="flex-1">{item.label}</span>
       {item.badge && (
         <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary">
@@ -124,9 +143,7 @@ function NavLinks() {
               : "bg-primary/10 text-primary hover:bg-primary/20"
           }`}
         >
-          <span className="text-base" aria-hidden="true">
-            🖥️
-          </span>
+          <MonitorIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
           POS 收银
         </Link>
       )}

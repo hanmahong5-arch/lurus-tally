@@ -24,7 +24,7 @@ type stubPlatform struct {
 	}
 }
 
-func (s *stubPlatform) GetAccountByZitadelSub(_ context.Context, _ string) (*platformclient.Account, error) {
+func (s *stubPlatform) GetAccountByIDPSubject(_ context.Context, _ string) (*platformclient.Account, error) {
 	return s.account, s.accountErr
 }
 
@@ -40,7 +40,7 @@ func (s *stubPlatform) SubscriptionCheckout(_ context.Context, req platformclien
 	return s.checkoutResp, s.checkoutErr
 }
 
-func TestSubscribe_RejectsMissingZitadelSub(t *testing.T) {
+func TestSubscribe_RejectsMissingIDPSubject(t *testing.T) {
 	uc := billing.NewSubscribeUseCase(&stubPlatform{})
 	_, err := uc.Execute(context.Background(), billing.SubscribeInput{
 		PlanCode:      "pro",
@@ -54,7 +54,7 @@ func TestSubscribe_RejectsMissingZitadelSub(t *testing.T) {
 
 func TestSubscribe_RejectsMissingPlanFields(t *testing.T) {
 	uc := billing.NewSubscribeUseCase(&stubPlatform{})
-	_, err := uc.Execute(context.Background(), billing.SubscribeInput{ZitadelSub: "sub"})
+	_, err := uc.Execute(context.Background(), billing.SubscribeInput{IDPSubject: "sub"})
 	if !errors.Is(err, billing.ErrInvalidInput) {
 		t.Errorf("want ErrInvalidInput, got %v", err)
 	}
@@ -70,7 +70,7 @@ func TestSubscribe_PropagatesProductIDAndAccountID(t *testing.T) {
 	uc := billing.NewSubscribeUseCase(stub)
 
 	out, err := uc.Execute(context.Background(), billing.SubscribeInput{
-		ZitadelSub:     "sub-abc",
+		IDPSubject:     "sub-abc",
 		PlanCode:       "pro",
 		BillingCycle:   "monthly",
 		PaymentMethod:  "wallet",
@@ -102,7 +102,7 @@ func TestSubscribe_PropagatesCheckoutError(t *testing.T) {
 	}
 	uc := billing.NewSubscribeUseCase(stub)
 	_, err := uc.Execute(context.Background(), billing.SubscribeInput{
-		ZitadelSub:    "sub-abc",
+		IDPSubject:    "sub-abc",
 		PlanCode:      "pro",
 		BillingCycle:  "monthly",
 		PaymentMethod: "wallet",
@@ -126,7 +126,7 @@ func TestOverview_PropagatesProductScope(t *testing.T) {
 	}
 }
 
-func TestOverview_RejectsMissingZitadelSub(t *testing.T) {
+func TestOverview_RejectsMissingIDPSubject(t *testing.T) {
 	uc := billing.NewOverviewUseCase(&stubPlatform{})
 	_, err := uc.Execute(context.Background(), "")
 	if !errors.Is(err, billing.ErrUnauthenticated) {

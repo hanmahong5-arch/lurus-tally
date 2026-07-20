@@ -68,7 +68,7 @@ const avatarUploadMax = appacct.AvatarSizeMax + 16*1024
 // ListSessions returns the calling user's active sessions.
 func (h *Handler) ListSessions(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
-	userID := middleware.GetZitadelSub(c)
+	userID := middleware.GetIDPSubject(c)
 	if tenantID == uuid.Nil || userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -161,7 +161,7 @@ func (h *Handler) ListAuditLog(c *gin.Context) {
 // GetProfile returns the editable profile fields.
 func (h *Handler) GetProfile(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
-	userID := middleware.GetZitadelSub(c)
+	userID := middleware.GetIDPSubject(c)
 	if tenantID == uuid.Nil || userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -182,7 +182,7 @@ func (h *Handler) GetProfile(c *gin.Context) {
 // UpdateProfile writes display_name / phone overrides.
 func (h *Handler) UpdateProfile(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
-	userID := middleware.GetZitadelSub(c)
+	userID := middleware.GetIDPSubject(c)
 	if tenantID == uuid.Nil || userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -205,7 +205,7 @@ func (h *Handler) UpdateProfile(c *gin.Context) {
 // UploadAvatar accepts multipart/form-data with field "file".
 func (h *Handler) UploadAvatar(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
-	userID := middleware.GetZitadelSub(c)
+	userID := middleware.GetIDPSubject(c)
 	if tenantID == uuid.Nil || userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
@@ -259,7 +259,7 @@ func (h *Handler) UploadAvatar(c *gin.Context) {
 // is short so an edit propagates quickly to all open tabs.
 func (h *Handler) DownloadAvatar(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
-	userID := middleware.GetZitadelSub(c)
+	userID := middleware.GetIDPSubject(c)
 	if tenantID == uuid.Nil || userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return

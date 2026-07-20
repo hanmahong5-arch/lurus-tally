@@ -56,27 +56,45 @@ describe("CommandPalette", () => {
     expect(screen.getByText("商品管理")).toBeInTheDocument()
   })
 
-  it("TestCommandPalette_LongQuery_ShowsAIItem", () => {
+  it("TestCommandPalette_TypedQuery_ShowsAskAIItemFirst", () => {
     render(<CommandPalette />)
     openPalette()
 
     const input = screen.getByTestId("palette-input")
-    // Must be >5 chars to trigger AI suggestion
+    // AI-first: the "问 AI:<query>" row surfaces immediately on any input — no
+    // ≥5-char gate, no Tab.
     fireEvent.change(input, { target: { value: "低库存商品" } })
 
-    expect(screen.getByText(/Ask AI:/)).toBeInTheDocument()
+    expect(screen.getByText(/问 AI:/)).toBeInTheDocument()
   })
 
-  it("TestCommandPalette_TabOnLongQuery_EntersAIMode", () => {
+  it("TestCommandPalette_CmdK_OpensInAIAskPosture", () => {
     render(<CommandPalette />)
     openPalette()
 
     const input = screen.getByTestId("palette-input")
-    fireEvent.change(input, { target: { value: "低库存商品" } })
-    fireEvent.keyDown(input, { key: "Tab" })
+    // ⌘K lands directly in AI-ask posture: the placeholder invites a question
+    // (no Tab detour needed) and the AI-ask badge is shown.
+    expect(input).toHaveAttribute(
+      "placeholder",
+      "问 AI:上月哪些 SKU 滞销? / 帮我算 A 仓补货"
+    )
+    expect(screen.getByText("✨ AI 提问态")).toBeInTheDocument()
+    // Empty state offers tappable starter questions.
+    expect(screen.getByText("上月哪些 SKU 滞销?")).toBeInTheDocument()
+  })
 
-    // Placeholder should change to AI mode
-    expect(input).toHaveAttribute("placeholder", "Ask AI...")
+  it("TestCommandPalette_EnterOnQuery_AsksAIWithoutTab", () => {
+    const onAIQuery = vi.fn()
+    render(<CommandPalette onAIQuery={onAIQuery} />)
+    openPalette()
+
+    const input = screen.getByTestId("palette-input")
+    fireEvent.change(input, { target: { value: "低库存商品" } })
+    // Enter (AI row is first + selected by default) sends straight to AI — no Tab.
+    fireEvent.keyDown(input, { key: "Enter" })
+
+    expect(onAIQuery).toHaveBeenCalledWith("低库存商品")
   })
 
   it("TestCommandPalette_AIQuerySelected_CallsOnAIQuery", () => {

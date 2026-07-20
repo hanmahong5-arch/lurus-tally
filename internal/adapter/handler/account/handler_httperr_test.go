@@ -46,7 +46,7 @@ func TestListSessions_InternalError_DoesNotLeak(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodGet, "/api/v1/account/sessions", nil)
 	c.Set("tenant_id", uuid.New())
-	c.Set("zitadel_sub", "user-123")
+	c.Set("idp_subject", "user-123")
 
 	h.ListSessions(c)
 

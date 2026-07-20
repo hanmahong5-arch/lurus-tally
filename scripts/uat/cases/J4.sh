@@ -3,11 +3,11 @@
 #
 # Two auth modes are exercised:
 #   (A) Pure PAT  — the harness's real auth. The PAT path injects tenant_id but
-#       NO zitadel_sub (auth.go:96-112). billing/handler.go callerSub returns ""
+#       NO idp_subject (auth.go:96-112). billing/handler.go callerSub returns ""
 #       → every billing endpoint 401 "sign-in required". This is the PROVEN-INTENDED
 #       contract (handler.go:67-72 Subscribe, :100-104 Overview), same root cause as /me.
-#   (B) PAT + X-Zitadel-Sub testability hook — the deployed handler honours the
-#       X-Zitadel-Sub header unconditionally (callerSub fallback, billing/handler.go:108-116;
+#   (B) PAT + X-IDP-Subject testability hook — the deployed handler honours the
+#       X-IDP-Subject header unconditionally (callerSub fallback, billing/handler.go:108-116;
 #       comment: "honoured so the integration is testable without a real OIDC flow").
 #       This lets us reach the body-validation + platform paths to cover the
 #       invalid-plan 4xx and the platform-error contract.
@@ -22,7 +22,7 @@
 # OBSERVED ON STAGE (author dry-run): with the hook + a syntactic-but-unmapped sub,
 # platform rejects Tally's internal credential → 502 platform_auth_failed for BOTH
 # overview and a valid-plan subscribe. The happy-path checkout URL is therefore
-# UNREACHABLE on STAGE without a real platform-mapped Zitadel sub for a UAT tenant —
+# UNREACHABLE on STAGE without a real platform-mapped IdP subject for a UAT tenant —
 # a resource we do not have. Per anti-shortcut policy we DO NOT fabricate a checkout
 # URL; we assert the documented platform-error contract and flag the gap in the report.
 set -u
@@ -53,13 +53,13 @@ expect_status 401
 check "subscribe (PAT) 401 sign-in required" \
   jq -e '.error == "unauthorized"' "$HTTP_BODY_FILE"
 
-# === Mode B: PAT + X-Zitadel-Sub testability hook ==============================
+# === Mode B: PAT + X-IDP-Subject testability hook ==============================
 
 # B1: invalid subscribe body (missing plan_code) → 400 bad_request.
 #     This is the spec's "POST /billing/subscribe with an invalid plan → 4xx".
 http subscribe-invalid POST /api/v1/billing/subscribe \
   -H 'Content-Type: application/json' \
-  -H "X-Zitadel-Sub: $BOGUS_SUB" \
+  -H "X-IDP-Subject: $BOGUS_SUB" \
   -d '{"billing_cycle":"monthly"}'
 expect_status 400
 check "subscribe invalid body → bad_request (plan_code required)" \
@@ -67,7 +67,7 @@ check "subscribe invalid body → bad_request (plan_code required)" \
 
 # B2: overview reaches platform; unmapped/credential-rejected → documented error.
 http overview-hook GET /api/v1/billing/overview \
-  -H "X-Zitadel-Sub: $BOGUS_SUB"
+  -H "X-IDP-Subject: $BOGUS_SUB"
 expect_status_in "$PLATFORM_ERR_SET"
 check "overview platform error is a stable coded error (not a leaked 500/stack)" \
   jq -e '.error | type == "string" and (test("internal_error") | not)' "$HTTP_BODY_FILE"
@@ -78,7 +78,7 @@ check "overview platform error is a stable coded error (not a leaked 500/stack)"
 #     contract and explicitly verify NO pay_url leaked. DO NOT follow any URL.
 http subscribe-valid POST /api/v1/billing/subscribe \
   -H 'Content-Type: application/json' \
-  -H "X-Zitadel-Sub: $BOGUS_SUB" \
+  -H "X-IDP-Subject: $BOGUS_SUB" \
   -d '{"plan_code":"pro","billing_cycle":"monthly","payment_method":"alipay","return_url":"https://tally-stage.lurus.cn/uat"}'
 if [ "$HTTP_STATUS" = "200" ]; then
   # Happy path (only reachable with a real platform-mapped sub): assert the

@@ -293,14 +293,14 @@ func (h *Handler) ConfirmPlan(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
-// resolveActorID extracts the acting user's UUID from the Zitadel subject
+// resolveActorID extracts the acting user's UUID from the OIDC subject
 // injected by AuthMiddleware. Returns uuid.Nil when absent.
 //
 // The X-User-ID header fallback was removed (UAT-3 Bug 2): clients could spoof
 // the audit / bill creator by setting it themselves. Only the middleware-
 // injected sub is trusted.
 func resolveActorID(c *gin.Context) uuid.UUID {
-	sub, ok := c.Get(middleware.CtxKeyZitadelSub)
+	sub, ok := c.Get(middleware.CtxKeyIDPSubject)
 	if !ok {
 		return uuid.Nil
 	}

@@ -1,6 +1,6 @@
 // Package billing wires Tally's "subscribe to a plan" flow on top of the
-// platform internal API. Use cases here translate Tally-side identity (Zitadel sub)
-// into platform account IDs and forward the checkout intent.
+// platform internal API. Use cases here translate Tally-side identity (OIDC IdP
+// subject) into platform account IDs and forward the checkout intent.
 package billing
 
 import (
@@ -18,14 +18,14 @@ const ProductID = "tally"
 // PlatformPort is the surface of platformclient.Client we depend on.
 // Captured as an interface so use cases can be unit-tested with a stub.
 type PlatformPort interface {
-	GetAccountByZitadelSub(ctx context.Context, sub string) (*platformclient.Account, error)
+	GetAccountByIDPSubject(ctx context.Context, sub string) (*platformclient.Account, error)
 	GetAccountOverview(ctx context.Context, accountID int64, productID string) (*platformclient.AccountOverview, error)
 	SubscriptionCheckout(ctx context.Context, req platformclient.SubscriptionCheckoutRequest, idempotencyKey string) (*platformclient.SubscriptionCheckoutResponse, error)
 }
 
 // SubscribeInput is what the HTTP handler hands to the use case.
 type SubscribeInput struct {
-	ZitadelSub    string
+	IDPSubject    string
 	PlanCode      string
 	BillingCycle  string
 	PaymentMethod string
@@ -52,24 +52,24 @@ func NewSubscribeUseCase(p PlatformPort) *SubscribeUseCase {
 	return &SubscribeUseCase{platform: p}
 }
 
-// ErrUnauthenticated indicates the caller is not signed in (no zitadel_sub).
+// ErrUnauthenticated indicates the caller is not signed in (no idp_subject).
 var ErrUnauthenticated = errors.New("billing: caller is not authenticated")
 
 // ErrInvalidInput indicates the caller-supplied plan/cycle/method is missing.
 var ErrInvalidInput = errors.New("billing: plan_code, billing_cycle and payment_method are required")
 
-// Execute resolves the platform account_id for the caller's Zitadel sub and posts
-// the checkout intent. It returns SubscribeOutput on success and surfaces typed
-// platform errors so the handler can map them to HTTP statuses cleanly.
+// Execute resolves the platform account_id for the caller's OIDC IdP subject and
+// posts the checkout intent. It returns SubscribeOutput on success and surfaces
+// typed platform errors so the handler can map them to HTTP statuses cleanly.
 func (uc *SubscribeUseCase) Execute(ctx context.Context, in SubscribeInput) (*SubscribeOutput, error) {
-	if in.ZitadelSub == "" {
+	if in.IDPSubject == "" {
 		return nil, ErrUnauthenticated
 	}
 	if in.PlanCode == "" || in.BillingCycle == "" || in.PaymentMethod == "" {
 		return nil, ErrInvalidInput
 	}
 
-	acc, err := uc.platform.GetAccountByZitadelSub(ctx, in.ZitadelSub)
+	acc, err := uc.platform.GetAccountByIDPSubject(ctx, in.IDPSubject)
 	if err != nil {
 		return nil, fmt.Errorf("resolve account: %w", err)
 	}
@@ -105,12 +105,12 @@ func NewOverviewUseCase(p PlatformPort) *OverviewUseCase {
 }
 
 // Execute returns the platform overview for the caller. Callers only need to
-// pass the Zitadel sub; the use case resolves the platform account_id internally.
-func (uc *OverviewUseCase) Execute(ctx context.Context, zitadelSub string) (*platformclient.AccountOverview, error) {
-	if zitadelSub == "" {
+// pass the IdP subject; the use case resolves the platform account_id internally.
+func (uc *OverviewUseCase) Execute(ctx context.Context, idpSubject string) (*platformclient.AccountOverview, error) {
+	if idpSubject == "" {
 		return nil, ErrUnauthenticated
 	}
-	acc, err := uc.platform.GetAccountByZitadelSub(ctx, zitadelSub)
+	acc, err := uc.platform.GetAccountByIDPSubject(ctx, idpSubject)
 	if err != nil {
 		return nil, fmt.Errorf("resolve account: %w", err)
 	}

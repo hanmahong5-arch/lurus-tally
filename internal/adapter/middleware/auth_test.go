@@ -24,7 +24,7 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
-// testAudience is Tally's expected Zitadel client/project id used across the
+// testAudience is Tally's expected OIDC client/project id used across the
 // auth middleware tests. Valid tokens must carry it in their aud claim.
 const testAudience = "tally-client-id"
 
@@ -105,7 +105,7 @@ func newEngineWithAuth(t *testing.T, m gin.HandlerFunc) *gin.Engine {
 	e := gin.New()
 	e.Use(gin.Recovery())
 	e.GET("/protected", m, func(c *gin.Context) {
-		sub, _ := c.Get(middleware.CtxKeyZitadelSub)
+		sub, _ := c.Get(middleware.CtxKeyIDPSubject)
 		tid, _ := c.Get(middleware.CtxKeyTenantID)
 		c.JSON(http.StatusOK, gin.H{
 			"sub":       fmt.Sprintf("%v", sub),
@@ -309,7 +309,7 @@ func TestAuthMiddleware_WrongIssuer_Returns401(t *testing.T) {
 
 // TestAuthMiddleware_WrongAudience_Returns401 verifies that a token correctly
 // signed by the same issuer's key but minted with a DIFFERENT audience (e.g.
-// another app on the shared Zitadel issuer) is rejected — guarding against
+// another app on the shared OIDC issuer) is rejected — guarding against
 // cross-app token replay.
 func TestAuthMiddleware_WrongAudience_Returns401(t *testing.T) {
 	priv := generateTestRSAKey(t)

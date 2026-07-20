@@ -5,7 +5,7 @@
  *   FE  — http://localhost:3030
  *   API — http://localhost:18200 (no auth middleware; X-Tenant-ID header trusted)
  *
- * No auth setup dependency: the backend is started with ZitadelDomain unset, so
+ * No auth setup dependency: the backend is started with OIDC_ISSUER unset, so
  * requests carrying X-Tenant-ID are accepted directly.
  */
 import { defineConfig, devices } from "@playwright/test"

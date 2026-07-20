@@ -1,6 +1,7 @@
 "use client"
 
 import { useState } from "react"
+import Image from "next/image"
 
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import {
@@ -70,8 +71,11 @@ export function AccountCard() {
     >
       <div className="relative h-9 w-9 shrink-0 overflow-hidden rounded-full bg-muted text-sm font-medium uppercase">
         {avatarSrc ? (
-          /* eslint-disable-next-line @next/next/no-img-element */
-          <img src={avatarSrc} alt="" className="h-full w-full object-cover" />
+          // unoptimized: avatarSrc is a same-origin session-cookie-gated proxy
+          // URL — skip Next's optimizer re-fetch (which can't forward the
+          // browser's cookie) and just get the lazy-load + reserved-size CLS
+          // guard that <Image> gives over a bare <img>.
+          <Image src={avatarSrc} alt="" fill sizes="36px" unoptimized className="object-cover" />
         ) : (
           <span className="flex h-full w-full items-center justify-center">
             {(displayName[0] ?? "?").toUpperCase()}
