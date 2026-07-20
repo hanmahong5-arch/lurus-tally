@@ -76,6 +76,19 @@ func (c *Client) do(ctx context.Context, method, path string, payload, out any) 
 // the key on financial mutations (e.g. subscription checkout); reads and
 // non-financial writes pass "" and behave exactly as before.
 func (c *Client) doWithIdem(ctx context.Context, method, path string, payload any, idempotencyKey string, out any) error {
+	// A nil *Client is the "platform integration disabled" sentinel: lifecycle
+	// leaves platClient nil when PLATFORM_INTERNAL_KEY is unset and passes it as
+	// the PlatformAccountUpserter interface. That boxes a typed nil into a
+	// non-nil interface, so callers' `upserter == nil` guard does not catch it —
+	// without this receiver check the first field access (c.baseURL) panics and
+	// every caller (e.g. onboarding's ChooseProfile account upsert) 500s. Return
+	// ErrCodeUnavailable instead so those call sites take their documented
+	// non-blocking degrade path (log WARN, continue) exactly as if platform were
+	// briefly down.
+	if c == nil {
+		return &Error{Code: ErrCodeUnavailable, Message: "platform client not configured (PLATFORM_INTERNAL_KEY unset)"}
+	}
+
 	var body io.Reader
 	if payload != nil {
 		buf, err := json.Marshal(payload)

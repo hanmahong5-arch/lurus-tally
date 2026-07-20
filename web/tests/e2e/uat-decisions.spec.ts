@@ -8,7 +8,7 @@
  *   4. monday_card_shows_signals
  *
  * Stack: FE http://localhost:3030 · Backend http://localhost:18200
- * Auth: backend started without ZITADEL_DOMAIN — X-Tenant-ID header is the
+ * Auth: backend started without OIDC_ISSUER — X-Tenant-ID header is the
  *       dev identity signal injected by the dev-mode middleware in lifecycle/app.go.
  *
  * Seeding strategy: POST directly to backend via Playwright request API.
@@ -90,7 +90,7 @@ async function createProduct(
   if (res.status() === 401) {
     throw new Error(
       `Backend returned 401 on POST /products. ` +
-        `The UAT backend must be started without ZITADEL_DOMAIN so X-Tenant-ID is trusted. ` +
+        `The UAT backend must be started without OIDC_ISSUER so X-Tenant-ID is trusted. ` +
         `Actual status: 401. This is a FAIL — the dev auth bypass is not active.`,
     )
   }

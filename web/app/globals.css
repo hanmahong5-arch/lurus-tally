@@ -38,6 +38,7 @@
     --success: oklch(0.60 0.15 142);
     --warning: oklch(0.75 0.15 85);
     --danger: oklch(0.55 0.20 27);
+    --info: oklch(0.60 0.18 255);
   }
 
   .dark {

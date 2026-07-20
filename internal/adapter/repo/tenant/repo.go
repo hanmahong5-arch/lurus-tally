@@ -24,7 +24,7 @@ type TenantProfileRepository interface {
 
 // UserMappingRepository defines the persistence contract for UserIdentityMapping.
 type UserMappingRepository interface {
-	GetByZitadelSub(ctx context.Context, sub string) (*domain.UserIdentityMapping, error)
+	GetByIDPSubject(ctx context.Context, sub string) (*domain.UserIdentityMapping, error)
 	Create(ctx context.Context, m *domain.UserIdentityMapping) error
 }
 
@@ -158,9 +158,14 @@ func NewMappingRepo(db DB) *MappingRepo {
 	return &MappingRepo{db: db}
 }
 
-// GetByZitadelSub fetches the mapping for the given Zitadel sub claim.
+// GetByIDPSubject fetches the mapping for the given OIDC IdP subject claim.
 // Returns nil, nil when no mapping exists.
-func (r *MappingRepo) GetByZitadelSub(ctx context.Context, sub string) (*domain.UserIdentityMapping, error) {
+//
+// TODO(idp-migration): the physical column is still `zitadel_sub` — renaming it
+// to `idp_subject` needs a reserved migration ID (owner-gated, runs against the
+// live DB), so the SQL keeps the existing column name while the Go field is the
+// vendor-neutral IDPSubject.
+func (r *MappingRepo) GetByIDPSubject(ctx context.Context, sub string) (*domain.UserIdentityMapping, error) {
 	const q = `
 		SELECT id, tenant_id, zitadel_sub, email, display_name, role, is_owner, created_at, updated_at
 		FROM tally.user_identity_mapping
@@ -169,7 +174,7 @@ func (r *MappingRepo) GetByZitadelSub(ctx context.Context, sub string) (*domain.
 	row := r.db.QueryRowContext(ctx, q, sub)
 	m := &domain.UserIdentityMapping{}
 	err := row.Scan(
-		&m.ID, &m.TenantID, &m.ZitadelSub, &m.Email, &m.DisplayName,
+		&m.ID, &m.TenantID, &m.IDPSubject, &m.Email, &m.DisplayName,
 		&m.Role, &m.IsOwner, &m.CreatedAt, &m.UpdatedAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -183,6 +188,7 @@ func (r *MappingRepo) GetByZitadelSub(ctx context.Context, sub string) (*domain.
 
 // Create inserts a new UserIdentityMapping row.
 func (r *MappingRepo) Create(ctx context.Context, m *domain.UserIdentityMapping) error {
+	// TODO(idp-migration): physical column still `zitadel_sub` (owner-gated rename).
 	const q = `
 		INSERT INTO tally.user_identity_mapping
 			(id, tenant_id, zitadel_sub, email, display_name, role, is_owner, created_at, updated_at)
@@ -194,7 +200,7 @@ func (r *MappingRepo) Create(ctx context.Context, m *domain.UserIdentityMapping)
 		m.UpdatedAt = now
 	}
 	_, err := r.db.ExecContext(ctx, q,
-		m.ID, m.TenantID, m.ZitadelSub, m.Email, m.DisplayName,
+		m.ID, m.TenantID, m.IDPSubject, m.Email, m.DisplayName,
 		m.Role, m.IsOwner, m.CreatedAt, m.UpdatedAt)
 	if err != nil {
 		return fmt.Errorf("user mapping repo create: %w", err)

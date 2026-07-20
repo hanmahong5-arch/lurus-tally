@@ -3,7 +3,7 @@
  *
  * Targets the local UAT stack:
  *   FE  → http://localhost:3030
- *   BE  → http://localhost:18200 (auth middleware disabled — ZITADEL_DOMAIN unset)
+ *   BE  → http://localhost:18200 (auth middleware disabled — OIDC_ISSUER unset)
  *
  * Auth strategy (path B — fake session cookie):
  *   The Next.js middleware and /setup page call auth() server-side; the

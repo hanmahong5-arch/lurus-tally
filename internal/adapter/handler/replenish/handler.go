@@ -316,13 +316,13 @@ func (h *Handler) GetScorecard(c *gin.Context) {
 	})
 }
 
-// resolveCreatorID reads the creator UUID from the Zitadel sub injected by
+// resolveCreatorID reads the creator UUID from the OIDC subject injected by
 // AuthMiddleware. The X-User-ID header fallback was removed (UAT-3 Bug 2)
 // because clients could spoof bill_head.creator_id by setting it. Returns
 // uuid.Nil when no sub is present — the use case validates non-nil and
 // rejects gracefully.
 func resolveCreatorID(c *gin.Context) uuid.UUID {
-	sub, exists := c.Get(middleware.CtxKeyZitadelSub)
+	sub, exists := c.Get(middleware.CtxKeyIDPSubject)
 	if !exists {
 		return uuid.Nil
 	}

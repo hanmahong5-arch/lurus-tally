@@ -25,7 +25,7 @@ import (
 type Session struct {
 	ID         uuid.UUID
 	TenantID   uuid.UUID
-	UserID     string // Zitadel sub
+	UserID     string // OIDC subject
 	UserAgent  string
 	IPAddr     net.IP
 	CreatedAt  time.Time
@@ -54,7 +54,7 @@ type AuditEntry struct {
 }
 
 // Profile is the editable per-user record. DisplayName here overrides the
-// Zitadel-provided value when non-empty.
+// OIDC-provided value when non-empty.
 type Profile struct {
 	TenantID          uuid.UUID
 	UserID            string

@@ -6,7 +6,7 @@
 # → clear-demo → cleanup of UAT-created masters.
 #
 # Contract sources (all `git show da399443:<path>`):
-#   internal/adapter/middleware/auth.go:96-112       PAT path sets tenant_id only, never zitadel_sub
+#   internal/adapter/middleware/auth.go:96-112       PAT path sets tenant_id only, never an OIDC subject
 #   internal/adapter/handler/auth/handler.go:126-134 GetMe: empty sub → 401 (expected under PAT)
 #   internal/adapter/handler/onboarding/handler.go:104-145 SeedDemo: {persona, warehouse_id} → 200 {products_created}
 #   internal/adapter/handler/onboarding/handler.go:147-162 ClearDemo: no body → 204 No Content

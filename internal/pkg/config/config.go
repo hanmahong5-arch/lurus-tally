@@ -6,7 +6,31 @@ package config
 import (
 	"fmt"
 	"os"
+	"strings"
 )
+
+// defaultOIDCJWKSPath is the JWKS endpoint path appended to the issuer when
+// OIDC_JWKS_PATH is unset. Canonically this should be discovered from
+// <issuer>/.well-known/openid-configuration (the `jwks_uri` field); it is kept
+// configurable here so the value is injected per-provider at deploy time rather
+// than hardcoding any one vendor's endpoint, and so boot stays offline-safe (no
+// synchronous discovery fetch). Override via OIDC_JWKS_PATH when the provider's
+// discovery document advertises a different path.
+const defaultOIDCJWKSPath = "/oauth/v2/keys"
+
+// NormalizeIssuer returns the issuer as a full https:// URL. Operators may set
+// OIDC_ISSUER to either a bare host (e.g. identity.lurus.cn) or a full URL
+// (https://identity.lurus.cn); both normalise to the same issuer string used for
+// JWKS derivation and strict `iss` matching.
+func NormalizeIssuer(issuer string) string {
+	if issuer == "" {
+		return ""
+	}
+	if strings.HasPrefix(issuer, "http://") || strings.HasPrefix(issuer, "https://") {
+		return issuer
+	}
+	return "https://" + issuer
+}
 
 // Config holds all runtime configuration for lurus-tally.
 // Required fields must be set via environment variables before the service can start.
@@ -31,16 +55,21 @@ type Config struct {
 	PlatformBaseURL     string // PLATFORM_BASE_URL: e.g. http://platform-core.lurus-platform.svc:18104
 	PlatformInternalKey string // PLATFORM_INTERNAL_KEY: bearer token for platform internal API
 
-	// Auth — when ZitadelDomain is empty, AuthMiddleware is skipped and the
-	// service trusts X-Tenant-ID + X-Zitadel-Sub headers (dev only). In
-	// production ZitadelDomain MUST be set so the JWT signature is validated
-	// against the issuer's JWKS.
-	ZitadelDomain string // ZITADEL_DOMAIN: e.g. identity.lurus.cn — issuer + JWKS derived from this
-	// ZitadelAudience is Tally's own Zitadel client/project id. The JWT aud
+	// Auth — when OIDCIssuer is empty, AuthMiddleware is skipped and the
+	// service trusts X-Tenant-ID + X-IDP-Subject headers (dev only). In
+	// production OIDCIssuer MUST be set so the JWT signature is validated
+	// against the issuer's JWKS. Value is vendor-neutral: any OIDC provider
+	// (issuer is injected at deploy time, never hardcoded to a vendor instance).
+	OIDCIssuer string // OIDC_ISSUER: e.g. identity.lurus.cn or https://identity.lurus.cn — issuer + JWKS derived from this
+	// OIDCAudience is Tally's own OIDC client/project id. The JWT aud
 	// claim must contain it, so tokens minted for other apps on the shared
-	// issuer are rejected. Required whenever ZitadelDomain is set (auth enabled);
-	// when ZitadelDomain is empty it stays optional so dev clusters stay bootable.
-	ZitadelAudience string // ZITADEL_AUDIENCE: Tally's Zitadel client/project id (expected aud claim)
+	// issuer are rejected. Required whenever OIDCIssuer is set (auth enabled);
+	// when OIDCIssuer is empty it stays optional so dev clusters stay bootable.
+	OIDCAudience string // OIDC_AUDIENCE: Tally's OIDC client/project id (expected aud claim)
+	// OIDCJWKSPath is the path appended to the issuer to reach the JWKS endpoint.
+	// Should come from <issuer>/.well-known/openid-configuration discovery
+	// (jwks_uri); kept configurable so no vendor endpoint is hardcoded.
+	OIDCJWKSPath string // OIDC_JWKS_PATH: JWKS path (default /oauth/v2/keys)
 
 	// Notification service — Tally can publish events to platform notification.
 	// When PlatformNotifyURL is empty it defaults to the in-cluster address.
@@ -111,30 +140,30 @@ func Load() (*Config, error) {
 		fmt.Sscanf(v, "%d", &aiPlanTTL) //nolint:errcheck
 	}
 
-	// Auth — when ZITADEL_DOMAIN is set, auth is enabled and ZITADEL_AUDIENCE
+	// Auth — when OIDC_ISSUER is set, auth is enabled and OIDC_AUDIENCE
 	// MUST also be set so the JWT aud claim is enforced; without it tokens
 	// minted for other apps on the shared issuer would be accepted. When
-	// ZITADEL_DOMAIN is empty, auth is disabled (dev) and audience is optional.
-	zitadelDomain := optional("ZITADEL_DOMAIN", "")
-	zitadelAudience := optional("ZITADEL_AUDIENCE", "")
-	if zitadelDomain != "" && zitadelAudience == "" {
+	// OIDC_ISSUER is empty, auth is disabled (dev) and audience is optional.
+	oidcIssuer := optional("OIDC_ISSUER", "")
+	oidcAudience := optional("OIDC_AUDIENCE", "")
+	if oidcIssuer != "" && oidcAudience == "" {
 		return nil, fmt.Errorf(
-			"ZITADEL_AUDIENCE is required when ZITADEL_DOMAIN is set: " +
-				"set it to Tally's Zitadel client/project id (the expected JWT aud claim)",
+			"OIDC_AUDIENCE is required when OIDC_ISSUER is set: " +
+				"set it to Tally's OIDC client/project id (the expected JWT aud claim)",
 		)
 	}
 
-	// Auth-boundary fast-fail. An empty ZITADEL_DOMAIN disables JWT validation
+	// Auth-boundary fast-fail. An empty OIDC_ISSUER disables JWT validation
 	// entirely — the /api/v1 group then serves every business endpoint
 	// UNAUTHENTICATED (it trusts dev headers). That is only safe in local
 	// development, and only when the operator opts in explicitly: a missing or
-	// mistyped ZITADEL_DOMAIN in a stage/prod manifest must never silently strip
+	// mistyped OIDC_ISSUER in a stage/prod manifest must never silently strip
 	// the auth boundary. Require TALLY_DEV_MODE=true to run without auth.
 	devMode := optional("TALLY_DEV_MODE", "") == "true"
-	if zitadelDomain == "" && !devMode {
+	if oidcIssuer == "" && !devMode {
 		return nil, fmt.Errorf(
-			"ZITADEL_DOMAIN is required: with it unset the entire /api/v1 surface runs " +
-				"UNAUTHENTICATED. Set ZITADEL_DOMAIN (and ZITADEL_AUDIENCE) to enable JWT auth, " +
+			"OIDC_ISSUER is required: with it unset the entire /api/v1 surface runs " +
+				"UNAUTHENTICATED. Set OIDC_ISSUER (and OIDC_AUDIENCE) to enable JWT auth, " +
 				"or set TALLY_DEV_MODE=true to explicitly run without auth in local development",
 		)
 	}
@@ -154,8 +183,9 @@ func Load() (*Config, error) {
 		PlatformInternalKey: optional("PLATFORM_INTERNAL_KEY", ""),
 		PlatformNotifyURL: optional("PLATFORM_NOTIFY_URL",
 			"http://notification.lurus-platform.svc:18900"),
-		ZitadelDomain:        zitadelDomain,
-		ZitadelAudience:      zitadelAudience,
+		OIDCIssuer:           oidcIssuer,
+		OIDCAudience:         oidcAudience,
+		OIDCJWKSPath:         optional("OIDC_JWKS_PATH", defaultOIDCJWKSPath),
 		NewAPIBaseURL:        optional("NEWAPI_BASE_URL", "https://newapi.lurus.cn/v1"),
 		NewAPIKey:            optional("NEWAPI_API_KEY", ""),
 		DefaultAIModel:       optional("DEFAULT_AI_MODEL", "deepseek-v4-flash"),

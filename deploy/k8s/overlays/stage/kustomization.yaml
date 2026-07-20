@@ -3,24 +3,24 @@ kind: Kustomization
 resources:
   - ../../base
 patches:
-  # STAGE uses an isolated Zitadel instance at test-auth.lurus.cn so
+  # STAGE uses an isolated OIDC provider instance at test-auth.lurus.cn so
   # staging traffic never authenticates against the production tenant.
   # base/configmap.yaml ships the PROD issuer (identity.lurus.cn since the
   # 2026-05-21 cutover). NOTE (operator): confirm test-auth.lurus.cn is still a
-  # live, separate STAGE Zitadel; if it was folded into identity.lurus.cn, drop
+  # live, separate STAGE issuer; if it was folded into identity.lurus.cn, drop
   # these two issuer patches so STAGE inherits the canonical issuer from base.
   - patch: |-
       - op: replace
-        path: /data/ZITADEL_DOMAIN
+        path: /data/OIDC_ISSUER
         value: test-auth.lurus.cn
     target:
       kind: ConfigMap
       name: tally-config
   # STAGE web must sign users in against the STAGE issuer too, or the id_token's
-  # `iss` won't match the backend's ZITADEL_DOMAIN (test-auth) → backend 401.
+  # `iss` won't match the backend's OIDC_ISSUER (test-auth) → backend 401.
   - patch: |-
       - op: replace
-        path: /data/ZITADEL_ISSUER
+        path: /data/OIDC_ISSUER
         value: https://test-auth.lurus.cn
     target:
       kind: ConfigMap

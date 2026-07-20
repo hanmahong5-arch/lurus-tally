@@ -101,7 +101,7 @@ func TestBillingRoutes_NilHandler_Returns501(t *testing.T) {
 
 // TestBillingRoutes_RealHandler_NotImplementedReplaced locks the inverse: when a
 // real handler is wired, the same routes are served by it (NOT the 501 stub).
-// Without a Zitadel sub in context the handler returns 401 — the key assertion
+// Without an OIDC subject in context the handler returns 401 — the key assertion
 // is that the status is NOT 501, proving RegisterRoutes ran instead of the
 // notImplemented placeholder.
 func TestBillingRoutes_RealHandler_NotImplementedReplaced(t *testing.T) {
@@ -130,8 +130,8 @@ func TestBillingRoutes_RealHandler_NotImplementedReplaced(t *testing.T) {
 		if w.Code == http.StatusNotFound {
 			t.Errorf("%s %s: route not registered (404)", tc.method, tc.path)
 		}
-		// No sub in context → handler returns 401 (overview reads X-Zitadel-Sub /
-		// ctx; subscribe also checks auth before body binding).
+		// No sub in context → handler returns 401 (billing reads the OIDC subject
+		// only from ctx, never a header; subscribe also checks auth before binding).
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("%s %s real handler without auth: want 401, got %d (body=%s)", tc.method, tc.path, w.Code, w.Body.String())
 		}

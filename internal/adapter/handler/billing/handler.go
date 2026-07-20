@@ -22,7 +22,7 @@ type SubscribeExecutor interface {
 
 // OverviewExecutor is the surface satisfied by OverviewUseCase.
 type OverviewExecutor interface {
-	Execute(ctx context.Context, zitadelSub string) (*platformclient.AccountOverview, error)
+	Execute(ctx context.Context, idpSubject string) (*platformclient.AccountOverview, error)
 }
 
 // Handler groups Tally's billing-facing HTTP routes.
@@ -38,7 +38,7 @@ func New(subscribe SubscribeExecutor, overview OverviewExecutor) *Handler {
 
 // RegisterRoutes mounts billing endpoints onto the given router group.
 // The group is expected to already be guarded by AuthMiddleware so the
-// Zitadel sub is present in the gin context.
+// IdP subject is present in the gin context.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/billing/overview", h.Overview)
 	rg.POST("/billing/subscribe", h.Subscribe)
@@ -76,7 +76,7 @@ func (h *Handler) Subscribe(c *gin.Context) {
 	}
 
 	out, err := h.subscribe.Execute(c.Request.Context(), appbilling.SubscribeInput{
-		ZitadelSub:     sub,
+		IDPSubject:     sub,
 		PlanCode:       req.PlanCode,
 		BillingCycle:   req.BillingCycle,
 		PaymentMethod:  req.PaymentMethod,
@@ -110,16 +110,18 @@ func (h *Handler) Overview(c *gin.Context) {
 	c.JSON(http.StatusOK, ov)
 }
 
-// callerSub reads the Zitadel sub injected by the AuthMiddleware. In dev
-// mode the middleware is bypassed and the X-Zitadel-Sub header is honoured
-// so the integration is testable without a real OIDC flow.
+// callerSub returns the IdP subject that AuthMiddleware injected into the
+// context from a cryptographically-verified OIDC token (CtxKeyIDPSubject).
+// It deliberately trusts ONLY the context value and NEVER a request header:
+// billing acts on a platform account keyed by this subject, so honouring a
+// client-supplied X-IDP-Subject would let any authenticated caller check out /
+// read a victim's account. PAT-authenticated requests carry no subject (a PAT
+// is tenant-scoped, not identity-scoped) and therefore get "" here → the
+// handlers reject them with 401. In dev, the TALLY_DEV_MODE middleware shim
+// injects the subject into the context itself (never from prod), so local
+// testing keeps working without any header fallback in this path.
 func callerSub(c *gin.Context) string {
-	if v, ok := c.Get(middleware.CtxKeyZitadelSub); ok {
-		if s, ok := v.(string); ok && s != "" {
-			return s
-		}
-	}
-	return c.GetHeader("X-Zitadel-Sub")
+	return middleware.GetIDPSubject(c)
 }
 
 // writePlatformError translates use-case / platform errors into HTTP responses

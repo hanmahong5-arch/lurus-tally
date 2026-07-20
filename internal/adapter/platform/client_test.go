@@ -32,20 +32,20 @@ func TestNew_RejectsEmptyConfig(t *testing.T) {
 	}
 }
 
-func TestGetAccountByZitadelSub_HappyPath(t *testing.T) {
+func TestGetAccountByIDPSubject_HappyPath(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if got := r.Header.Get("Authorization"); got != "Bearer test-key" {
 			t.Errorf("missing bearer; got %q", got)
 		}
-		if !strings.HasPrefix(r.URL.Path, "/internal/v1/accounts/by-zitadel-sub/") {
+		if !strings.HasPrefix(r.URL.Path, "/internal/v1/accounts/by-idp-sub/") {
 			t.Errorf("wrong path: %s", r.URL.Path)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(platform.Account{ID: 42, ZitadelSub: "sub-abc", Email: "u@x"})
+		_ = json.NewEncoder(w).Encode(platform.Account{ID: 42, IDPSubject: "sub-abc", Email: "u@x"})
 	}))
 	defer srv.Close()
 
-	acc, err := newClient(t, srv).GetAccountByZitadelSub(context.Background(), "sub-abc")
+	acc, err := newClient(t, srv).GetAccountByIDPSubject(context.Background(), "sub-abc")
 	if err != nil {
 		t.Fatalf("err: %v", err)
 	}
@@ -54,14 +54,14 @@ func TestGetAccountByZitadelSub_HappyPath(t *testing.T) {
 	}
 }
 
-func TestGetAccountByZitadelSub_NotFound(t *testing.T) {
+func TestGetAccountByIDPSubject_NotFound(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 		_, _ = w.Write([]byte(`{"error":"account not found"}`))
 	}))
 	defer srv.Close()
 
-	_, err := newClient(t, srv).GetAccountByZitadelSub(context.Background(), "missing")
+	_, err := newClient(t, srv).GetAccountByIDPSubject(context.Background(), "missing")
 	if !platform.IsCode(err, platform.ErrCodeNotFound) {
 		t.Errorf("expected ErrCodeNotFound, got %v", err)
 	}

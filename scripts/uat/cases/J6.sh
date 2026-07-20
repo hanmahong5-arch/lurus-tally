@@ -8,7 +8,7 @@
 #       ?preview=true → dry-run; commit → 201/200.
 #       *** VERIFIED ON STAGE: under PAT auth this endpoint ALWAYS 422s with
 #       "creator_id is required" (usecase.go:371) BEFORE the CSV is parsed,
-#       because the handler derives creator_id from the Zitadel sub which the
+#       because the handler derives creator_id from the OIDC subject which the
 #       PAT path never injects. The full import vertical therefore requires a
 #       JWT and is asserted here only via its PAT error contract. ***
 #       Shopify CSV columns (for reference / future JWT run): Name, Lineitem sku,
@@ -88,12 +88,12 @@ HINTS="[{\"platform_sku\":\"UAT-${RUN_ID}-SKU1\",\"product_id\":\"$PROD_ID\"}]"
 #     IMPORTANT FINDING (verified on STAGE, da399443): the import use case
 #     rejects with 422 {"error":"import_failed","detail":"importing: creator_id
 #     is required"} BEFORE any CSV parse, because usecase.go:371 requires a
-#     non-nil CreatorID and the handler derives it from the Zitadel sub
-#     (importing/handler.go actorID → middleware.GetZitadelSub). The PAT path
+#     non-nil CreatorID and the handler derives it from the OIDC subject
+#     (importing/handler.go actorID → middleware.GetIDPSubject). The PAT path
 #     injects NO sub, so CreatorID is always uuid.Nil under a PAT.
 #
 #     => The CSV import vertical (preview → commit → sale bill → persisted
-#        mapping) is UNREACHABLE under PAT auth. It needs a Zitadel JWT, which
+#        mapping) is UNREACHABLE under PAT auth. It needs a OIDC JWT, which
 #        the UAT harness does not have. We therefore assert the documented
 #        error contract (422 + creator_id detail) as the coverage outcome for
 #        BOTH preview and commit, rather than fabricating a JWT.

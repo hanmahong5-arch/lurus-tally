@@ -1,6 +1,7 @@
 "use client"
 
 import Link from "next/link"
+import Image from "next/image"
 import { useRouter, useSearchParams } from "next/navigation"
 import { useCallback, useState } from "react"
 import { toast } from "sonner"
@@ -238,7 +239,7 @@ function ProfileTab() {
     <div className="px-6 py-6">
       <h1 className="mb-2 text-xl font-semibold">个人资料</h1>
       <p className="mb-6 text-sm text-muted-foreground">
-        显示名 / 手机 / 头像可在此修改；邮箱和角色由 Zitadel SSO 管理。
+        显示名 / 手机 / 头像可在此修改；邮箱和角色由 SSO 身份服务管理。
       </p>
       {error && <ErrorBanner>加载失败：{error}</ErrorBanner>}
 
@@ -247,8 +248,10 @@ function ProfileTab() {
           <div className="flex items-center gap-4 rounded-xl border border-border bg-card p-4">
             <div className="relative h-16 w-16 overflow-hidden rounded-full bg-muted">
               {avatarUrl ? (
-                /* eslint-disable-next-line @next/next/no-img-element */
-                <img src={avatarUrl} alt="头像" className="h-full w-full object-cover" />
+                // unoptimized: avatarUrl is a same-origin session-cookie-gated proxy
+                // URL — skip Next's optimizer re-fetch and just get the lazy-load +
+                // reserved-size CLS guard that <Image> gives over a bare <img>.
+                <Image src={avatarUrl} alt="头像" fill sizes="64px" unoptimized className="object-cover" />
               ) : (
                 <div className="flex h-full w-full items-center justify-center text-xl font-medium uppercase">
                   {(displayName || summary.identity.email || "?")[0]?.toUpperCase() ?? "?"}
@@ -617,7 +620,7 @@ function SecurityTab() {
       <section className="mb-6 rounded-xl border border-border bg-card p-4">
         <h2 className="mb-1 text-sm font-medium">密码 / 2FA</h2>
         <p className="mb-3 text-xs text-muted-foreground">
-          密码和两步验证由 Zitadel 统一管理。点击下方按钮在 SSO 控制台修改。
+          密码和两步验证由 SSO 身份服务统一管理。点击下方按钮在 SSO 控制台修改。
         </p>
         <a
           href="https://auth.lurus.cn"
@@ -625,7 +628,7 @@ function SecurityTab() {
           rel="noopener noreferrer"
           className="inline-flex rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted"
         >
-          打开 Zitadel 控制台 →
+          打开 SSO 控制台 →
         </a>
       </section>
 

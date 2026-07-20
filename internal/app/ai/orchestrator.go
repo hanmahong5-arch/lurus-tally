@@ -104,6 +104,8 @@ You can call the provided tools to query real data from the user's inventory sys
 
 CRITICAL — tool-first policy: if any available tool can plausibly answer the user's question, you MUST call it in this same turn BEFORE writing any reply text. Never respond with a menu of options, a feature list, or a clarifying question when a tool call would produce a real answer — call the tool first, then explain the result using the returned data. Only ask the user a clarifying question after a tool call has already run and its result was empty or genuinely ambiguous.
 
+Call the SINGLE most specific tool that directly answers the question, and put it FIRST. Do NOT call get_stock_summary as a preliminary survey before a more specific tool: get_stock_summary is only for a genuine overall warehouse overview (库存总体情况 / 仓库概况). For 补货 / 该进多少货 / 算需要补多少 call list_low_stock directly; for 滞销 / 卖不动 call list_dead_stock directly; for 毛利 / 利润率 call gross_margin_summary directly — never precede these with get_stock_summary.
+
 Common Chinese phrasing → tool mapping (resolve intent to a tool call, do not ask which one the user means):
 - 补货 / 该进多少货 / 复库 / 缺货预警 / 库存不够 → list_low_stock (then propose_create_purchase_draft if the user wants an order placed)
 - 滞销 / 呆滞 / 库存积压 / 卖不动 → list_dead_stock
@@ -278,31 +280,23 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 		choice := resp.Choices[0]
 
 		if len(choice.Message.ToolCalls) == 0 {
-			// No more tools — stream the final response.
-			streamMessages := append(messages, choice.Message) //nolint:gocritic
-			_ = streamMessages
-
-			// Re-request with stream=true using the accumulated messages.
-			var finalText string
-			streamErr := o.llm.Stream(spanCtx, o.model, messages, nil, func(d llmclient.StreamDelta) {
-				if d.Content != "" {
-					onChunk(d.Content)
-					finalText += d.Content
-				}
-			})
-			if span != nil {
-				if streamErr != nil {
-					span.End("", llmobs.TokenCount{}, streamErr)
-				} else {
-					span.End(finalText, llmobs.TokenCount{
-						Prompt:     resp.Usage.PromptTokens,
-						Completion: resp.Usage.CompletionTokens,
-						Total:      resp.Usage.TotalTokens,
-					}, nil)
-				}
+			// No more tools — this Chat response already IS the final answer.
+			// Emit it directly instead of re-requesting with stream=true: a
+			// second inference on the same prompt would run the LLM twice and
+			// report usage twice (P1 double-billing defect — every simple Q&A
+			// cost 2x tokens + 2x usage_events). The streaming contract is still
+			// honoured: the handler wraps each onChunk call in an SSE `chunk`
+			// event, so the client receives the answer as a (single) chunk.
+			finalText, _ := extractContent(choice.Message.Content)
+			if finalText != "" {
+				onChunk(finalText)
 			}
-			if streamErr != nil {
-				return nil, fmt.Errorf("orchestrator: stream final: %w", streamErr)
+			if span != nil {
+				span.End(finalText, llmobs.TokenCount{
+					Prompt:     resp.Usage.PromptTokens,
+					Completion: resp.Usage.CompletionTokens,
+					Total:      resp.Usage.TotalTokens,
+				}, nil)
 			}
 			// Async write-back: summarise this turn to memorus (non-blocking).
 			summary := BuildMemorySummary(in.TenantID, in.UserMessage, finalText)

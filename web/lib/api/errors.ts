@@ -56,7 +56,7 @@ const GENERIC_MESSAGE = "操作失败，请稍后重试。"
  * `message` is fit for direct display. This is the single, canonical path for
  * turning a thrown error into user-facing copy — callers must use it instead of
  * `String(err)` (which leaks the class-name prefix) or reading `err.message`
- * ad hoc (which may surface a raw transport/Zitadel code).
+ * ad hoc (which may surface a raw transport/OIDC code).
  */
 export function extractApiError(err: unknown): DisplayError {
   if (err instanceof ApiError) {

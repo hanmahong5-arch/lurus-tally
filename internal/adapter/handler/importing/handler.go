@@ -265,11 +265,11 @@ func toResultDTO(r *appimporting.ImportResult) importResultDTO {
 	}
 }
 
-// actorID reads the Zitadel subject from the request context. Returns uuid.Nil
+// actorID reads the OIDC subject from the request context. Returns uuid.Nil
 // when the subject is absent or not a UUID — the use case will apply a zero
 // creator_id in that case.
 func actorID(c *gin.Context) uuid.UUID {
-	sub := middleware.GetZitadelSub(c)
+	sub := middleware.GetIDPSubject(c)
 	if sub == "" {
 		return uuid.Nil
 	}

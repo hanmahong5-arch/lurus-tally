@@ -89,12 +89,12 @@ func (h *Handler) Bind(c *gin.Context) {
 		return
 	}
 
-	// actor: the Zitadel sub is resolved to a UUID by the main-line wire
+	// actor: the OIDC subject is resolved to a UUID by the main-line wire
 	// (user_identity_mapping lookup). We reuse the tenant UUID as creator_id
 	// fallback so that the record is always non-null, even in test environments
 	// where the sub → UUID lookup is not yet wired.
 	creatorID := tenantID
-	if sub := middleware.GetZitadelSub(c); sub != "" {
+	if sub := middleware.GetIDPSubject(c); sub != "" {
 		if parsed, err := uuid.Parse(sub); err == nil {
 			creatorID = parsed
 		}

@@ -46,6 +46,7 @@ const config: Config = {
         success: "var(--success)",
         warning: "var(--warning)",
         danger: "var(--danger)",
+        info: "var(--info)",
       },
       ringWidth: {
         3: "3px",

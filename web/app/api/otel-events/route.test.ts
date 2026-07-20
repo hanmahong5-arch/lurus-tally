@@ -4,7 +4,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 // In vitest/jsdom we mock fetch for the outbound collector call.
 
 // Mock the NextAuth server helper so the route never pulls in the real auth
-// stack (Zitadel/OIDC) under jsdom. authMock controls the "current session".
+// stack (OIDC) under jsdom. authMock controls the "current session".
 const authMock = vi.fn<() => Promise<unknown>>(() => Promise.resolve(null))
 vi.mock("@/auth", () => ({ auth: () => authMock() }))
 

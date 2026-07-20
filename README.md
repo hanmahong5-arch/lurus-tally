@@ -2,7 +2,7 @@
 
 > 智能进销存系统 (Smart Purchase-Sales-Inventory)
 
-**状态**: Story 1.1 骨架完成 — Go 服务可启动并通过健康检查
+**状态**: 27 个业务模块 (account/product/stock/billing/horticulture 等) + 96 个数据库 migration + CI (lint/test/release) 持续跑；多租户 RLS、Platform 计费接入、OIDC 鉴权均已实现 — 非骨架阶段，仍在迭代中（部分模块覆盖率/端到端验证程度不一，详见 `_bmad-output/planning-artifacts/`）
 **产品组**: Platform (P0) 候选 · **目标客群**: 中小企业 B2B (制造/批发/零售/电商)
 
 ## Vision
@@ -96,7 +96,7 @@ Tests: `make test` (or `go test -count=1 ./...`); CI uses `go test -race -count=
 
 ## Open-Source Lineage
 
-详见 `NOTICE` 文件。借鉴: **jshERP** (Apache-2.0, 核心进销存数据模型) · **GreaterWMS** (Apache-2.0, WMS schema 六状态库存) · **Apache OFBiz** (Apache-2.0, 设计模式参考) · **shadcn/ui + Radix** (MIT, 前端组件) · **Medusa.js v2** (MIT, Headless inventory 架构参考)。Third-party license notices 收集于 `THIRD_PARTY_LICENSES/`。
+详见 `NOTICE` 文件。借鉴: **jshERP** (Apache-2.0, 核心进销存数据模型) · **GreaterWMS** (Apache-2.0, WMS schema 六状态库存) · **Apache OFBiz** (Apache-2.0, 设计模式参考) · **shadcn/ui + Radix** (MIT, 前端组件) · **Medusa.js v2** (MIT, Headless inventory 架构参考)。Third-party license notices 收集于 `THIRD_PARTY_LICENSES/`（Go module 依赖，由 `go-licenses save ./...` 生成；前端 npm 依赖许可证另见 `web/package.json` + 各包自带 LICENSE）。
 
 License 红榜 (永不引入): GPL/AGPL 系列、JeecgBoot 附加禁制、Vendure v3+。
 

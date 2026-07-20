@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # J5 — Identity & RLS security.
 # STAGE = commit da399443. Verified handler contracts (read at authoring time):
-#   * middleware/auth.go: PAT path injects tenant_id only, NEVER a Zitadel sub.
+#   * middleware/auth.go: PAT path injects tenant_id only, NEVER an OIDC subject.
 #     Missing/forged/malformed bearer => 401. No X-Tenant-ID header fallback.
 #   * auth/handler.go GetMe: 401 when sub == "" (always true on the PAT path).
 #   * auth/pat_handler.go: Create=201 (+plaintext token once), List=200 {items},
@@ -9,7 +9,7 @@
 #   * product/handler.go: List/Get tenant-scoped via middleware.GetTenantID only;
 #     Get of a foreign id => 404 (repoproduct.ErrNotFound).
 #   * account/handler.go: sessions/profile/avatar all require BOTH tenantID AND
-#     a non-empty userID (GetZitadelSub) => 401 under PAT. audit-log + RevokeSession
+#     a non-empty userID (GetIDPSubject) => 401 under PAT. audit-log + RevokeSession
 #     require ONLY tenantID => reachable under PAT (200 / 204).
 #
 # Deployed route lines exercised here (verbatim from routes-deployed.txt):

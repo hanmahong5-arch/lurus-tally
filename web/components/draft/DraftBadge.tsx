@@ -19,8 +19,8 @@ export function DraftBadge({ status }: DraftBadgeProps) {
   const label = status === "local" ? "未保存" : "已同步"
   const colorCls =
     status === "local"
-      ? "bg-amber-500/15 text-amber-600 dark:text-amber-400"
-      : "bg-green-500/15 text-green-700 dark:text-green-400"
+      ? "bg-warning/15 text-warning"
+      : "bg-success/15 text-success"
 
   return (
     <span

@@ -7,9 +7,13 @@ tally-backend.exe
 !/bin/*.md
 
 # Claude Code local working state (agents, worktrees, transcripts) —
-# except workflows/, which holds committed automation artifacts (UAT runner).
+# except workflows/ (committed automation artifacts, UAT runner) and
+# skills/tally-dev/ (dev handbook shipped alongside the source, ADR-0029 D7).
 .claude/*
 !.claude/workflows/
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/tally-dev/
 
 # Go build artifacts
 *.out

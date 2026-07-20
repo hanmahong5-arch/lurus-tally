@@ -38,7 +38,7 @@ var ErrUnauthenticated = errors.New("entitlement: caller is not authenticated")
 // Service checks plan entitlements for the calling TENANT. tally's plan is
 // per-tenant: the subscription lives on the tenant's bootstrap-owner account
 // (migration 000051), shared by every member and every PAT/automation caller.
-// Resolving by tenant (not by an individual Zitadel sub) is what makes the gate
+// Resolving by tenant (not by an individual OIDC subject) is what makes the gate
 // correct for non-owner users and PAT callers — keying on sub would wrongly
 // deny everyone but the owner (and 401 every PAT caller, whose sub is empty).
 type Service struct {

@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import { signIn } from "@/auth"
 
 /**
- * loginErrorMessage maps a NextAuth/Zitadel signin error CODE (the raw
+ * loginErrorMessage maps a NextAuth/OIDC signin error CODE (the raw
  * `?error=` query value) to a user-readable Chinese message. Paying users must
  * never see a machine code like "OAuthCallbackError" or "Configuration"; any
  * unrecognized code falls back to a generic message rather than being echoed.
@@ -51,7 +51,7 @@ export default function LoginPage({
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-center text-sm text-muted-foreground">
-            使用 Zitadel 单点登录
+            使用单点登录 (SSO)
           </p>
           {error ? (
             <p className="text-center text-sm text-red-500">
@@ -61,7 +61,7 @@ export default function LoginPage({
           <form
             action={async () => {
               "use server"
-              await signIn("zitadel", { redirectTo: callbackUrl })
+              await signIn("oidc", { redirectTo: callbackUrl })
             }}
           >
             <Button className="w-full" type="submit">

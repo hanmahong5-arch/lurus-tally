@@ -7,11 +7,11 @@ ArgoCD ApplicationSet 不接管 Tally STAGE，部署走人工 `ssh + kubectl app
 ✅ 必须先完成：
 
 - **R6 SSH 通**：`ssh root@100.122.83.20 "kubectl get nodes"` 能正常返回
-- **Zitadel 客户端注册**（浏览器手工）：
-  1. 登 https://auth.lurus.cn
+- **OIDC 客户端注册**（在身份提供方控制台手工）：
+  1. 登身份提供方控制台（issuer 域，如 https://auth.lurus.cn）
   2. Projects → 选 Lurus → Applications → New
   3. 类型 `Web`，Authentication `PKCE` 或 `Client Secret Basic`
-  4. Redirect URI: `https://tally-stage.lurus.cn/api/auth/callback/zitadel`
+  4. Redirect URI: `https://tally-stage.lurus.cn/api/auth/callback/oidc`（NextAuth provider id = `oidc`）
   5. Post-logout URI: `https://tally-stage.lurus.cn`
   6. 拿到 `client_id` + `client_secret`
 - **凭证收集**（建议从 `重要信息.md` 取）：
@@ -22,9 +22,11 @@ ArgoCD ApplicationSet 不接管 Tally STAGE，部署走人工 `ssh + kubectl app
   - `NEWAPI_API_KEY` — Hub LLM bearer (newapi.lurus.cn)
   - `MEMORUS_API_KEY` — memorus X-API-Key（可空，会降级 disabled）
   - `NEXTAUTH_SECRET` — `openssl rand -base64 32` 现场生成
-  - `ZITADEL_CLIENT_ID` / `ZITADEL_CLIENT_SECRET` — 上一步拿到
+  - `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` — 上一步拿到
 
 ## 2. Secret 注入（一次或凭证轮换时）
+
+> **命名 note（OIDC 厂商中性化）**: 以下历史漂移记录中出现的 `ZITADEL_DOMAIN` / `ZITADEL_AUDIENCE` / `ZITADEL_CLIENT_ID` / `ZITADEL_ISSUER` 等 env key 已统一重命名为 `OIDC_ISSUER` / `OIDC_AUDIENCE` / `OIDC_CLIENT_ID` / `OIDC_ISSUER`（后端 `config.go` + 前端 `auth.ts`），NextAuth provider id 由 `zitadel` 改为 `oidc`（回调路径 `/api/auth/callback/oidc`）。下方 §2 模板与 §1 已用新名;历史记录保留原名作为当时实况。
 
 > **2026-05-18 漂移 note**: 实际运行中的 `tally-secrets` 与本节模板有差异。当前 9 keys: `AUTH_SECRET` (= NextAuth v5 重命名的 `NEXTAUTH_SECRET`) / `DATABASE_DSN` / `HUB_TOKEN` (deprecated placeholder) / `INTERNAL_API_KEY` (deprecated placeholder) / `NATS_URL` / `NEWAPI_API_KEY` / `PLATFORM_INTERNAL_KEY` / `REDIS_URL` / `ZITADEL_CLIENT_ID`。缺 `MEMORUS_API_KEY` (会降级 disabled) / `NEXTAUTH_URL` / `ZITADEL_ISSUER` / `ZITADEL_CLIENT_SECRET` — pod ready 在跑, 但端到端登录链路是否通畅未实测。下节模板保留作初始注入参考, 实际轮换前请先 `kubectl get secret tally-secrets -o jsonpath='{.data}' | jq 'keys'` 比对。
 >
@@ -60,10 +62,10 @@ ssh root@100.122.83.20 "kubectl -n lurus-tally create secret generic tally-secre
   --from-literal=MEMORUS_API_KEY='<MEMORUS_API_KEY>' \
   --from-literal=NEXTAUTH_SECRET='<NEXTAUTH_SECRET>' \
   --from-literal=NEXTAUTH_URL='https://tally-stage.lurus.cn' \
-  --from-literal=ZITADEL_CLIENT_ID='<ZITADEL_CLIENT_ID>' \
-  --from-literal=ZITADEL_AUDIENCE='<ZITADEL_CLIENT_ID>' \
-  --from-literal=ZITADEL_CLIENT_SECRET='<ZITADEL_CLIENT_SECRET>' \
-  --from-literal=ZITADEL_ISSUER='https://auth.lurus.cn' \
+  --from-literal=OIDC_CLIENT_ID='<OIDC_CLIENT_ID>' \
+  --from-literal=OIDC_AUDIENCE='<OIDC_CLIENT_ID>' \
+  --from-literal=OIDC_CLIENT_SECRET='<OIDC_CLIENT_SECRET>' \
+  --from-literal=OIDC_ISSUER='https://auth.lurus.cn' \
   --from-literal=HUB_TOKEN='deprecated' \
   --from-literal=INTERNAL_API_KEY='deprecated' \
   --dry-run=client -o yaml | kubectl apply -f -"
@@ -114,8 +116,8 @@ ssh root@100.122.83.20 "kubectl -n lurus-tally describe pod -l app=tally-backend
 # 描述当前 secret keys（不暴露值）
 ssh root@100.122.83.20 "kubectl -n lurus-tally get secret tally-secrets -o jsonpath='{.data}' | jq 'keys'"
 
-# 前端 NextAuth 报错：通常是 NEXTAUTH_URL / ZITADEL_* 配错
-ssh root@100.122.83.20 "kubectl -n lurus-tally logs deploy/tally-web --tail=100 | grep -i 'auth\|zitadel\|callback'"
+# 前端 NextAuth 报错：通常是 NEXTAUTH_URL / OIDC_* 配错
+ssh root@100.122.83.20 "kubectl -n lurus-tally logs deploy/tally-web --tail=100 | grep -i 'auth\|oidc\|callback'"
 ```
 
 ## 6. 回滚
@@ -141,7 +143,7 @@ ssh root@100.122.83.20 "kubectl -n lurus-tally rollout status deploy/tally-backe
 ```bash
 ssh root@100.122.83.20 "kubectl -n lurus-tally get pods -o wide"
 ssh root@100.122.83.20 "kubectl -n lurus-tally top pods 2>/dev/null"
-ssh root@100.122.83.20 "kubectl -n lurus-tally exec deploy/tally-backend -- env | grep -E '^(DATABASE|REDIS|NATS|PLATFORM|NEWAPI|ZITADEL)_' | sed 's/=.*/=***/'"
+ssh root@100.122.83.20 "kubectl -n lurus-tally exec deploy/tally-backend -- env | grep -E '^(DATABASE|REDIS|NATS|PLATFORM|NEWAPI|OIDC)_' | sed 's/=.*/=***/'"
 ```
 
 ## 8. PG backup CronJob (S0.Q4)

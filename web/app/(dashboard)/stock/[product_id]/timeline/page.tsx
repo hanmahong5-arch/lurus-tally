@@ -11,6 +11,7 @@
 import Link from "next/link"
 import { auth } from "@/auth"
 import { type StockMovement, type Direction, type ReferenceType } from "@/lib/api/stock"
+import { ErrorBanner } from "@/components/ui/error-banner"
 
 // Re-export cache policy so Next.js does not statically pre-render this page.
 export const revalidate = 60
@@ -22,9 +23,9 @@ const DIRECTION_LABEL: Record<Direction, string> = {
 }
 
 const DIRECTION_BADGE: Record<Direction, string> = {
-  in: "bg-green-500/10 text-green-600",
-  out: "bg-red-500/10 text-red-500",
-  adjust: "bg-blue-500/10 text-blue-600",
+  in: "bg-success/10 text-success",
+  out: "bg-destructive/10 text-destructive",
+  adjust: "bg-info/10 text-info",
 }
 
 const REFERENCE_LABEL: Record<ReferenceType, string> = {
@@ -126,11 +127,7 @@ export default async function StockTimelinePage({ params }: Props) {
         </p>
       </header>
 
-      {fetchError && (
-        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-          加载变动记录失败，请刷新重试。
-        </div>
-      )}
+      {fetchError && <ErrorBanner hint="请刷新重试">加载变动记录失败</ErrorBanner>}
 
       {!fetchError && movements.length === 0 && (
         <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-border bg-muted/20 px-6 py-12 text-center">

@@ -7,7 +7,7 @@
 #   internal/adapter/handler/replenish/handler.go:77-121  GetSuggestions → 200 {items,count,weeks}
 #   internal/adapter/handler/replenish/handler.go:150-226 PostDraftBatch body {lines:[{product_id,qty,supplier_id?}]}
 #   internal/adapter/handler/replenish/handler.go:231-247 resolveCreatorID: PAT path has no
-#       zitadel_sub in context → CreatorID = uuid.Nil ("the use case validates non-nil and
+#       OIDC subject in context → CreatorID = uuid.Nil ("the use case validates non-nil and
 #       rejects gracefully")
 #   internal/app/bill/create_purchase.go:69-71            CreatorID == uuid.Nil → ErrValidation
 #       "creator_id is required"; replenish handler maps ANY use-case error to 500

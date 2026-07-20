@@ -10,12 +10,12 @@ import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useTenantId } from "@/hooks/use-tenant-id"
 
 const PAYMENT_METHOD_LABELS: Record<string, { label: string; className: string }> = {
-  cash: { label: "现金", className: "bg-emerald-100 text-emerald-700" },
-  wechat: { label: "微信", className: "bg-green-100 text-green-700" },
-  alipay: { label: "支付宝", className: "bg-blue-100 text-blue-700" },
-  card: { label: "刷卡", className: "bg-purple-100 text-purple-700" },
-  credit: { label: "赊账", className: "bg-orange-100 text-orange-700" },
-  transfer: { label: "转账", className: "bg-cyan-100 text-cyan-700" },
+  cash: { label: "现金", className: "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-300" },
+  wechat: { label: "微信", className: "bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-300" },
+  alipay: { label: "支付宝", className: "bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300" },
+  card: { label: "刷卡", className: "bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300" },
+  credit: { label: "赊账", className: "bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-300" },
+  transfer: { label: "转账", className: "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/30 dark:text-cyan-300" },
 }
 
 function formatTime(isoString: string): string {
@@ -90,7 +90,7 @@ export default function PosHistoryPage() {
             <div className="mt-1 text-xs text-muted-foreground">今日笔数</div>
           </div>
           <div className="rounded-xl border border-border bg-background p-4 text-center">
-            <div className="text-2xl font-bold tabular-nums text-emerald-600">
+            <div className="text-2xl font-bold tabular-nums text-success">
               {formatCNY(totalAmount.toNumber())}
             </div>
             <div className="mt-1 text-xs text-muted-foreground">今日总额</div>
@@ -155,7 +155,7 @@ export default function PosHistoryPage() {
                       </td>
                       <td className="px-4 py-2.5 text-right tabular-nums">
                         {receivable.gt(0) ? (
-                          <span className="text-orange-600">{formatCNY(receivable.toNumber())}</span>
+                          <span className="text-warning">{formatCNY(receivable.toNumber())}</span>
                         ) : (
                           <span className="text-muted-foreground">—</span>
                         )}

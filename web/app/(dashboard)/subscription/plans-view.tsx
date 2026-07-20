@@ -57,7 +57,7 @@ export function SubscriptionPlansView() {
       })
       .catch((err: Error) => {
         if (cancelled) return
-        // not_found = platform has no account record yet for this Zitadel
+        // not_found = platform has no account record yet for this OIDC
         // user. Treat as a fresh free-tier account so the plan grid still
         // renders without a scary error banner. Subscribe will lazy-create
         // the account on platform side via /billing/subscribe.

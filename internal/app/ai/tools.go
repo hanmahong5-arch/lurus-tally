@@ -117,7 +117,7 @@ func ToolDefs() []llmclient.Tool {
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "get_stock_summary",
-			Description: "Returns warehouse overview: total SKUs, total inventory value (CNY), low-stock count, dead-stock count.",
+			Description: "Overall warehouse overview ONLY (库存总体情况 / 仓库概况): total SKUs and total inventory value (CNY). Do NOT use this as a preliminary survey for replenishment (补货 → list_low_stock), dead-stock (滞销 → list_dead_stock), or margin (毛利 → gross_margin_summary) questions — call the dedicated tool directly instead.",
 			Parameters:  mustJSON(map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{

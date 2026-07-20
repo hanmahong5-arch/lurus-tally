@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -471,13 +472,19 @@ func NewApp(cfg *config.Config) (*App, error) {
 		l.Warn("AI assistant disabled (NEWAPI_API_KEY not set)")
 	}
 
-	// Build AuthMiddleware when ZITADEL_DOMAIN is set. In dev it can be empty;
+	// Build AuthMiddleware when OIDC_ISSUER is set. In dev it can be empty;
 	// the router will then leave /api/v1 unauthenticated and handlers will
 	// surface 401 on identity-required calls.
 	var authMW gin.HandlerFunc
-	if cfg.ZitadelDomain != "" {
-		issuer := "https://" + cfg.ZitadelDomain
-		jwksURL := issuer + "/oauth/v2/keys"
+	if cfg.OIDCIssuer != "" {
+		issuer := config.NormalizeIssuer(cfg.OIDCIssuer)
+		// jwksURL is the OIDC JWKS endpoint. Canonically this should come from
+		// <issuer>/.well-known/openid-configuration discovery (jwks_uri); we
+		// keep it as a configurable path (OIDC_JWKS_PATH, default below) instead
+		// of a synchronous discovery fetch so boot stays offline-safe and the
+		// integration harness (which boots against an unreachable dummy issuer
+		// but only exercises the PAT path) doesn't block. See config.OIDCJWKSPath.
+		jwksURL := strings.TrimRight(issuer, "/") + cfg.OIDCJWKSPath
 		// Resolve tenant_id from user_identity_mapping for already-onboarded
 		// users. uuid.Nil is returned for first-time users (no mapping yet) —
 		// in that case the middleware lets the request through and only
@@ -526,7 +533,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 			return pat.TenantID, nil
 		}
 
-		authMW = middleware.NewAuthMiddleware(jwksURL, issuer, cfg.ZitadelAudience, tenantLookup, patResolver)
+		authMW = middleware.NewAuthMiddleware(jwksURL, issuer, cfg.OIDCAudience, tenantLookup, patResolver)
 		l.Info("auth middleware enabled",
 			slog.String("issuer", issuer),
 			slog.String("jwks_url", jwksURL))
@@ -544,19 +551,19 @@ func NewApp(cfg *config.Config) (*App, error) {
 			sessionMW(c)
 		}
 	} else {
-		// Dev mode: config.Load rejects an empty ZITADEL_DOMAIN unless
+		// Dev mode: config.Load rejects an empty OIDC_ISSUER unless
 		// TALLY_DEV_MODE=true, so reaching this branch means dev is explicitly on.
-		// Inject identity from trusted headers (X-Zitadel-Sub / X-Email /
+		// Inject identity from trusted headers (X-IDP-Subject / X-Email /
 		// X-Display-Name / X-Tenant-ID) so EVERY handler reading
-		// middleware.GetZitadelSub / GetTenantID works consistently — previously
+		// middleware.GetIDPSubject / GetTenantID works consistently — previously
 		// only the billing handler's ad-hoc callerSub() honoured the header, so
 		// /tenant/profile (ChooseProfile) and other setup endpoints 401'd in dev,
 		// making first-time onboarding impossible to exercise locally.
-		// NEVER reachable in prod (ZITADEL_DOMAIN is always set there).
-		l.Warn("auth middleware: DEV header-injection mode (X-Zitadel-Sub / X-Tenant-ID trusted) — local only, never prod")
+		// NEVER reachable in prod (OIDC_ISSUER is always set there).
+		l.Warn("auth middleware: DEV header-injection mode (X-IDP-Subject / X-Tenant-ID trusted) — local only, never prod")
 		authMW = func(c *gin.Context) {
-			if sub := c.GetHeader("X-Zitadel-Sub"); sub != "" {
-				c.Set(middleware.CtxKeyZitadelSub, sub)
+			if sub := c.GetHeader("X-IDP-Subject"); sub != "" {
+				c.Set(middleware.CtxKeyIDPSubject, sub)
 			}
 			if email := c.GetHeader("X-Email"); email != "" {
 				c.Set(middleware.CtxKeyEmail, email)
@@ -574,7 +581,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 			// lookup the real middleware uses, so onboarded dev users get their
 			// tenant_id without having to pass it on every call.
 			if tenantID == uuid.Nil {
-				if sub := c.GetHeader("X-Zitadel-Sub"); sub != "" {
+				if sub := c.GetHeader("X-IDP-Subject"); sub != "" {
 					if m, err := tenantStore.GetMappingBySub(c.Request.Context(), sub); err == nil && m != nil {
 						tenantID = m.TenantID
 					}

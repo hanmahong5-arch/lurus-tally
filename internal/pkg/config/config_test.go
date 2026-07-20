@@ -33,18 +33,18 @@ func setEnv(t *testing.T, vars map[string]string) {
 }
 
 // fullEnv returns a map with all required env vars set to placeholder values.
-// ZITADEL_* are explicitly cleared so auth stays disabled (dev default) unless
+// OIDC_* are explicitly cleared so auth stays disabled (dev default) unless
 // a test opts in — this keeps the suite independent of a polluted local env.
 // TALLY_DEV_MODE=true is set because running with auth disabled (empty
-// ZITADEL_DOMAIN) now requires an explicit dev-mode opt-in.
+// OIDC_ISSUER) now requires an explicit dev-mode opt-in.
 func fullEnv() map[string]string {
 	return map[string]string{
-		"DATABASE_DSN":     "postgres://placeholder:placeholder@localhost/placeholder?sslmode=disable",
-		"REDIS_URL":        "redis://localhost:6379/5",
-		"NATS_URL":         "nats://localhost:4222",
-		"ZITADEL_DOMAIN":   "",
-		"ZITADEL_AUDIENCE": "",
-		"TALLY_DEV_MODE":   "true",
+		"DATABASE_DSN":   "postgres://placeholder:placeholder@localhost/placeholder?sslmode=disable",
+		"REDIS_URL":      "redis://localhost:6379/5",
+		"NATS_URL":       "nats://localhost:4222",
+		"OIDC_ISSUER":    "",
+		"OIDC_AUDIENCE":  "",
+		"TALLY_DEV_MODE": "true",
 	}
 }
 
@@ -112,55 +112,55 @@ func TestConfig_AllSet_ReturnsConfig(t *testing.T) {
 	}
 }
 
-func TestConfig_ZitadelDomainSet_RequiresAudience(t *testing.T) {
+func TestConfig_OIDCIssuerSet_RequiresAudience(t *testing.T) {
 	env := fullEnv()
-	env["ZITADEL_DOMAIN"] = "identity.lurus.cn"
-	// ZITADEL_AUDIENCE intentionally left unset.
+	env["OIDC_ISSUER"] = "identity.lurus.cn"
+	// OIDC_AUDIENCE intentionally left unset.
 	setEnv(t, env)
 
 	_, err := config.Load()
 	if err == nil {
-		t.Fatal("expected error when ZITADEL_DOMAIN is set but ZITADEL_AUDIENCE is missing, got nil")
+		t.Fatal("expected error when OIDC_ISSUER is set but OIDC_AUDIENCE is missing, got nil")
 	}
 }
 
-func TestConfig_ZitadelDomainAndAudienceSet_ReturnsConfig(t *testing.T) {
+func TestConfig_OIDCIssuerAndAudienceSet_ReturnsConfig(t *testing.T) {
 	env := fullEnv()
-	env["ZITADEL_DOMAIN"] = "identity.lurus.cn"
-	env["ZITADEL_AUDIENCE"] = "tally-client-id"
+	env["OIDC_ISSUER"] = "identity.lurus.cn"
+	env["OIDC_AUDIENCE"] = "tally-client-id"
 	setEnv(t, env)
 
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("expected no error when both ZITADEL_DOMAIN and ZITADEL_AUDIENCE are set, got: %v", err)
+		t.Fatalf("expected no error when both OIDC_ISSUER and OIDC_AUDIENCE are set, got: %v", err)
 	}
-	if cfg.ZitadelDomain != "identity.lurus.cn" {
-		t.Errorf("ZitadelDomain: want identity.lurus.cn, got %q", cfg.ZitadelDomain)
+	if cfg.OIDCIssuer != "identity.lurus.cn" {
+		t.Errorf("OIDCIssuer: want identity.lurus.cn, got %q", cfg.OIDCIssuer)
 	}
-	if cfg.ZitadelAudience != "tally-client-id" {
-		t.Errorf("ZitadelAudience: want tally-client-id, got %q", cfg.ZitadelAudience)
+	if cfg.OIDCAudience != "tally-client-id" {
+		t.Errorf("OIDCAudience: want tally-client-id, got %q", cfg.OIDCAudience)
 	}
 }
 
-func TestConfig_ZitadelDomainEmpty_AudienceOptional(t *testing.T) {
+func TestConfig_OIDCIssuerEmpty_AudienceOptional(t *testing.T) {
 	env := fullEnv()
-	// Both ZITADEL_* unset (dev / auth disabled) — Load must succeed.
+	// Both OIDC_* unset (dev / auth disabled) — Load must succeed.
 	setEnv(t, env)
 
 	cfg, err := config.Load()
 	if err != nil {
-		t.Fatalf("expected no error when ZITADEL_DOMAIN is empty, got: %v", err)
+		t.Fatalf("expected no error when OIDC_ISSUER is empty, got: %v", err)
 	}
-	if cfg.ZitadelAudience != "" {
-		t.Errorf("ZitadelAudience: want empty when auth disabled, got %q", cfg.ZitadelAudience)
+	if cfg.OIDCAudience != "" {
+		t.Errorf("OIDCAudience: want empty when auth disabled, got %q", cfg.OIDCAudience)
 	}
 }
 
 func TestConfig_AuthDisabledWithoutDevMode_ReturnsError(t *testing.T) {
 	env := fullEnv()
-	// Auth disabled (no ZITADEL_DOMAIN) AND no explicit dev-mode opt-in: this is
+	// Auth disabled (no OIDC_ISSUER) AND no explicit dev-mode opt-in: this is
 	// the misconfiguration the gate must catch before it reaches stage/prod.
-	env["ZITADEL_DOMAIN"] = ""
+	env["OIDC_ISSUER"] = ""
 	env["TALLY_DEV_MODE"] = ""
 	setEnv(t, env)
 
@@ -172,7 +172,7 @@ func TestConfig_AuthDisabledWithoutDevMode_ReturnsError(t *testing.T) {
 
 func TestConfig_AuthDisabledWithDevMode_ReturnsConfig(t *testing.T) {
 	env := fullEnv()
-	env["ZITADEL_DOMAIN"] = ""
+	env["OIDC_ISSUER"] = ""
 	env["TALLY_DEV_MODE"] = "true"
 	setEnv(t, env)
 
@@ -180,8 +180,8 @@ func TestConfig_AuthDisabledWithDevMode_ReturnsConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected no error when TALLY_DEV_MODE=true permits auth-disabled boot, got: %v", err)
 	}
-	if cfg.ZitadelDomain != "" {
-		t.Errorf("ZitadelDomain: want empty in dev mode, got %q", cfg.ZitadelDomain)
+	if cfg.OIDCIssuer != "" {
+		t.Errorf("OIDCIssuer: want empty in dev mode, got %q", cfg.OIDCIssuer)
 	}
 }
 

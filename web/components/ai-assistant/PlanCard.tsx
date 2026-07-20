@@ -70,10 +70,10 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
     if (settled === "failed") {
       return (
         <div
-          className="my-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 text-sm"
+          className="my-2 rounded-lg border border-warning/40 bg-warning/5 p-3 text-sm"
           data-testid="plan-card-failed"
         >
-          <p className="font-medium text-amber-700 dark:text-amber-400">✗ 执行失败</p>
+          <p className="font-medium text-warning">✗ 执行失败</p>
           {error && <p className="mt-1 text-muted-foreground">{error}</p>}
           <p className="mt-1 text-xs text-muted-foreground">建议联系运营或重新发起新的建议</p>
           <div className="mt-2">
@@ -96,13 +96,13 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
       )
     }
     return (
-      <div className="my-2 rounded-lg border border-emerald-500/40 bg-emerald-500/5 p-3 text-sm" data-testid="plan-card-done">
+      <div className="my-2 rounded-lg border border-success/40 bg-success/5 p-3 text-sm" data-testid="plan-card-done">
         <p className="text-foreground">✓ 操作已执行{result?.affected_count != null ? `（影响 ${result.affected_count} 条）` : ""}</p>
         {result?.bill_id && (
           <Link
             href={`/purchases/${result.bill_id}`}
             data-testid="plan-bill-link"
-            className="mt-1 inline-block font-medium text-emerald-600 hover:underline dark:text-emerald-400"
+            className="mt-1 inline-block font-medium text-success hover:underline"
           >
             已建采购草稿 {result.bill_no ? `${result.bill_no} ` : ""}→ 查看
           </Link>
@@ -209,7 +209,7 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
 
       {/* Sample rows preview */}
       {plan.preview.sample_rows && plan.preview.sample_rows.length > 0 && (
-        <div className="mb-3 overflow-hidden rounded border border-border">
+        <div className="mb-3 overflow-x-auto rounded border border-border">
           <table className="w-full text-xs">
             <thead>
               <tr className="bg-muted/50">

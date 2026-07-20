@@ -53,7 +53,7 @@ func newTestEngine(h *handlerAuth.Handler, sub, email, name string) *gin.Engine 
 	e := gin.New()
 	e.Use(func(c *gin.Context) {
 		if sub != "" {
-			c.Set(middleware.CtxKeyZitadelSub, sub)
+			c.Set(middleware.CtxKeyIDPSubject, sub)
 		}
 		if email != "" {
 			c.Set(middleware.CtxKeyEmail, email)
@@ -152,7 +152,7 @@ func TestAuthHandler_ChooseProfile_ValidInput_Returns200(t *testing.T) {
 	if !stub.called {
 		t.Error("ChooseProfile use case was not called")
 	}
-	if stub.in.ZitadelSub != "sub-xyz" || stub.in.Email != "carol@x.com" || stub.in.DisplayName != "Carol" {
+	if stub.in.IDPSubject != "sub-xyz" || stub.in.Email != "carol@x.com" || stub.in.DisplayName != "Carol" {
 		t.Errorf("input not propagated correctly from context: %+v", stub.in)
 	}
 }

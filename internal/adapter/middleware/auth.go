@@ -31,21 +31,24 @@ var ErrInvalidPAT = errors.New("auth: invalid PAT")
 type PATResolver func(ctx context.Context, bearer string) (tenantID uuid.UUID, err error)
 
 const (
-	// CtxKeyZitadelSub is the Gin context key where AuthMiddleware injects the Zitadel sub claim.
-	CtxKeyZitadelSub = "zitadel_sub"
+	// CtxKeyIDPSubject is the Gin context key where AuthMiddleware injects the OIDC `sub` claim.
+	CtxKeyIDPSubject = "idp_subject"
 	// CtxKeyEmail is the Gin context key where AuthMiddleware injects the email claim.
 	CtxKeyEmail = "user_email"
 	// CtxKeyDisplayName is the Gin context key where AuthMiddleware injects the display name claim.
 	CtxKeyDisplayName = "user_display_name"
 
 	// tallyTenantIDClaim is the JWT custom claim name carrying the tally tenant UUID.
+	// When the IdP mints this claim the middleware avoids a DB lookup; otherwise
+	// it falls back to the user_identity_mapping table (tenantLookup). The claim
+	// key itself is a deployment concern of the issuer — kept neutral here.
 	tallyTenantIDClaim = "tally_tenant_id"
 
 	// jwksCacheTTL controls how frequently the JWKS is re-fetched from the provider.
 	jwksCacheTTL = 1 * time.Hour
 )
 
-// TenantLookup resolves a Zitadel sub to a tally tenant UUID using the
+// TenantLookup resolves an OIDC IdP subject to a tally tenant UUID using the
 // user_identity_mapping table. Returns uuid.Nil when the user is not yet
 // onboarded (first-time user pre-/setup), so the middleware can let the
 // request proceed and only /me + /tenant/profile work without tenant_id.
@@ -57,14 +60,14 @@ type TenantLookup func(ctx context.Context, sub string) (uuid.UUID, error)
 //  1. Personal Access Token (PAT) — if the bearer starts with tally_pat_ and a
 //     non-nil patResolver is provided, the middleware skips JWKS/JWT entirely
 //     and uses the resolver. This is what tally-mcp and other API clients use.
-//  2. Zitadel JWT — RS256, validated against the JWKS at jwksURL with
+//  2. OIDC JWT — RS256, validated against the JWKS at jwksURL with
 //     expectedIssuer AND expectedAudience enforced. The audience guard rejects
-//     tokens minted for other apps on the shared issuer (Zitadel issues one
-//     issuer per instance but a distinct audience per project/client), so a
+//     tokens minted for other apps on the shared issuer (an OIDC provider issues
+//     one issuer per instance but a distinct audience per project/client), so a
 //     valid token for another Lurus product can't be replayed against Tally.
 //
 // On success it writes into the Gin context:
-//   - CtxKeyZitadelSub  → Zitadel sub claim (string; empty for PAT path)
+//   - CtxKeyIDPSubject  → OIDC `sub` claim (string; empty for PAT path)
 //   - CtxKeyTenantID    → tally tenant UUID (PAT or JWT, whichever resolved)
 //
 // On failure it aborts with 401. patResolver may be nil — in that case PATs
@@ -85,7 +88,7 @@ func NewAuthMiddleware(jwksURL, expectedIssuer, expectedAudience string, tenantL
 
 		// PAT short-circuit. We branch on the scheme prefix BEFORE touching
 		// the JWKS path, so PATs (no signing keys involved) are cheap and
-		// don't depend on Zitadel being reachable.
+		// don't depend on the OIDC provider being reachable.
 		if patResolver != nil && strings.HasPrefix(rawToken, domainauth.Scheme) {
 			tenantID, err := patResolver(c.Request.Context(), rawToken)
 			if err != nil {
@@ -124,7 +127,7 @@ func NewAuthMiddleware(jwksURL, expectedIssuer, expectedAudience string, tenantL
 		// Parse and validate the token. jwx validates exp, nbf, and signature
 		// automatically. WithAudience additionally requires expectedAudience to
 		// appear in the token's aud claim, rejecting tokens issued for other
-		// apps on the same Zitadel issuer.
+		// apps on the same OIDC issuer.
 		tok, err := jwt.Parse([]byte(rawToken),
 			jwt.WithKeySet(keySet),
 			jwt.WithIssuer(expectedIssuer),
@@ -139,9 +142,9 @@ func NewAuthMiddleware(jwksURL, expectedIssuer, expectedAudience string, tenantL
 			return
 		}
 
-		// Inject Zitadel sub.
+		// Inject OIDC subject.
 		sub := tok.Subject()
-		c.Set(CtxKeyZitadelSub, sub)
+		c.Set(CtxKeyIDPSubject, sub)
 
 		// Inject email + display name when present in standard OIDC claims.
 		if v, ok := tok.Get("email"); ok {
@@ -186,9 +189,9 @@ func NewAuthMiddleware(jwksURL, expectedIssuer, expectedAudience string, tenantL
 	}
 }
 
-// GetZitadelSub returns the Zitadel sub claim injected by AuthMiddleware, or "" if absent.
-func GetZitadelSub(c *gin.Context) string {
-	if v, ok := c.Get(CtxKeyZitadelSub); ok {
+// GetIDPSubject returns the OIDC `sub` claim injected by AuthMiddleware, or "" if absent.
+func GetIDPSubject(c *gin.Context) string {
+	if v, ok := c.Get(CtxKeyIDPSubject); ok {
 		if s, ok := v.(string); ok {
 			return s
 		}

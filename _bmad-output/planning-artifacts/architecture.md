@@ -34,7 +34,7 @@
 ┌────────────────────────────────────────────────────────────────────────────────┐
 │                         Lurus 共享基础设施                                      │
 │  2l-svc-platform :18104  2b-svc-api/Hub  2b-svc-kova  2b-svc-memorus :8880   │
-│  PostgreSQL (schema:tally)  Redis DB5  NATS PSI_EVENTS  MinIO  Zitadel        │
+│  PostgreSQL (schema:tally)  Redis DB5  NATS PSI_EVENTS  MinIO  OIDC IdP       │
 └────────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -42,7 +42,7 @@
 
 | 系统 | 调用方向 | 协议 | 用途 |
 |------|----------|------|------|
-| Zitadel (auth.lurus.cn) | Tally ← | OIDC/PKCE | 用户认证、JWT、角色声明 |
+| OIDC IdP (issuer 部署期注入) | Tally ← | OIDC/PKCE | 用户认证、JWT、角色声明 |
 | 2l-svc-platform (:18104) | Tally → | HTTP REST (bearer key) | 租户账户验证、订阅、配额、计费 |
 | 2b-svc-api/Hub (:8850) | Tally → | HTTP (OpenAI 兼容) | LLM 查询、函数调用、流式 |
 | 2b-svc-kova | Tally → | HTTP REST | 补货/滞销 Agent 注册与触发 |
@@ -57,7 +57,7 @@
 
 ### 1.3 关键数据流
 
-1. **认证流**: 浏览器 → Zitadel OIDC → Next.js BFF `/api/auth/callback` → session cookie → 后续请求携带 JWT → tally-backend
+1. **认证流**: 浏览器 → OIDC IdP → Next.js BFF `/api/auth/callback` → session cookie → 后续请求携带 JWT → tally-backend
 2. **Profile 注入流**: JWT 解析 tenant_id → 读取 `tenant_profile` 表 → ProfileResolver 注入 ctx → 所有下游 use case/handler 按 profile 行为
 3. **业务操作流**: 前端 → Next.js BFF `/api/v1/*` → Go Backend → PostgreSQL/Redis → 返回响应
 4. **库存事件流**: Go Backend 审核单据 → 更新 `stock_snapshot` → 发布 `psi.stock.changed` 到 NATS → tally-worker 消费 → 预警/AI分析

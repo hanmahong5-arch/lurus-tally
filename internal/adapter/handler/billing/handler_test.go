@@ -34,9 +34,11 @@ func (s *stubSubscribe) Execute(_ context.Context, in appbilling.SubscribeInput)
 type stubOverview struct {
 	out *platformclient.AccountOverview
 	err error
+	in  string
 }
 
-func (s *stubOverview) Execute(_ context.Context, _ string) (*platformclient.AccountOverview, error) {
+func (s *stubOverview) Execute(_ context.Context, sub string) (*platformclient.AccountOverview, error) {
+	s.in = sub
 	return s.out, s.err
 }
 
@@ -44,7 +46,7 @@ func newEngine(h *handlerbilling.Handler, sub string) *gin.Engine {
 	e := gin.New()
 	e.Use(func(c *gin.Context) {
 		if sub != "" {
-			c.Set(middleware.CtxKeyZitadelSub, sub)
+			c.Set(middleware.CtxKeyIDPSubject, sub)
 		}
 		c.Next()
 	})
@@ -88,8 +90,8 @@ func TestSubscribe_HappyWalletPath_Returns200WithSubscription(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"plan_code":"pro"`) {
 		t.Errorf("expected subscription in body, got %s", rec.Body.String())
 	}
-	if stub.in.ZitadelSub != "sub-abc" {
-		t.Errorf("zitadel sub propagation lost: %+v", stub.in)
+	if stub.in.IDPSubject != "sub-abc" {
+		t.Errorf("idp subject propagation lost: %+v", stub.in)
 	}
 }
 
@@ -198,5 +200,59 @@ func TestOverview_Unauthenticated_Returns401(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// TestSubscribe_IgnoresClientIDPSubjectHeader is the regression guard for the
+// cross-account billing impersonation fix. A PAT-authenticated request never
+// gets CtxKeyIDPSubject set by AuthMiddleware (a PAT is tenant-scoped, carries
+// no OIDC subject); newEngine(h, "") reproduces exactly that context. Before
+// the fix, callerSub fell back to the attacker-controlled X-IDP-Subject header,
+// letting the caller check out a subscription against a victim's platform
+// account. Billing identity must come only from the verified OIDC token in
+// context, so the spoofed header must be ignored: 401 and the victim subject
+// must never reach the use case.
+func TestSubscribe_IgnoresClientIDPSubjectHeader(t *testing.T) {
+	stub := &stubSubscribe{
+		out: &appbilling.SubscribeOutput{
+			Subscription: &platformclient.SubscriptionSnapshot{PlanCode: "pro", Status: "active"},
+		},
+	}
+	h := handlerbilling.New(stub, &stubOverview{})
+	e := newEngine(h, "") // PAT-auth shape: tenant set upstream, NO idp_subject in ctx
+
+	body, _ := json.Marshal(map[string]string{"plan_code": "pro", "billing_cycle": "monthly", "payment_method": "wallet"})
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/billing/subscribe", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-IDP-Subject", "victim-sub") // attacker-controlled
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 (client header must not be honoured), got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if stub.in.IDPSubject == "victim-sub" {
+		t.Fatalf("SECURITY: attacker-controlled X-IDP-Subject header reached the use case: %q", stub.in.IDPSubject)
+	}
+}
+
+// TestOverview_IgnoresClientIDPSubjectHeader is the read-side twin of the guard
+// above: a PAT-auth-shaped request (no ctx subject) with a spoofed header must
+// not let the caller read a victim's wallet/subscription snapshot.
+func TestOverview_IgnoresClientIDPSubjectHeader(t *testing.T) {
+	stub := &stubOverview{out: &platformclient.AccountOverview{}}
+	h := handlerbilling.New(&stubSubscribe{}, stub)
+	e := newEngine(h, "") // no idp_subject in ctx
+
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/billing/overview", nil)
+	req.Header.Set("X-IDP-Subject", "victim-sub") // attacker-controlled
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401 (client header must not be honoured), got %d (%s)", rec.Code, rec.Body.String())
+	}
+	if stub.in == "victim-sub" {
+		t.Fatalf("SECURITY: attacker-controlled X-IDP-Subject header reached the overview use case: %q", stub.in)
 	}
 }

@@ -10,9 +10,9 @@ data:
   PORT: "3000"
   HOSTNAME: "0.0.0.0"
   AUTH_TRUST_HOST: "true"
-  # OIDC issuer the web signs users in against (web/auth.ts reads ZITADEL_ISSUER).
+  # OIDC issuer the web signs users in against (web/auth.ts reads OIDC_ISSUER).
   # Base = PROD (identity.lurus.cn — the canonical issuer since the 2026-05-21
   # cutover; auth.lurus.cn is now a 301 alias). The stage overlay patches this to
   # test-auth.lurus.cn so STAGE web's id_token `iss` matches the STAGE backend's
-  # ZITADEL_DOMAIN; a mismatch makes the backend reject every token with 401.
-  ZITADEL_ISSUER: "https://identity.lurus.cn"
+  # OIDC_ISSUER; a mismatch makes the backend reject every token with 401.
+  OIDC_ISSUER: "https://identity.lurus.cn"

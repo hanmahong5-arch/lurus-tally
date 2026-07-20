@@ -8,7 +8,7 @@ import type { Session } from "next-auth"
 
 const fixture: Session = {
   user: {
-    id: "zitadel-sub-123",
+    id: "idp-sub-123",
     email: "test@example.com",
     tenantId: "tenant-uuid-abc",
     profileType: "cross_border",

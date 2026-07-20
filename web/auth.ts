@@ -1,6 +1,21 @@
 import NextAuth from "next-auth"
+import type { OIDCConfig } from "next-auth/providers"
 import Credentials from "next-auth/providers/credentials"
-import Zitadel from "next-auth/providers/zitadel"
+
+// oidcProvider is a vendor-neutral OpenID Connect provider. Endpoints
+// (authorize / token / userinfo / jwks / end_session) are resolved at runtime
+// from <issuer>/.well-known/openid-configuration discovery (type: "oidc"), so no
+// vendor-specific URLs are hardcoded. clientId / issuer come from env, injected
+// per-environment at deploy time — never bound to any one IdP instance in code.
+// PKCE + state checks are the OIDC defaults for type: "oidc".
+const oidcProvider: OIDCConfig<Record<string, unknown>> = {
+  id: "oidc",
+  name: "OIDC",
+  type: "oidc",
+  clientId: process.env.OIDC_CLIENT_ID,
+  clientSecret: process.env.OIDC_CLIENT_SECRET,
+  issuer: process.env.OIDC_ISSUER ?? "https://identity.lurus.cn",
+}
 
 declare module "next-auth" {
   interface Session {
@@ -136,11 +151,7 @@ function devCredentialsProvider() {
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
-    Zitadel({
-      clientId: process.env.ZITADEL_CLIENT_ID!,
-      issuer: process.env.ZITADEL_ISSUER ?? "https://identity.lurus.cn",
-      // PKCE is enabled by default for Zitadel provider.
-    }),
+    oidcProvider,
     // Dev/E2E Credentials provider — conditionally appended. Production gate
     // is enforced inside devProviderEnabled(); the provider is never present in
     // the array unless both NODE_ENV !== "production" AND AUTH_DEV_PROVIDER=true.
@@ -175,7 +186,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         // Offline dev sessions normally carry no accessToken. STAGE UAT may
         // hand the dev provider a backend bearer (PAT) — pass it through so
         // /api/proxy/* forwards authenticated requests. This branch only runs
-        // when devTenantId is set, i.e. never on the Zitadel sign-in path,
+        // when devTenantId is set, i.e. never on the OIDC sign-in path,
         // and the provider itself is absent in production (double gate above).
         if (typeof devUser.devAccessToken === "string") {
           t.accessToken = devUser.devAccessToken
@@ -183,13 +194,14 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         return token
       }
 
-      // Production OIDC path (Zitadel) — unchanged below this line.
+      // Production OIDC path — unchanged below this line.
 
       // First sign-in: capture sub + id_token from the OIDC account.
-      // We use id_token (always JWT, OIDC standard) rather than access_token
-      // because Zitadel issues opaque access_tokens by default — backend would
-      // be unable to validate them as JWT without enabling app-level "JWT
-      // access tokens" in Zitadel app config.
+      // We use id_token (always a JWT, per the OIDC core spec) rather than
+      // access_token because many OIDC providers issue opaque access_tokens by
+      // default — the backend would be unable to validate those as a JWT unless
+      // the provider is configured to mint JWT access tokens. The id_token is
+      // the portable, spec-guaranteed JWT, so we always forward it as the bearer.
       if (account && profile) {
         if (typeof profile.sub === "string") {
           t.sub = profile.sub

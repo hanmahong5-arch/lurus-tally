@@ -8,8 +8,8 @@
 # (git show da399443:internal/adapter/handler/...), NOT the working tree:
 #   * PUT /api/v1/sale-bills/:id            -> 501 not_implemented (Story 7.2 stub)
 #   * POST /api/v1/auth/logout              -> 200 {"status":"logged out"} (server-side stub, no sub needed)
-#   * POST /api/v1/tenant/profile           -> 401 under PAT (requires Zitadel sub; PAT path injects none)
-#   * GET/POST /api/v1/account/avatar       -> 401 under PAT (requires Zitadel sub)
+#   * POST /api/v1/tenant/profile           -> 401 under PAT (requires OIDC subject; PAT path injects none)
+#   * GET/POST /api/v1/account/avatar       -> 401 under PAT (requires OIDC subject)
 #   * GET /internal/v1/metrics              -> 401 without the INTERNAL_API_KEY bearer
 #   * POST /internal/v1/telemetry/web       -> 401 without the PLATFORM_INTERNAL_KEY bearer
 #   * DELETE on units/projects/suppliers/warehouses/products/nursery-dict -> 204
@@ -435,7 +435,7 @@ use_primary
 
 ###############################################################################
 # Section 13 — POST /api/v1/tenant/profile
-#   PAT path injects no Zitadel sub -> 401 is the documented contract.
+#   PAT path injects no OIDC subject -> 401 is the documented contract.
 ###############################################################################
 http tenant-profile-pat POST /api/v1/tenant/profile "${JSON[@]}" \
   -d '{"profile_type":"retail"}'
@@ -464,7 +464,7 @@ use_primary
 
 ###############################################################################
 # Section 15 — GET /api/v1/account/avatar
-#   DownloadAvatar requires both tenant_id AND Zitadel sub; PAT injects no sub
+#   DownloadAvatar requires both tenant_id AND OIDC subject; PAT injects no sub
 #   -> 401 is the documented contract (counts as PAT-path coverage).
 ###############################################################################
 http avatar-get-pat GET /api/v1/account/avatar

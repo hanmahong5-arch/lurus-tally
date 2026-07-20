@@ -2,9 +2,11 @@
 
 import { useState, useRef, useEffect, useCallback } from "react"
 import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
+import { SparklesIcon } from "lucide-react"
 import { MessageList, type UIMessage } from "./MessageList"
 import { streamChat, type AIPlan } from "@/lib/api/ai"
 import { useGlobalShortcut } from "@/hooks/useGlobalShortcut"
+import { useFocusTrap } from "@/hooks/useFocusTrap"
 import { trackEvent } from "@/lib/telemetry"
 import { Button } from "@/components/ui/button"
 
@@ -54,10 +56,16 @@ export function AIDrawer() {
   const inputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<(() => void) | null>(null)
+  const panelRef = useRef<HTMLDivElement>(null)
   // Records how the drawer was last opened so the ai_drawer_open telemetry can
   // attribute the trigger. Set by each opener before flipping `open` to true.
   const openTriggerRef = useRef<"shortcut" | "button" | "deeplink">("button")
   const reduceMotion = useReducedMotion()
+
+  // Tab/Shift+Tab cycles within the panel while open — the drawer is a
+  // hand-rolled aria-modal panel (not built on Base UI Dialog), so without
+  // this Tab would leak focus onto the sidebar/page behind it.
+  useFocusTrap(panelRef, open)
 
   // Cmd+J toggles drawer.
   useGlobalShortcut({
@@ -190,8 +198,10 @@ export function AIDrawer() {
     cancelRef.current?.()
   }, [])
 
-  const sendMessage = useCallback(() => {
-    const text = input.trim()
+  const sendMessage = useCallback((override?: string) => {
+    // override lets a suggestion chip (or any programmatic trigger) send text
+    // directly, without a race on the debounced input state.
+    const text = (override ?? input).trim()
     if (!text || isLoading) return
 
     setInput("")
@@ -296,7 +306,9 @@ export function AIDrawer() {
 
   return (
     <>
-      {/* Floating action button */}
+      {/* Floating action button — a pill that reveals its label on hover; a
+          soft ring hints it's the always-available AI entry point. Hidden while
+          the drawer is open so it doesn't overlap the panel on narrow screens. */}
       <button
         onClick={() => {
           openTriggerRef.current = "button"
@@ -304,9 +316,12 @@ export function AIDrawer() {
         }}
         data-testid="ai-drawer-fab"
         aria-label="打开 AI 助手 (Cmd+J)"
-        className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary text-primary-foreground shadow-lg transition-all hover:scale-110 hover:shadow-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={`group fixed bottom-5 right-5 z-40 flex h-12 items-center gap-2 rounded-full bg-primary pl-3.5 pr-3.5 text-primary-foreground shadow-lg ring-4 ring-primary/15 transition-all hover:scale-105 hover:pr-4 hover:shadow-xl hover:ring-primary/25 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${open ? "pointer-events-none scale-90 opacity-0" : "opacity-100"}`}
       >
-        ✨
+        <SparklesIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
+        <span className="max-w-0 overflow-hidden whitespace-nowrap text-sm font-medium opacity-0 transition-all duration-200 group-hover:max-w-[5rem] group-hover:opacity-100">
+          问 AI
+        </span>
       </button>
 
       {/* Backdrop */}
@@ -326,6 +341,7 @@ export function AIDrawer() {
 
       {/* Drawer panel (always mounted; slides via x) */}
       <motion.div
+        ref={panelRef}
         data-testid="ai-drawer"
         role="dialog"
         aria-label="AI 助手"
@@ -338,7 +354,7 @@ export function AIDrawer() {
         {/* Header */}
         <div className="flex items-center justify-between border-b border-border px-4 py-3">
           <div className="flex items-center gap-2">
-            <span className="text-lg" aria-hidden="true">✨</span>
+            <SparklesIcon className="h-4 w-4 shrink-0" aria-hidden="true" />
             <h2 className="text-sm font-semibold">AI 助手</h2>
             <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
               Cmd+J
@@ -366,14 +382,21 @@ export function AIDrawer() {
 
         {/* Message list */}
         <div className="flex-1 overflow-y-auto">
-          <MessageList messages={messages} />
+          <MessageList messages={messages} onSuggestion={(q) => sendMessage(q)} />
           <div ref={messagesEndRef} />
         </div>
 
         {/* Input */}
         <div className="border-t border-border p-3">
           {isLoading && (
-            <p className="mb-2 text-xs text-muted-foreground animate-pulse">AI 正在思考...</p>
+            <div className="mb-2 flex items-center gap-1.5 text-xs text-muted-foreground" role="status" aria-live="polite">
+              <span className="inline-flex gap-1" aria-hidden="true">
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.3s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary [animation-delay:-0.15s]" />
+                <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-primary" />
+              </span>
+              正在查你的库存…
+            </div>
           )}
           <div className="flex gap-2">
             <input
@@ -388,7 +411,7 @@ export function AIDrawer() {
               className="flex-1 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus:outline-none disabled:opacity-50"
             />
             <Button
-              onClick={sendMessage}
+              onClick={() => sendMessage()}
               disabled={isLoading || !input.trim()}
               data-testid="ai-send-btn"
               size="lg"
