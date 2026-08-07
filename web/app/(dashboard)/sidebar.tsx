@@ -23,6 +23,8 @@ import {
   LeafIcon,
   FolderKanbanIcon,
   MonitorIcon,
+  BookOpenIcon,
+  LifeBuoyIcon,
   type LucideIcon,
 } from "lucide-react"
 import { useProfile } from "@/lib/profile"
@@ -167,15 +169,42 @@ function NavLinks() {
 }
 
 /**
+ * SupportLinks — help footer under the AccountCard. Deliberately the quietest
+ * thing in the sidebar (11px, muted, no icons larger than the text): it must be
+ * findable when a user is stuck and invisible the rest of the time.
+ *
+ * Both targets are external, so plain <a> rather than next/link.
+ * `支持` uses support@lurus.cn, matching the existing www-next contact
+ * (src/app/pricing/faq.tsx).
+ */
+function SupportLinks() {
+  const linkCls =
+    "inline-flex items-center gap-1 rounded-sm transition-colors hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+  return (
+    <div className="flex items-center gap-3 px-3 pb-0.5 text-[11px] text-muted-foreground">
+      <a href="https://docs.lurus.cn" target="_blank" rel="noreferrer" className={linkCls}>
+        <BookOpenIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+        文档
+      </a>
+      <a href="mailto:support@lurus.cn" className={linkCls}>
+        <LifeBuoyIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
+        支持
+      </a>
+    </div>
+  )
+}
+
+/**
  * DashboardSidebar — desktop-only sidebar (md and up). Layout is:
  *   POS (retail only) → grouped nav (workspace / business / settings) → spacer
- *   → AccountCard pinned at bottom.
+ *   → AccountCard + support links pinned at bottom.
  */
 export function DashboardSidebar() {
   return (
     <aside className="hidden w-56 flex-col gap-3 border-r border-border bg-background p-3 md:flex">
       <NavLinks />
       <AccountCard />
+      <SupportLinks />
     </aside>
   )
 }
@@ -235,6 +264,7 @@ export function MobileNav() {
             </div>
             <NavLinks />
             <AccountCard />
+            <SupportLinks />
           </aside>
         </>
       )}

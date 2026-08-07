@@ -1,4 +1,10 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500&display=swap');
+/* Brand tokens (--lt-*) — vendored copy of @lurus/design, regenerate with
+   `scripts/design-sync.sh 2b-svc-tally/web/styles/lurus-design` from the root
+   repo. Vendored (not a file: dep) because the Docker build context has no
+   shared/. Tokens-only: declares --lt-* custom properties, no resets, no
+   component selectors — importing it cannot restyle anything on its own. */
+@import "../styles/lurus-design/tokens.css";
 
 @tailwind base;
 @tailwind components;
@@ -19,8 +25,11 @@
     --card-foreground: oklch(0.145 0 0);
     --popover: oklch(1 0 0);
     --popover-foreground: oklch(0.145 0 0);
-    /* Brand orange ≈ #FF5D1F — sole accent (primary button / focus ring / link / selected) */
-    --primary: oklch(0.685 0.205 39);
+    /* Brand orange — sole accent (primary button / focus ring / link / selected).
+       Now sourced from --lt-accent (#FF5D1F) instead of a hand-copied oklch;
+       the old literal oklch(0.685 0.205 39) resolved to #FD5F20, i.e. it had
+       already drifted ≤2/255 per channel off the brand spec. */
+    --primary: var(--lt-accent);
     --primary-foreground: oklch(0.205 0.015 40);
     --secondary: oklch(0.961 0 0);
     --secondary-foreground: oklch(0.205 0 0);
@@ -32,9 +41,13 @@
     --destructive-foreground: oklch(0.985 0 0);
     --border: oklch(0.922 0 0);
     --input: oklch(0.922 0 0);
-    --ring: oklch(0.685 0.205 39);
+    --ring: var(--lt-accent);
     --radius: 0.5rem;
-    /* Semantic — status colours */
+    /* Semantic — status colours. Deliberately NOT switched to the --lt-*
+       equivalents (--lt-ok / --lt-warn / --lt-err / --lt-info): those are
+       materially darker/different hues, so swapping them is a visible
+       restyle, not a token alignment. Any NEW status colour should use the
+       token; these literals stay until a designer signs off on the shift. */
     --success: oklch(0.60 0.15 142);
     --warning: oklch(0.75 0.15 85);
     --danger: oklch(0.55 0.20 27);
@@ -48,8 +61,9 @@
     --card-foreground: oklch(0.985 0 0);
     --popover: oklch(0.205 0 0);
     --popover-foreground: oklch(0.985 0 0);
-    /* Brand orange ≈ #FF5D1F — same accent across themes for brand consistency */
-    --primary: oklch(0.685 0.205 39);
+    /* Brand orange — same accent across themes for brand consistency.
+       --lt-accent is re-declared identically under .dark in tokens.css. */
+    --primary: var(--lt-accent);
     --primary-foreground: oklch(0.205 0.015 40);
     --secondary: oklch(0.269 0 0);
     --secondary-foreground: oklch(0.985 0 0);
@@ -61,7 +75,7 @@
     --destructive-foreground: oklch(0.985 0 0);
     --border: oklch(0.268 0 0);
     --input: oklch(0.268 0 0);
-    --ring: oklch(0.685 0.205 39);
+    --ring: var(--lt-accent);
   }
 }
 
