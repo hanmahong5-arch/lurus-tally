@@ -63,15 +63,7 @@ func (a *stockAdapter) Execute(ctx context.Context, req appob.StockInitRequest) 
 // same shape a real approved sale has. The WAC engine overwrites the out unit
 // cost with the prevailing average, so none is supplied to the movement.
 func (a *stockAdapter) RecordSale(ctx context.Context, req appob.DemoSaleRequest) error {
-	billItemID, err := a.sales.InsertDemoSale(ctx, appob.DemoSaleBill{
-		TenantID:    req.TenantID,
-		ProductID:   req.ProductID,
-		WarehouseID: req.WarehouseID,
-		Qty:         req.Qty,
-		UnitPrice:   req.UnitPrice,
-		UnitCost:    req.UnitCost,
-		OccurredAt:  req.OccurredAt,
-	})
+	billItemID, err := a.sales.InsertDemoSale(ctx, appob.DemoSaleBill(req))
 	if err != nil {
 		return fmt.Errorf("onboarding sales adapter: write demo sale bill: %w", err)
 	}

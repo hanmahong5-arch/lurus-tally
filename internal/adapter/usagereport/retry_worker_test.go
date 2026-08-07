@@ -87,8 +87,12 @@ func (f *fakeUsageOutbox) PendingStats(_ context.Context) (UsagePendingStats, er
 	return UsagePendingStats{PendingCount: n}, nil
 }
 
-func (f *fakeUsageOutbox) count() int       { f.mu.Lock(); defer f.mu.Unlock(); return len(f.order) }
-func (f *fakeUsageOutbox) isSent(id uuid.UUID) bool { f.mu.Lock(); defer f.mu.Unlock(); return f.sent[id] }
+func (f *fakeUsageOutbox) count() int { f.mu.Lock(); defer f.mu.Unlock(); return len(f.order) }
+func (f *fakeUsageOutbox) isSent(id uuid.UUID) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sent[id]
+}
 func (f *fakeUsageOutbox) attemptsOf(id uuid.UUID) int {
 	f.mu.Lock()
 	defer f.mu.Unlock()
