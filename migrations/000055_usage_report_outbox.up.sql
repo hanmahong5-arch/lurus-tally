@@ -1,4 +1,10 @@
--- 000053_usage_report_outbox.up.sql
+-- 000055_usage_report_outbox.up.sql
+-- Renumbered from 000053: that ID was already reserved in migration-ledger for
+-- drop_dead_reorder_views, and two files sharing a version make golang-migrate's
+-- iofs source refuse to load AT ALL ("duplicate migration file") — every
+-- migration, not just these two. Never applied under the old number (STAGE head
+-- was 52), so the renumber is a pure rename with no schema_migrations impact.
+--
 -- Durable retry queue for LLM usage events that could not be reported to the
 -- platform metering ingest (unprovisioned tenant / resolver error / platform
 -- unreachable). Before this, such events were silently dropped, losing billable

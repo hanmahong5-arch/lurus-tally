@@ -1,6 +1,6 @@
 // Package usage_report_outbox_test holds the PG integration test for the durable
 // usage-retry store. It needs a real PostgreSQL with the tally schema (migrations
-// applied, incl. 000053) and is skipped when DATABASE_DSN is unset. It proves the
+// applied, incl. 000055) and is skipped when DATABASE_DSN is unset. It proves the
 // SQL round-trip and the `SET LOCAL app.tenant_id='service'` code path execute
 // against real Postgres (which the hermetic SQLite shim cannot). It does NOT
 // assert cross-tenant RLS isolation: the test connects as the schema owner, and
