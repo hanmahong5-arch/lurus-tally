@@ -50,13 +50,26 @@ patches:
       kind: Service
       name: tally-web
 images:
-  # Bumped to main-e02788a: low-stock alert redefined as the learned reorder
-  # point (zero-config ROP, reusing the replenish Forecast) instead of the dead
-  # low_safe_qty join; contract is now per-product (also fixes the never-
-  # populated warehouse_name). Both backend AND web bumped — the alert row shape
-  # changed, so the web widgets (dashboard + todo) move together. No migration.
-  # Prior: backend main-ba458ba (#15+#16 payments/FK/PAT/webhook); web da39944.
+  # Bumped to main-0d59b14 (2026-08-08) — the first main commit since 2026-07-02
+  # that produces images at all: two branches had both numbered a migration
+  # 000053, and golang-migrate refuses to load the WHOLE set on a version
+  # collision, so CI's Integration Test stayed red and BOTH image-build jobs were
+  # skipped for 37 days. Fixed in 4cbbae56 (renumber → 000055) + 9f14658d (two
+  # never-`git add`ed web modules that kept the frontend typecheck red).
+  #
+  # 🔴 OPERATOR — this is NOT a routine tag bump, read before `kubectl apply -k`:
+  #  1. What was DECLARED here (main-e02788a, 2026-06-18) predates 06b1c3cd,
+  #     the CRITICAL fix rejecting a client-supplied X-IDP-Subject on /billing/*
+  #     (cross-account impersonation). What is RUNNING on R6 is older still
+  #     (backend main-ba458ba 2026-06-16 / web main-da39944) — so STAGE has been
+  #     drifted behind its own declaration, not just behind main.
+  #  2. Boot runs migrations 53→55: 000053 DROPs the dead reorder views AND the
+  #     product.predicted_* columns (down/ restores them), 000054 backfills the
+  #     supplier→partner mirror, 000055 creates usage_report_outbox. Take a
+  #     STAGE dump first — the schema change is the reason this is owner-gated.
+  #  3. The runbook's `ssh root@100.122.83.20` (Tailscale) is dead; the live
+  #     channel is `ssh -p 12222 root@43.226.45.87`.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-e02788a
+    newTag: main-0d59b14
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-e02788a
+    newTag: main-0d59b14

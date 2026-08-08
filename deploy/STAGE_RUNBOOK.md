@@ -1,12 +1,14 @@
-# Tally STAGE 直部署 Runbook (R6 / 100.122.83.20)
+# Tally STAGE 直部署 Runbook (R6 / 43.226.45.87)
 
 ArgoCD ApplicationSet 不接管 Tally STAGE，部署走人工 `ssh + kubectl apply -k`。决策见 governance repo `lurus/doc/decisions/0006-tally-stage-direct-deploy.md`（跨 repo，sibling clone）。
+
+> **通道更正 2026-08-08**：本文原先全篇用 `ssh root@100.122.83.20`（Tailscale），该路径已断且待重新认证；R6 现走公网 `ssh -p 12222 root@43.226.45.87`（key 直连，2026-08-08 实测 `kubectl get ns` 正常）。下文命令已整体改为公网写法。Tailscale 恢复后两条通道都可用，无需改回。
 
 ## 1. 前提清单（一次性）
 
 ✅ 必须先完成：
 
-- **R6 SSH 通**：`ssh root@100.122.83.20 "kubectl get nodes"` 能正常返回
+- **R6 SSH 通**：`ssh -p 12222 root@43.226.45.87 "kubectl get nodes"` 能正常返回
 - **OIDC 客户端注册**（在身份提供方控制台手工）：
   1. 登身份提供方控制台（issuer 域，如 https://auth.lurus.cn）
   2. Projects → 选 Lurus → Applications → New
@@ -51,9 +53,9 @@ ArgoCD ApplicationSet 不接管 Tally STAGE，部署走人工 `ssh + kubectl app
 替换尖括号内的实际值后整段执行：
 
 ```bash
-ssh root@100.122.83.20 "kubectl create namespace lurus-tally --dry-run=client -o yaml | kubectl apply -f -"
+ssh -p 12222 root@43.226.45.87 "kubectl create namespace lurus-tally --dry-run=client -o yaml | kubectl apply -f -"
 
-ssh root@100.122.83.20 "kubectl -n lurus-tally create secret generic tally-secrets \
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally create secret generic tally-secrets \
   --from-literal=DATABASE_DSN='<DATABASE_DSN>' \
   --from-literal=REDIS_URL='<REDIS_URL>' \
   --from-literal=NATS_URL='<NATS_URL>' \
@@ -80,7 +82,7 @@ ssh root@100.122.83.20 "kubectl -n lurus-tally create secret generic tally-secre
 cd C:/Users/Anita/Desktop/lurus/2b-svc-psi
 
 # 渲染 stage overlay 并通过 ssh 远程 apply
-kubectl kustomize deploy/k8s/overlays/stage | ssh root@100.122.83.20 "kubectl apply -f -"
+kubectl kustomize deploy/k8s/overlays/stage | ssh -p 12222 root@43.226.45.87 "kubectl apply -f -"
 ```
 
 > 如果本地无 `kubectl`：在 R6 上 clone repo 后跑 `kubectl apply -k 2b-svc-psi/deploy/k8s/overlays/stage`。
@@ -90,9 +92,9 @@ kubectl kustomize deploy/k8s/overlays/stage | ssh root@100.122.83.20 "kubectl ap
 ## 4. 验证
 
 ```bash
-ssh root@100.122.83.20 "kubectl -n lurus-tally rollout status deploy/tally-backend --timeout=180s"
-ssh root@100.122.83.20 "kubectl -n lurus-tally rollout status deploy/tally-web --timeout=180s"
-ssh root@100.122.83.20 "kubectl -n lurus-tally get pods,svc,ingressroute"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally rollout status deploy/tally-backend --timeout=180s"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally rollout status deploy/tally-web --timeout=180s"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally get pods,svc,ingressroute"
 
 # 健康检查 — /ready 真实 ping DB(必需)/Redis(可选)。
 # 200 = ready；503 = not_ready（响应体含具体哪个 dep 挂了）。
@@ -108,24 +110,24 @@ curl -fsS -H "X-Tenant-ID: <tenant-uuid>" https://tally-stage.lurus.cn/api/v1/st
 
 ```bash
 # Pod 启动失败：看 init / config 报错
-ssh root@100.122.83.20 "kubectl -n lurus-tally logs deploy/tally-backend --tail=100"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally logs deploy/tally-backend --tail=100"
 
 # Secret 缺 key：config.go required() 会 fast-fail，错误信息会指出缺哪个
-ssh root@100.122.83.20 "kubectl -n lurus-tally describe pod -l app=tally-backend | grep -A2 'Error'"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally describe pod -l app=tally-backend | grep -A2 'Error'"
 
 # 描述当前 secret keys（不暴露值）
-ssh root@100.122.83.20 "kubectl -n lurus-tally get secret tally-secrets -o jsonpath='{.data}' | jq 'keys'"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally get secret tally-secrets -o jsonpath='{.data}' | jq 'keys'"
 
 # 前端 NextAuth 报错：通常是 NEXTAUTH_URL / OIDC_* 配错
-ssh root@100.122.83.20 "kubectl -n lurus-tally logs deploy/tally-web --tail=100 | grep -i 'auth\|oidc\|callback'"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally logs deploy/tally-web --tail=100 | grep -i 'auth\|oidc\|callback'"
 ```
 
 ## 6. 回滚
 
 ```bash
-ssh root@100.122.83.20 "kubectl -n lurus-tally rollout undo deploy/tally-backend"
-ssh root@100.122.83.20 "kubectl -n lurus-tally rollout undo deploy/tally-web"
-ssh root@100.122.83.20 "kubectl -n lurus-tally rollout status deploy/tally-backend"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally rollout undo deploy/tally-backend"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally rollout undo deploy/tally-web"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally rollout status deploy/tally-backend"
 ```
 
 ## 7. 升 PROD 触发条件
@@ -141,9 +143,9 @@ ssh root@100.122.83.20 "kubectl -n lurus-tally rollout status deploy/tally-backe
 ## Appendix: 当前运行状态查询
 
 ```bash
-ssh root@100.122.83.20 "kubectl -n lurus-tally get pods -o wide"
-ssh root@100.122.83.20 "kubectl -n lurus-tally top pods 2>/dev/null"
-ssh root@100.122.83.20 "kubectl -n lurus-tally exec deploy/tally-backend -- env | grep -E '^(DATABASE|REDIS|NATS|PLATFORM|NEWAPI|OIDC)_' | sed 's/=.*/=***/'"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally get pods -o wide"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally top pods 2>/dev/null"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally exec deploy/tally-backend -- env | grep -E '^(DATABASE|REDIS|NATS|PLATFORM|NEWAPI|OIDC)_' | sed 's/=.*/=***/'"
 ```
 
 ## 8. PG backup CronJob (S0.Q4)
@@ -152,15 +154,15 @@ ssh root@100.122.83.20 "kubectl -n lurus-tally exec deploy/tally-backend -- env 
 
 ### 验证 CronJob 正常调度
 ```bash
-ssh root@100.122.83.20 "kubectl -n lurus-tally get cronjob tally-pgbackup"
-ssh root@100.122.83.20 "kubectl -n lurus-tally get jobs -l app.kubernetes.io/name=tally-pgbackup --sort-by=.metadata.creationTimestamp"
-ssh root@100.122.83.20 "kubectl -n lurus-tally logs jobs/<latest-job-name>"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally get cronjob tally-pgbackup"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally get jobs -l app.kubernetes.io/name=tally-pgbackup --sort-by=.metadata.creationTimestamp"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally logs jobs/<latest-job-name>"
 ```
 
 ### 手动触发一次
 ```bash
-ssh root@100.122.83.20 "kubectl -n lurus-tally create job --from=cronjob/tally-pgbackup drill-$(date +%s)"
-ssh root@100.122.83.20 "kubectl -n lurus-tally logs -f jobs/drill-XXX"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally create job --from=cronjob/tally-pgbackup drill-$(date +%s)"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally logs -f jobs/drill-XXX"
 ```
 
 成功标志：log 末尾 `>> ok`，MinIO bucket 见 `<date>.dump` 文件 > 1MB。
@@ -169,17 +171,17 @@ ssh root@100.122.83.20 "kubectl -n lurus-tally logs -f jobs/drill-XXX"
 脚本 `bin/pg-restore-drill.sh`（如存在）或手动：
 ```bash
 # 1. 从 MinIO 拉最新 dump 到一个临时位置
-ssh root@100.122.83.20 "kubectl -n lurus-tally exec deploy/tally-backend -- mc cp s3/tally-backup/$(date -u +%Y-%m-%d).dump /tmp/drill.dump"
+ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally exec deploy/tally-backend -- mc cp s3/tally-backup/$(date -u +%Y-%m-%d).dump /tmp/drill.dump"
 
 # 2. 创建临时 schema 并 restore
-ssh root@100.122.83.20 'kubectl -n lurus-tally exec deploy/tally-backend -- psql "$DATABASE_DSN" -c "CREATE SCHEMA tally_restore_test;"'
-ssh root@100.122.83.20 'kubectl -n lurus-tally exec deploy/tally-backend -- pg_restore --no-owner -d "$DATABASE_DSN" --schema=tally --schema-rename=tally:tally_restore_test /tmp/drill.dump'
+ssh -p 12222 root@43.226.45.87 'kubectl -n lurus-tally exec deploy/tally-backend -- psql "$DATABASE_DSN" -c "CREATE SCHEMA tally_restore_test;"'
+ssh -p 12222 root@43.226.45.87 'kubectl -n lurus-tally exec deploy/tally-backend -- pg_restore --no-owner -d "$DATABASE_DSN" --schema=tally --schema-rename=tally:tally_restore_test /tmp/drill.dump'
 
 # 3. 对比行数（核心表）
-ssh root@100.122.83.20 'kubectl -n lurus-tally exec deploy/tally-backend -- psql "$DATABASE_DSN" -c "SELECT '\''restore'\'' AS src, count(*) FROM tally_restore_test.product UNION ALL SELECT '\''live'\'', count(*) FROM tally.product;"'
+ssh -p 12222 root@43.226.45.87 'kubectl -n lurus-tally exec deploy/tally-backend -- psql "$DATABASE_DSN" -c "SELECT '\''restore'\'' AS src, count(*) FROM tally_restore_test.product UNION ALL SELECT '\''live'\'', count(*) FROM tally.product;"'
 
 # 4. 清理临时 schema
-ssh root@100.122.83.20 'kubectl -n lurus-tally exec deploy/tally-backend -- psql "$DATABASE_DSN" -c "DROP SCHEMA tally_restore_test CASCADE;"'
+ssh -p 12222 root@43.226.45.87 'kubectl -n lurus-tally exec deploy/tally-backend -- psql "$DATABASE_DSN" -c "DROP SCHEMA tally_restore_test CASCADE;"'
 ```
 
 **Exit 标准**：restore.product 行数与 live.product 误差 ≤ 5%（同步窗口期内的写入会有少许差）。drill log 贴 `_bmad-output/planning-artifacts/stories/S0.Q4-pg-backup-cronjob.md` Dev Agent Record。
