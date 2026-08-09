@@ -69,7 +69,7 @@ function isTabKey(s: string | null): s is TabKey {
  * the source of truth so refresh / deep-link / drawer-click all land on the
  * right pane.
  */
-export function AccountCenter() {
+export function AccountCenter({ ssoConsoleURL }: { ssoConsoleURL: string }) {
   const router = useRouter()
   const params = useSearchParams()
   const { openDrawer } = useAccountDrawer()
@@ -133,14 +133,14 @@ export function AccountCenter() {
         </div>
 
         <div className="mx-auto max-w-4xl">
-          <TabContent tab={activeTab} />
+          <TabContent tab={activeTab} ssoConsoleURL={ssoConsoleURL} />
         </div>
       </div>
     </div>
   )
 }
 
-function TabContent({ tab }: { tab: TabKey }) {
+function TabContent({ tab, ssoConsoleURL }: { tab: TabKey; ssoConsoleURL: string }) {
   switch (tab) {
     case "profile":
       return <ProfileTab />
@@ -163,7 +163,7 @@ function TabContent({ tab }: { tab: TabKey }) {
         <ApiKeysPage />
       )
     case "security":
-      return <SecurityTab />
+      return <SecurityTab ssoConsoleURL={ssoConsoleURL} />
     case "audit":
       return <AuditTab />
     case "team":
@@ -559,7 +559,7 @@ function formatDateTime(iso: string): string {
   }
 }
 
-function SecurityTab() {
+function SecurityTab({ ssoConsoleURL }: { ssoConsoleURL: string }) {
   const [sessions, setSessions] = useState<AccountSession[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -623,7 +623,7 @@ function SecurityTab() {
           密码和两步验证由 SSO 身份服务统一管理。点击下方按钮在 SSO 控制台修改。
         </p>
         <a
-          href="https://auth.lurus.cn"
+          href={ssoConsoleURL}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted"

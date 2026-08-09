@@ -1,0 +1,123 @@
+# Self-contained on-premise deployment for Lurus Tally.
+#
+# This file builds the backend and web images from the source tree you were
+# handed (see ../../Dockerfile and ../../web/Dockerfile) so the running
+# artifact is always reproducible from the code you can read and audit.
+# Dependency services (Postgres/Redis/NATS) are pinned to exact tags —
+# never `:latest` — so a re-deploy months from now behaves identically.
+#
+# Usage (run from the repository root, i.e. one level above this file's
+# grandparent — see INSTALL.md for the exact working directory):
+#   docker compose -f deploy/customer/docker-compose.customer.yml --env-file deploy/customer/.env up -d --build
+#
+# All tunables are read from an env file you create from .env.customer.example.
+# Nothing in this file talks to any Lurus-internal network — every hostname
+# below is either a container name on the private `tally_customer` network or
+# a value you supply.
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-tally}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in your .env file}
+      POSTGRES_DB: ${POSTGRES_DB:-lurus}
+    volumes:
+      - tally_pgdata:/var/lib/postgresql/data
+    networks:
+      - tally_customer
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-tally} -d ${POSTGRES_DB:-lurus}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - tally_redisdata:/data
+    networks:
+      - tally_customer
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  nats:
+    image: nats:2.10-alpine
+    restart: unless-stopped
+    command: ["--jetstream", "-m", "8222", "--store_dir", "/data"]
+    volumes:
+      - tally_natsdata:/data
+    networks:
+      - tally_customer
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8222/healthz || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # Composed here (not left to defaults) because these must point at the
+      # sibling containers on this compose network, not localhost.
+      DATABASE_DSN: postgres://${POSTGRES_USER:-tally}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lurus}?sslmode=disable&search_path=tally
+      REDIS_URL: redis://redis:6379/5
+      NATS_URL: nats://nats:4222
+    ports:
+      - "${TALLY_BACKEND_PORT:-18200}:18200"
+    networks:
+      - tally_customer
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      nats:
+        condition: service_healthy
+    # No container-level healthcheck: the runtime image is built FROM scratch
+    # (see ../../Dockerfile) and has no shell/curl/wget to run a CMD probe.
+    # Verify liveness externally instead — see INSTALL.md "验证" section
+    # (curl http://localhost:18200/internal/v1/tally/health from the host).
+
+  web:
+    build:
+      context: ../../web
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      # PORT is pinned here (not left to the shared .env) because the backend
+      # service in this same file also reads .env and sets PORT=18200 there
+      # for itself — env_file values would otherwise leak into this container
+      # too and override the web Dockerfile's `ENV PORT=3000`, causing
+      # Next.js to listen on 18200 while the host port mapping below still
+      # points at 3000 (web becomes unreachable). Keep this in sync with the
+      # container port in the `ports:` mapping if you ever change it.
+      PORT: "3000"
+      NEXTAUTH_URL: ${TALLY_WEB_PUBLIC_URL:-http://localhost:3000}
+    ports:
+      - "${TALLY_WEB_PORT:-3000}:3000"
+    networks:
+      - tally_customer
+    depends_on:
+      - backend
+
+networks:
+  tally_customer:
+    driver: bridge
+
+volumes:
+  tally_pgdata:
+  tally_redisdata:
+  tally_natsdata:

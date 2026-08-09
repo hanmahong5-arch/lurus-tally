@@ -81,7 +81,14 @@ func TestVerify_MatchAndMismatch(t *testing.T) {
 	if !Verify(prefix, secret, hash) {
 		t.Errorf("Verify of fresh token returned false")
 	}
-	if Verify(prefix, secret[:len(secret)-1]+"X", hash) {
+	// Flip the last char to something guaranteed different (base64 URL alphabet
+	// includes 'X', so a hardcoded replacement can coincidentally match the
+	// original secret and make this assertion flaky).
+	tamperChar := byte('X')
+	if secret[len(secret)-1] == tamperChar {
+		tamperChar = 'Y'
+	}
+	if Verify(prefix, secret[:len(secret)-1]+string(tamperChar), hash) {
 		t.Errorf("Verify accepted tampered secret")
 	}
 	if Verify(prefix, secret, strings.Repeat("0", 64)) {
