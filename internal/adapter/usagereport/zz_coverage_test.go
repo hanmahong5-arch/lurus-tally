@@ -153,10 +153,7 @@ func TestReporter_BadTenant_SkippedNeverResolvedOrPosted(t *testing.T) {
 	// No post channel signal will ever fire (process returns before posting),
 	// so poll the counter instead of waitForPosts.
 	deadline := time.After(2 * time.Second)
-	for {
-		if testutil.ToFloat64(metricSkipped.WithLabelValues("bad_tenant"))-before == 1 {
-			break
-		}
+	for testutil.ToFloat64(metricSkipped.WithLabelValues("bad_tenant"))-before != 1 {
 		select {
 		case <-deadline:
 			t.Fatal("timed out waiting for bad_tenant skip metric")
@@ -218,10 +215,7 @@ func TestReporter_DurableEnqueueFails_EventGenuinelyLost(t *testing.T) {
 	r.Record(ctxWithTenant(tid), "m", 1, 1)
 
 	deadline := time.After(2 * time.Second)
-	for {
-		if testutil.ToFloat64(metricEnqueueFailed)-before == 1 {
-			break
-		}
+	for testutil.ToFloat64(metricEnqueueFailed)-before != 1 {
 		select {
 		case <-deadline:
 			t.Fatal("timed out waiting for enqueue_failed metric")

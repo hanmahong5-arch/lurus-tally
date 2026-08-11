@@ -111,6 +111,11 @@ func TestConfig_AllSet_ReturnsConfig(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("default LogLevel: want info, got %s", cfg.LogLevel)
 	}
+	// memorus-r default must carry the /api/v1 prefix — the client joins paths
+	// by concatenation (see .env.example), so a prefix-less base 404s silently.
+	if cfg.MemoryBaseURL != "http://memorus-r.lurus-system.svc:8880/api/v1" {
+		t.Errorf("default MemoryBaseURL: want http://memorus-r.lurus-system.svc:8880/api/v1, got %s", cfg.MemoryBaseURL)
+	}
 }
 
 func TestConfig_OIDCIssuerSet_RequiresAudience(t *testing.T) {

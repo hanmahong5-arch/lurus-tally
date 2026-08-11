@@ -134,7 +134,7 @@ func TestRoundTrip_RetryStatusMembership(t *testing.T) {
 		status    int
 		retriable bool
 	}{
-		{http.StatusTooManyRequests, true},     // 429
+		{http.StatusTooManyRequests, true},      // 429
 		{http.StatusBadGateway, true},           // 502
 		{http.StatusServiceUnavailable, true},   // 503
 		{http.StatusGatewayTimeout, true},       // 504

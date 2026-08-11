@@ -31,6 +31,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	reposhopify "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/shopify"
 	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
@@ -41,7 +42,6 @@ import (
 	domaincurrency "github.com/hanmahong5-arch/lurus-tally/internal/domain/currency"
 	domainstock "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
-	reposhopify "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/shopify"
 )
 
 // ===========================================================================
@@ -162,11 +162,11 @@ func TestDbscopePinner_WithPinnedConn_NonNilTenant_SetConfigFails(t *testing.T) 
 // values because CreateSaleUseCase / CreateReturnBillUseCase never reach them
 // in these tests.
 type fakeBillRepo struct {
-	productExists   bool
+	productExists    bool
 	productExistsErr error
-	warehouseExists bool
-	createBillErr   error
-	nextBillNo      string
+	warehouseExists  bool
+	createBillErr    error
+	nextBillNo       string
 
 	// capture: the items CreateBill was invoked with, so we can assert the
 	// adapter's field translation reached the real use case unmodified.

@@ -6,8 +6,6 @@ import (
 	"os"
 	"strings"
 	"testing"
-
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 )
 
 // --- parseSampler ---------------------------------------------------------
@@ -59,8 +57,8 @@ func TestParseSampler_TableDriven(t *testing.T) {
 func TestParseSampler_MidRatio_IsParentBasedRatio(t *testing.T) {
 	t.Setenv(envSampleRatio, "0.25")
 	s := parseSampler()
-	if _, ok := s.(sdktrace.Sampler); !ok {
-		t.Fatalf("parseSampler() did not return a sdktrace.Sampler")
+	if s == nil {
+		t.Fatalf("parseSampler() returned a nil sdktrace.Sampler")
 	}
 	if !strings.Contains(s.Description(), "ParentBased") {
 		t.Errorf("parseSampler(0.25).Description() = %q; want ParentBased wrapper", s.Description())

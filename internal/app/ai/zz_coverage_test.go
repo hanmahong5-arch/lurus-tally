@@ -303,7 +303,7 @@ func TestDispatch_RecentSalesTop_MetricsAndLimitAndErrors(t *testing.T) {
 	registry := NewRegistry(&cxProductRepo{}, &cxStockRepo{}, &cxSaleRepo{rows: rows}, &cxExchangeRepo{})
 
 	cases := []struct {
-		metric   string
+		metric    string
 		wantFirst string
 	}{
 		{"revenue", "P1"}, // 100 > 50
@@ -738,14 +738,14 @@ func TestExecutor_WithPriceSnapshot_CaptureErrIsBestEffort(t *testing.T) {
 // ============================================================================
 
 type cxPlanStore struct {
-	mu                sync.Mutex
-	plans             map[string]*domainai.Plan
-	getErr            error
-	saveErr           error
-	updateErr         error
+	mu                 sync.Mutex
+	plans              map[string]*domainai.Plan
+	getErr             error
+	saveErr            error
+	updateErr          error
 	failUpdateFromCall int
-	updateCalls       int
-	listErr           error
+	updateCalls        int
+	listErr            error
 }
 
 func newCxPlanStore() *cxPlanStore { return &cxPlanStore{plans: map[string]*domainai.Plan{}} }

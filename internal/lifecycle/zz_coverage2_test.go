@@ -753,7 +753,7 @@ func TestAiStockReverter_RevertStockAdjust_HappyPath_WritesCompensatingMovement(
 
 	rows := sqlmock.NewRows([]string{"id", "tenant_id", "product_id", "warehouse_id", "direction", "qty_base", "unit_cost", "total_cost", "reference_type", "reference_id", "occurred_at", "created_by", "note", "created_at"}).
 		AddRow(movID, tenantID, productID, warehouseID, "adjust", "5", "0", "0", "adjust", planID, now, nil, "orig note", now)
-	mock.ExpectQuery("SELECT " + movementCols).WithArgs(tenantID, planID).WillReturnRows(rows)
+	mock.ExpectQuery("SELECT "+movementCols).WithArgs(tenantID, planID).WillReturnRows(rows)
 
 	uc := appstock.NewRecordMovementUseCase(&fakeStockRepoForAdjuster{}, &fakeCalculator{}, nil, nil)
 	rv := &aiStockReverter{stockRepo: repostock.New(db), recordMovementUC: uc}
@@ -930,7 +930,7 @@ func TestAiPriceSnapshotStore_SaveSnapshot_RedisErrorPassthrough(t *testing.T) {
 	mr := miniredis.RunT(t)
 	c := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	defer c.Close() //nolint:errcheck
-	mr.Close() // force every subsequent redis call to fail
+	mr.Close()      // force every subsequent redis call to fail
 
 	s := newAIPriceSnapshotStore(c)
 	if err := s.SaveSnapshot(context.Background(), uuid.New(), uuid.New(), []appai.PriceBeforeEntry{{SKUID: uuid.New(), OldPrice: decimal.NewFromInt(1)}}); err == nil {

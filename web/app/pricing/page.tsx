@@ -19,7 +19,7 @@ export const metadata: Metadata = {
 }
 
 const LOGIN_NEXT = "/subscription"
-const LOGIN_HREF = `/login?next=${encodeURIComponent(LOGIN_NEXT)}`
+const LOGIN_HREF = `/login?callbackUrl=${encodeURIComponent(LOGIN_NEXT)}`
 
 export default function PricingPage() {
   return (

@@ -323,8 +323,8 @@ func TestZZ_Create_FieldCaps_Returns400(t *testing.T) {
 
 func TestZZ_Create_InvalidDates_Returns400(t *testing.T) {
 	tests := []struct {
-		name      string
-		body      map[string]any
+		name       string
+		body       map[string]any
 		wantMsgHas string
 	}{
 		{"bad start_date", map[string]any{"code": "C1", "name": "N", "start_date": "2025-13-40"}, "invalid start_date"},

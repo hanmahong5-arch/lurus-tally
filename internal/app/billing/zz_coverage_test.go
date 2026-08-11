@@ -33,13 +33,13 @@ func (s *zzStubPlatform) SubscriptionCheckout(_ context.Context, _ platformclien
 	return s.checkoutResp, s.checkoutErr
 }
 
-// zzErrResolveAccount is the sentinel returned by the fake's account lookup so
+// errResolveAccount is the sentinel returned by the fake's account lookup so
 // we can assert it survives fmt.Errorf("resolve account: %w", err) wrapping
 // via errors.Is, independent of any platformclient.Error typing.
-var zzErrResolveAccount = errors.New("zz: account lookup failed")
+var errResolveAccount = errors.New("zz: account lookup failed")
 
 func TestZZSubscribe_ResolveAccountErrorWrapped(t *testing.T) {
-	uc := billing.NewSubscribeUseCase(&zzStubPlatform{accountErr: zzErrResolveAccount})
+	uc := billing.NewSubscribeUseCase(&zzStubPlatform{accountErr: errResolveAccount})
 	out, err := uc.Execute(context.Background(), billing.SubscribeInput{
 		IDPSubject:    "sub-1",
 		PlanCode:      "pro",
@@ -49,18 +49,18 @@ func TestZZSubscribe_ResolveAccountErrorWrapped(t *testing.T) {
 	if out != nil {
 		t.Errorf("want nil output on error, got %+v", out)
 	}
-	if !errors.Is(err, zzErrResolveAccount) {
+	if !errors.Is(err, errResolveAccount) {
 		t.Errorf("resolve account error must survive %%w wrapping, got %v", err)
 	}
 }
 
 func TestZZOverview_ResolveAccountErrorWrapped(t *testing.T) {
-	uc := billing.NewOverviewUseCase(&zzStubPlatform{accountErr: zzErrResolveAccount})
+	uc := billing.NewOverviewUseCase(&zzStubPlatform{accountErr: errResolveAccount})
 	out, err := uc.Execute(context.Background(), "sub-1")
 	if out != nil {
 		t.Errorf("want nil output on error, got %+v", out)
 	}
-	if !errors.Is(err, zzErrResolveAccount) {
+	if !errors.Is(err, errResolveAccount) {
 		t.Errorf("resolve account error must survive %%w wrapping, got %v", err)
 	}
 }

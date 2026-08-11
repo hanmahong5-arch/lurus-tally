@@ -70,9 +70,9 @@ func TestNurseryType_String_EmptyAndArbitrary(t *testing.T) {
 // and each way a single field can fall outside [1,12].
 func TestNurseryDict_Validate_BestSeasonBoundaries(t *testing.T) {
 	cases := []struct {
-		name       string
-		season     [2]int
-		wantErr    bool
+		name    string
+		season  [2]int
+		wantErr bool
 	}{
 		{"sentinel unset [0,0]", [2]int{0, 0}, false},
 		{"full valid range [1,12]", [2]int{1, 12}, false},

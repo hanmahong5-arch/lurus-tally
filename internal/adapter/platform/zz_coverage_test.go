@@ -690,7 +690,7 @@ type zzFakePublisher struct {
 }
 
 func (f *zzFakePublisher) Publish(_ context.Context, _ string, _ any) error { return nil }
-func (f *zzFakePublisher) Close() error                                    { f.closed = true; return nil }
+func (f *zzFakePublisher) Close() error                                     { f.closed = true; return nil }
 func (f *zzFakePublisher) PublishStockMovementRecorded(_ context.Context, _ string, _ adapternats.StockMovementRecordedPayload) error {
 	return nil
 }

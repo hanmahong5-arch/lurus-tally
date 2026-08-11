@@ -25,7 +25,7 @@ import (
 // ----- fakes -----------------------------------------------------------
 
 type zzFakeRepo struct {
-	mappings map[string]*SKUMapping
+	mappings      map[string]*SKUMapping
 	getMappingErr error
 	upsertErr     error
 	listErr       error
@@ -1105,7 +1105,7 @@ func TestZZ_ParseShopifyCSV_MissingColumn(t *testing.T) {
 
 func TestZZ_ParseShopifyCSV_BlankSKULineSkipped(t *testing.T) {
 	csv := zzShopifyCSV(
-		"#1001,,1,5.00,CNY,2026-01-01",       // shipping/fee line: blank SKU, skipped
+		"#1001,,1,5.00,CNY,2026-01-01", // shipping/fee line: blank SKU, skipped
 		"#1001,REAL-SKU,2,10.00,CNY,2026-01-01",
 	)
 	rows, err := parseShopifyCSV(csv)

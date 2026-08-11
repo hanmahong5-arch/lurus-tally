@@ -78,7 +78,7 @@ func postJSON(ctx context.Context, client *http.Client, url string, payload any,
 	if err != nil {
 		return fmt.Errorf("notify/%s: send request: %w", provider, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
