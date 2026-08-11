@@ -83,7 +83,7 @@ func TestConfig_AllOptionalDefaults(t *testing.T) {
 		"OIDCJWKSPath":         "/oauth/v2/keys",
 		"NewAPIBaseURL":        "https://newapi.lurus.cn/v1",
 		"DefaultAIModel":       "deepseek-v4-flash",
-		"MemoryBaseURL":        "http://memorus.lurus-system.svc:8880",
+		"MemoryBaseURL":        "http://memorus-r.lurus-system.svc:8880/api/v1",
 		"NewAPIKey":            "",
 		"MemoryAPIKey":         "",
 		"PlatformInternalKey":  "",

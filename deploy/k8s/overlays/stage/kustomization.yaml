@@ -16,6 +16,17 @@ patches:
     target:
       kind: ConfigMap
       name: tally-config
+  # Load the 199-entry nursery dictionary on boot. The loader has existed since
+  # Epic 1 (lifecycle/start.go: idempotent, non-fatal on failure) but no
+  # environment ever set the flag, so the dictionary has never been loaded
+  # anywhere. STAGE opts in; PROD stays owner-gated until a prod deploy exists.
+  - patch: |-
+      - op: add
+        path: /data/SEED_NURSERY_DICT
+        value: "true"
+    target:
+      kind: ConfigMap
+      name: tally-config
   # STAGE web must sign users in against the STAGE issuer too, or the id_token's
   # `iss` won't match the backend's OIDC_ISSUER (test-auth) → backend 401.
   - patch: |-

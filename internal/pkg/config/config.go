@@ -83,10 +83,11 @@ type Config struct {
 	DefaultAIModel   string // DEFAULT_AI_MODEL: model name (default "deepseek-v4-flash")
 	AIPlanTTLSeconds int    // AI_PLAN_TTL_SECONDS: destructive plan TTL (default 1800)
 
-	// Memory — memorus integration (http://memorus.lurus-system.svc:8880).
+	// Memory — memorus-r integration (http://memorus-r.lurus-system.svc:8880/api/v1).
 	// Both must be set to enable memory recall in the AI Drawer.
 	// When either is empty: log "memorus: disabled", AI still works without recall.
-	MemoryBaseURL string // MEMORUS_BASE_URL: e.g. http://memorus.lurus-system.svc:8880
+	// The client joins paths by concatenation, so the base MUST include /api/v1.
+	MemoryBaseURL string // MEMORUS_BASE_URL: e.g. http://memorus-r.lurus-system.svc:8880/api/v1
 	MemoryAPIKey  string // MEMORUS_API_KEY: X-API-Key header value
 
 	// Shopify webhook — HMAC-SHA256 secret for verifying inbound order pushes.
@@ -202,7 +203,7 @@ func Load() (*Config, error) {
 		NewAPIKey:            optional("NEWAPI_API_KEY", ""),
 		DefaultAIModel:       optional("DEFAULT_AI_MODEL", "deepseek-v4-flash"),
 		AIPlanTTLSeconds:     aiPlanTTL,
-		MemoryBaseURL:        optional("MEMORUS_BASE_URL", "http://memorus.lurus-system.svc:8880"),
+		MemoryBaseURL:        optional("MEMORUS_BASE_URL", "http://memorus-r.lurus-system.svc:8880/api/v1"),
 		MemoryAPIKey:         optional("MEMORUS_API_KEY", ""),
 		ShopifyWebhookSecret: optional("SHOPIFY_WEBHOOK_SECRET", ""),
 	}, nil
