@@ -140,8 +140,8 @@ func TestListLowStock_RepoError_Propagated(t *testing.T) {
 // TestListLowStock_TruncatesToLimit verifies more-than-limit alert rows are
 // truncated after sorting (low_stock.go:91-93), keeping the most urgent ones.
 func TestListLowStock_TruncatesToLimit(t *testing.T) {
-	urgent := lowStockRaw("U", "1", "2", "0", 7)  // DoS = 0.5, most urgent
-	middle := lowStockRaw("M", "4", "2", "0", 7)  // DoS = 2
+	urgent := lowStockRaw("U", "1", "2", "0", 7)   // DoS = 0.5, most urgent
+	middle := lowStockRaw("M", "4", "2", "0", 7)   // DoS = 2
 	distant := lowStockRaw("D", "10", "2", "0", 7) // DoS = 5, still below ROP≈16.62
 	uc := replenish.NewListLowStockUseCase(&stubRepo{rows: []replenish.RawRow{distant, urgent, middle}})
 

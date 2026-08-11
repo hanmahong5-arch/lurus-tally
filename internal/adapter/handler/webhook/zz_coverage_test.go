@@ -314,7 +314,7 @@ func TestParseShopifyOrder_NameFallbackAndCurrencyDefault(t *testing.T) {
 	}
 	type order struct {
 		ID        int64  `json:"id"`
-		Name      string `json:"name"` // deliberately empty → id fallback
+		Name      string `json:"name"`     // deliberately empty → id fallback
 		Currency  string `json:"currency"` // deliberately empty → USD default
 		LineItems []line `json:"line_items"`
 	}
@@ -368,8 +368,8 @@ func TestParseShopifyOrder_SkipsEmptySKUAndNonPositiveQty(t *testing.T) {
 		Name:     "#0555",
 		Currency: "USD",
 		LineItems: []line{
-			{SKU: "", Quantity: 1, Price: "9.99"},     // no SKU: shipping/fee → skip
-			{SKU: "SKU-Q0", Quantity: 0, Price: "1.00"}, // qty == 0 → skip
+			{SKU: "", Quantity: 1, Price: "9.99"},          // no SKU: shipping/fee → skip
+			{SKU: "SKU-Q0", Quantity: 0, Price: "1.00"},    // qty == 0 → skip
 			{SKU: "SKU-QNEG", Quantity: -3, Price: "1.00"}, // qty < 0 → skip
 			{SKU: "SKU-VALID", Quantity: 2, Price: "4.00"}, // survives
 		},

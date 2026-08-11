@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/google/uuid"
@@ -16,6 +17,12 @@ import (
 // It records the exact *domain.NurseryDict handed to Create/Update so tests can
 // assert on default-fill / partial-update logic rather than only the return value.
 type zzFakeRepo struct {
+	// mu guards the call-recording fields below. ListUseCase.Execute is
+	// exercised concurrently (TestListUseCase_Execute_ConcurrentCallsAreRaceFree),
+	// so the fake — not the use case, which is stateless — must be safe for
+	// concurrent use.
+	mu sync.Mutex
+
 	createErr  error
 	getErr     error
 	getEntry   *domain.NurseryDict
@@ -36,6 +43,8 @@ type zzFakeRepo struct {
 }
 
 func (f *zzFakeRepo) Create(_ context.Context, d *domain.NurseryDict) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.createCalled = true
 	f.createArg = d
 	if f.createErr != nil {
@@ -59,6 +68,8 @@ func (f *zzFakeRepo) GetByID(_ context.Context, _, _ uuid.UUID) (*domain.Nursery
 }
 
 func (f *zzFakeRepo) List(_ context.Context, filter domain.ListFilter) ([]*domain.NurseryDict, int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.listFilter = filter
 	if f.listErr != nil {
 		return nil, 0, f.listErr
@@ -67,6 +78,8 @@ func (f *zzFakeRepo) List(_ context.Context, filter domain.ListFilter) ([]*domai
 }
 
 func (f *zzFakeRepo) Update(_ context.Context, d *domain.NurseryDict) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.updateCalled = true
 	f.updateArg = d
 	if f.updateErr != nil {
@@ -76,6 +89,8 @@ func (f *zzFakeRepo) Update(_ context.Context, d *domain.NurseryDict) error {
 }
 
 func (f *zzFakeRepo) Delete(_ context.Context, _, _ uuid.UUID) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.deleteCalled = true
 	return f.deleteErr
 }

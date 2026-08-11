@@ -144,12 +144,6 @@ func (f *fakeSuggestionRepo) ListSuggestions(_ context.Context, _ uuid.UUID) ([]
 // buildHandler wires a real stock.Handler using the fakes above. Any argument
 // left nil gets a zero-value fake so every route is independently testable
 // without constructing unrelated use cases.
-type harnessOpts struct {
-	repo           *fakeStockRepo
-	calc           *fakeCalculator
-	suggestionRepo *appreplenish.SuggestionRepo // unused placeholder to keep signature simple
-}
-
 func buildHandler(repo *fakeStockRepo, calc *fakeCalculator, sugRepo appreplenish.SuggestionRepo) *stock.Handler {
 	if repo == nil {
 		repo = &fakeStockRepo{}

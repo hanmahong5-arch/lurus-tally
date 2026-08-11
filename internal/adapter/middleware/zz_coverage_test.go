@@ -18,8 +18,6 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"errors"
-	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -41,12 +39,6 @@ import (
 )
 
 func init() { gin.SetMode(gin.TestMode) }
-
-// discardLogger returns an *slog.Logger that writes nowhere, for exercising
-// error/log branches without spamming test output.
-func discardLogger() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
-}
 
 // ---------------------------------------------------------------------------
 // extractBearerToken — technical_cases: SplitN / EqualFold edge cases.
@@ -225,7 +217,7 @@ func TestZZAuth_TenantLookupError_StillNext(t *testing.T) {
 	}
 }
 
-// TestZZAuth_EmailAndDisplayName_InjectedWhenPresent covers the "ok && s != ''"
+// TestZZAuth_EmailAndDisplayName_InjectedWhenPresent covers the "ok && s != ”"
 // true branches for both the email and name claim injection, exercised via
 // the exported GetEmail/GetDisplayName accessors.
 func TestZZAuth_EmailAndDisplayName_InjectedWhenPresent(t *testing.T) {
@@ -293,7 +285,7 @@ func TestZZGetEmail_GetDisplayName_WrongType_ReturnsEmpty(t *testing.T) {
 	}
 }
 
-// TestZZIdempotency_EmptyStringTenant_Skips covers the "case string: t == ''"
+// TestZZIdempotency_EmptyStringTenant_Skips covers the "case string: t == ”"
 // branch specifically — a tenant key that IS present in context but holds an
 // empty string (distinct from the key being altogether absent).
 func TestZZIdempotency_EmptyStringTenant_Skips(t *testing.T) {

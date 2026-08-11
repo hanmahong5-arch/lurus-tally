@@ -196,7 +196,7 @@ func TestABCClassify_BoundaryLandsPreciselyOnProduct(t *testing.T) {
 
 func TestDeadStock_StrictBeforeBoundary(t *testing.T) {
 	now := time.Now()
-	justInsideID := uuid.New() // moved 89d23h59m ago: NOT dead (newer than cutoff)
+	justInsideID := uuid.New()  // moved 89d23h59m ago: NOT dead (newer than cutoff)
 	justOutsideID := uuid.New() // moved 90d00h01m ago: dead (older than cutoff)
 	repo := &stubRepo{
 		stocks: []appreports.StockRow{

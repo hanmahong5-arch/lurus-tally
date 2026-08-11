@@ -276,7 +276,7 @@ func TestDeriveTenantName_TableDriven(t *testing.T) {
 // zeroIDUpserter always returns an Account with ID 0 (platform accepted the
 // upsert but has no numeric id to report, e.g. a stub environment). This must
 // NOT trigger a SetPlatformAccountID call (acc.ID > 0 guard).
-type zeroIDUpserter struct{ setAcctCalled *bool }
+type zeroIDUpserter struct{}
 
 func (u zeroIDUpserter) UpsertAccount(_ context.Context, req platformclient.UpsertAccountRequest) (*platformclient.Account, error) {
 	return &platformclient.Account{ID: 0, IDPSubject: req.IDPSubject}, nil
