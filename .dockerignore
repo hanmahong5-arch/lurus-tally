@@ -20,6 +20,24 @@ coverage.out
 bin/
 tally-backend
 tally-backend.exe
+# `tally-backend.exe` alone was not enough: the tree also accumulates
+# server.exe / tally-mcp.exe / kill-switch-monitor.exe from `go build` on
+# Windows. Measured 2026-08-11: 55.4M + 11.1M + 8.7M = 75.2M of the build
+# context. `**/` prefix because a bare `*.exe` only matches the root level.
+**/*.exe
+
+# Agent/session working directory. Measured 2026-08-11 with a probe image
+# (`COPY . /ctx` + `du`): 563.3M — 86% of a 655.6M build context, for a
+# backend image whose builder stage only reads internal/ cmd/ migrations/
+# go.mod go.sum (~5.5M). The daemon still has to receive every byte before
+# the first instruction runs; on this machine that was 101.7s of a 4m54.9s
+# cold build. CI does a fresh checkout so it never sees this — which is
+# exactly why it went unnoticed.
+.claude/
+
+# UAT run outputs (10.0M measured). Six files are tracked, so unlike the
+# above this one does reach CI's context too.
+_uat-reports/
 
 # Secrets
 .env
