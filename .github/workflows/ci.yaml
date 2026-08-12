@@ -30,9 +30,17 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
+      # Pinned, not `latest`. With `latest` the gate is a function of wall-clock
+      # time rather than of the repo: a new golangci-lint release that adds or
+      # tightens a check turns main red with zero code change, and re-running an
+      # old commit no longer reproduces its original result. v2.12.2 is what
+      # `latest` resolved to in the last green run (31491305302, "Installing
+      # golangci-lint binary v2.12.2..."), so this pins the current behaviour
+      # exactly — same linters, same .golangci.yml, no checks dropped. Upgrades
+      # become an explicit one-line PR that can be reviewed and reverted.
       - uses: golangci/golangci-lint-action@v7
         with:
-          version: latest
+          version: v2.12.2
 
   backend-test:
     name: Unit Test
@@ -42,7 +50,29 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          # Built-in cache disabled on purpose — see "Restore Go caches" below.
+          cache: false
+      # WHY NOT setup-go's cache: its key is derived from go.sum alone, so once a
+      # cache exists for a given go.sum it is never rewritten (post-step logs
+      # "Cache hit occurred on the primary key ..., not saving cache"). All four
+      # Go jobs shared that one key, so the stored GOMODCACHE/GOCACHE was frozen
+      # at whatever the first job to finish happened to have. Measured symptom in
+      # run 31491305302: this job still printed "go: downloading
+      # github.com/DATA-DOG/go-sqlmock" — a test-only module that the frozen
+      # cache never contained. Putting github.sha in the primary key guarantees a
+      # miss, so every push rewrites a complete cache shaped like *this* job
+      # (-race object files included); restore-keys still restores the newest
+      # cache built from the same go.sum, so restores stay warm.
+      - name: Restore Go caches
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-unit-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-unit-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}-
+            go-unit-${{ runner.os }}-${{ env.GO_VERSION }}-
       - name: Run unit tests
         run: go test -race -count=1 -coverprofile=coverage.out ./...
       - name: Upload coverage
@@ -50,6 +80,16 @@ jobs:
         with:
           name: coverage
           path: coverage.out
+      # Only pushes write the cache: PR runs restore from the base branch but do
+      # not each add a ~300 MB entry to the repo's 10 GB LRU cache budget.
+      - name: Save Go caches
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-unit-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
 
   frontend:
     name: Frontend
@@ -65,6 +105,21 @@ jobs:
           path: web/node_modules
           key: bun-${{ hashFiles('web/bun.lock') }}
           restore-keys: bun-
+      # next build stores per-module SWC/webpack compilation output in
+      # .next/cache, keyed by module content hash. Restoring it makes the build
+      # incremental: only modules whose content actually changed are recompiled.
+      # The primary key carries github.sha so it always misses and the cache is
+      # rewritten every run — a sha-less key would freeze the cache at its first
+      # write and silently stop tracking the tree (the exact failure mode the Go
+      # cache had). restore-keys falls back to the newest previous cache.
+      - name: Cache Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: web/.next/cache
+          key: next-${{ hashFiles('web/bun.lock') }}-${{ github.sha }}
+          restore-keys: |
+            next-${{ hashFiles('web/bun.lock') }}-
+            next-
       - name: Install dependencies
         working-directory: web
         run: bun install --frozen-lockfile
@@ -74,6 +129,21 @@ jobs:
       - name: Lint
         working-directory: web
         run: bun run lint
+      # THE GAP THIS CLOSES: web/ carries 46 vitest files / 242 assertions that
+      # this workflow never executed — the job was green while the entire
+      # frontend test suite was dead weight. Runs before Build so a red suite
+      # fails in ~30 s instead of after the ~45 s next build.
+      - name: Unit test (vitest)
+        working-directory: web
+        run: bun run test -- --reporter=default --reporter=junit --outputFile.junit=./junit.xml
+      - name: Upload frontend test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-junit
+          path: web/junit.xml
+          if-no-files-found: warn
+          retention-days: 14
       - name: Build
         working-directory: web
         run: bun run build
@@ -86,9 +156,35 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache: true
+          # Built-in cache disabled on purpose — see backend-test for the why.
+          cache: false
+      # This job is the critical path: image-backend/image-web cannot start until
+      # it finishes, and in run 31491305302 it took 127 s of which only 85.3 s was
+      # test execution. The other ~41 s was `go: downloading` (28 modules,
+      # testcontainers-go + the Docker client tree) plus a cold compile of the
+      # integration binary — proof that the shared setup-go cache never contained
+      # anything built under `-tags integration`. A cache keyed per job flavour
+      # and rewritten every push keeps those objects warm across runs.
+      - name: Restore Go caches
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-integration-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            go-integration-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}-
+            go-integration-${{ runner.os }}-${{ env.GO_VERSION }}-
       - name: Run integration tests
         run: go test -v -tags integration -timeout 180s ./tests/integration/...
+      - name: Save Go caches
+        if: github.event_name == 'push'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-integration-${{ runner.os }}-${{ env.GO_VERSION }}-${{ hashFiles('**/go.sum') }}-${{ github.sha }}
 
   backend-build:
     name: Build
@@ -156,6 +252,30 @@ jobs:
             BUILD_VERSION=${{ github.sha }}
             VCS_REF=${{ github.sha }}
             BUILD_DATE=${{ github.event.head_commit.timestamp }}
+          # Same treatment the web image already gets below, and the reason its
+          # comment says "scope= keeps this cache from colliding with the backend
+          # image's" — this is the other half that was never added.
+          #
+          # What it buys: `RUN go mod download` keys only on go.mod + go.sum, and
+          # those change roughly weekly, but every run re-ran it from zero on a
+          # fresh hosted runner. Measured locally 2026-08-11: that step is 44-45 s
+          # and produces a 435 MB layer. Reproduced the fix with type=local cache
+          # the same way the web step was, on the docker-container driver:
+          # cold 1m37.9s -> warm 19.5s (5.0x), `go mod download` reported CACHED
+          # while `RUN go build` correctly still reran for 16.4 s — the cache
+          # skips dependency fetching, never compilation.
+          #
+          # mode=max is required, not cosmetic: the expensive layer lives in the
+          # discarded `builder` stage, and the default mode=min exports only the
+          # final image's layers — here a scratch image holding two binaries,
+          # i.e. it would cache nothing that costs anything.
+          #
+          # Rollback signal: if "Build and push backend image" does not drop below
+          # ~2 min by the second push after merge, the cache round-trip costs more
+          # than the 45 s it saves — drop these two lines.
+          cache-from: type=gha,scope=tally-backend
+          # Write only on push: PRs read main's cache but never pay the export.
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=tally-backend' || '' }}
 
       - name: Trivy vulnerability scan
         if: github.event_name != 'pull_request'
@@ -205,6 +325,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # Layer cache. Every run today rebuilds the whole image from zero because
+      # buildx's docker-container driver starts empty and nothing was exported.
+      # Measured in run 31491305302: `[deps 4/4] RUN bun install --frozen-lockfile`
+      # 16.8 s + `[builder 3/5] COPY --from=deps /app/node_modules` 8.3 s = 25.1 s
+      # of the 87 s step, spent re-resolving a lockfile that had not changed.
+      # Those two layers key only on package.json + bun.lock, so a cross-run cache
+      # turns them into CACHED — reproduced locally with type=local cache:
+      # cold 136 s -> warm 66 s, and both layers reported CACHED while
+      # `RUN bun run build` correctly still reran (it depends on `COPY . .`).
+      # scope= keeps this cache from colliding with the backend image's.
+      # Rollback signal: if this step does not drop below ~70 s by the second
+      # push after merge, the 555 MB cache round-trip is costing more than the
+      # 25 s it saves — drop these two lines.
       - name: Build and push web image
         id: build
         uses: docker/build-push-action@v5
@@ -215,6 +348,10 @@ jobs:
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha,scope=tally-web
+          # Write only on push: PRs read main's cache but never pay the ~555 MB
+          # export, so PR feedback gets the win without the cost.
+          cache-to: ${{ github.event_name == 'push' && 'type=gha,mode=max,scope=tally-web' || '' }}
 
       - name: Trivy vulnerability scan
         if: github.event_name != 'pull_request'
