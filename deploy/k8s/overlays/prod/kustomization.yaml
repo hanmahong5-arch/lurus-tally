@@ -14,7 +14,14 @@ patches:
       kind: IngressRoute
       name: tally-ingress
 images:
+  # Pinned to main-530950a (2026-08-15) — the newest CI-green main build
+  # (= HEAD at pin time; both image jobs published, verified from the CI run
+  # log). This replaces the `main-placeholder` sentinel so the overlay is
+  # actually deployable; the sentinel stays in base/ so an un-overlaid apply
+  # can never pull a real image by accident. PROD has no cluster footprint
+  # yet — applying this overlay anywhere remains an owner release decision
+  # (deploy path: ArgoCD ApplicationSet vs runbook, still undecided).
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-placeholder
+    newTag: main-530950a
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-placeholder
+    newTag: main-530950a
