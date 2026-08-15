@@ -13,14 +13,29 @@ patches:
     target:
       kind: IngressRoute
       name: tally-ingress
+  # Drop the base placeholder Secret from the PROD render. Applying it would
+  # overwrite a hand-seeded `tally-secrets` per-key with "placeholder" values
+  # (kubectl apply replaces Secret data, it does not merge). STAGE has only
+  # survived this by accident: base/secret.yaml's REPLACE_AT_DEPLOY values are
+  # invalid base64, so the API server rejects that one object on every apply.
+  # PROD must not depend on that accident — the real Secret is seeded and
+  # rotated exclusively via the runbook (deploy/PROD_RUNBOOK.md §2).
+  - patch: |-
+      apiVersion: v1
+      kind: Secret
+      metadata:
+        name: tally-secrets
+        namespace: lurus-tally
+      $patch: delete
 images:
   # Pinned to main-530950a (2026-08-15) — the newest CI-green main build
   # (= HEAD at pin time; both image jobs published, verified from the CI run
   # log). This replaces the `main-placeholder` sentinel so the overlay is
   # actually deployable; the sentinel stays in base/ so an un-overlaid apply
   # can never pull a real image by accident. PROD has no cluster footprint
-  # yet — applying this overlay anywhere remains an owner release decision
-  # (deploy path: ArgoCD ApplicationSet vs runbook, still undecided).
+  # yet — applying this overlay anywhere remains an owner release decision.
+  # Deploy path decided 2026-08-15: manual runbook (deploy/PROD_RUNBOOK.md);
+  # ArgoCD ApplicationSet re-add is gated on R1 ArgoCD regaining repo access.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
     newTag: main-530950a
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web

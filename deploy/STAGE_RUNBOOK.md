@@ -78,8 +78,8 @@ ssh -p 12222 root@43.226.45.87 "kubectl -n lurus-tally create secret generic tal
 ## 3. 部署 / 升级
 
 ```bash
-# 本地（PowerShell / Git Bash）从仓库根 cd 到 2b-svc-psi
-cd C:/Users/Anita/Desktop/lurus/2b-svc-psi
+# 本地（PowerShell / Git Bash）从仓库根 cd 到 2b-svc-tally（旧名 2b-svc-psi 已废）
+cd C:/Users/Anita/Desktop/lurus/2b-svc-tally
 
 # 渲染 stage overlay 并通过 ssh 远程 apply
 kubectl kustomize deploy/k8s/overlays/stage | ssh -p 12222 root@43.226.45.87 "kubectl apply -f -"
