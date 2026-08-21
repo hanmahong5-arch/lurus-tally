@@ -59,6 +59,16 @@ gh_issue_count() {
     echo "n/a"
     return
   fi
+  # A label that was never defined makes search/issues return a perfectly
+  # healthy `total_count: 0` — indistinguishable from "the label exists and
+  # nothing matched". Both `feature` and `regression` were in fact undefined
+  # on this repo (18 issues, neither label), so two of the five anti-metrics
+  # had been reporting a fabricated 0 since the report was written. Probe the
+  # label first and degrade to n/a, per this script's "missing → n/a" rule.
+  if ! gh api "repos/$GH_OWNER/$GH_REPO/labels/$label" >/dev/null 2>&1; then
+    echo "n/a(no '$label' label)"
+    return
+  fi
   gh api -X GET search/issues --field q="$query" --jq '.total_count' 2>/dev/null || echo "n/a"
 }
 
@@ -77,17 +87,28 @@ prom_scalar() {
 }
 
 assumption_evidence_gap_days() {
-  # Look at the last row in assumptions.md status-history table and
-  # report (today - that_date) in days.
+  # Days since the last row that actually CONCLUDED something (truthy or
+  # falsified), not since the last row of any kind.
+  #
+  # Counting every row measured "did the snapshot bot run yesterday" rather
+  # than "when did we last learn something". bin/assumption-snapshot.sh
+  # appends a row daily, so the gap sat pinned at 0d — permanently "≤ 7d,
+  # on target" — while 100% of the 90-day retained history read
+  # `inconclusive | n/a` for all five hypotheses. That is a self-validating
+  # loop: the act of measuring produced the evidence of health. This file's
+  # own scoring table says a hypothesis left inconclusive is 视同 falsified,
+  # so an all-inconclusive history is the opposite of healthy and must not
+  # be reported as 0d.
   if [ ! -f "$ASSUMPTIONS_PATH" ]; then
     echo "n/a"
     return
   fi
-  local last_date
+  local last_date rows
+  rows=$(grep -cE '^\| [0-9]{4}-[0-9]{2}-[0-9]{2} \|' "$ASSUMPTIONS_PATH" || echo 0)
   last_date=$(grep -E '^\| [0-9]{4}-[0-9]{2}-[0-9]{2} \|' "$ASSUMPTIONS_PATH" \
-    | tail -n 1 | awk '{print $2}')
+    | grep -E '\| *(truthy|falsified) *\|' | tail -n 1 | awk '{print $2}' || echo "")
   if [ -z "$last_date" ]; then
-    echo "n/a"
+    echo "🔴 NEVER (${rows} rows, 0 conclusive)"
     return
   fi
   local last_ts now_ts
@@ -97,7 +118,17 @@ assumption_evidence_gap_days() {
     echo "n/a"
     return
   fi
-  echo $(( (now_ts - last_ts) / 86400 ))
+  echo "$(( (now_ts - last_ts) / 86400 ))d"
+}
+
+# True only for a bare number — every "unavailable" marker this script emits
+# ("n/a", "n/a(no 'feature' label)", "🔴 NEVER …") must fail this test so it
+# can never be silently arithmetic'd into a derived metric.
+is_num() {
+  case "$1" in
+    ''|*[!0-9.]*) return 1 ;;
+    *) return 0 ;;
+  esac
 }
 
 # ---------------------------------------------------------------------------
@@ -117,7 +148,7 @@ lint_warnings=$(prom_scalar 'sum(tally_lint_warnings_total)')
 wad_weekly=$(prom_scalar 'sum(increase(tally_plan_accept_total[7d]))')
 
 ratio="n/a"
-if [ "$features_shipped" != "n/a" ] && [ "$wad_weekly" != "n/a" ] \
+if is_num "$features_shipped" && is_num "$wad_weekly" \
    && [ "$features_shipped" != "0" ] && [ "$wad_weekly" != "0" ]; then
   ratio=$(awk -v f="$features_shipped" -v w="$wad_weekly" 'BEGIN { printf "%.3f", f/w }')
 fi
@@ -131,7 +162,7 @@ text=$(cat <<EOM
 
 • features_shipped (last 7d): $features_shipped (target ≤ 3/月 ≈ 0.7/周)
 • bugs_open / closed-7d: $bugs_delta (target open ≤ 5)
-• assumption_evidence_gap_days: ${gap_days}d (target ≤ 7d)
+• assumption_evidence_gap: ${gap_days} (target ≤ 7d, 只认 truthy/falsified)
 • lint_warnings_total: $lint_warnings (单调递减目标)
 • features_shipped / WAD_weekly: $ratio (趋势必降)
 
