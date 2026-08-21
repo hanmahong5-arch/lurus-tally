@@ -2,9 +2,16 @@
 # bin/health-report.sh. Hosted runner for the same reason as
 # assumption-snapshot: stable schedule with no node dependency.
 #
-# Secrets required:
-#   HEALTH_REPORT_FEISHU_URL  — primary Feishu webhook
-#   OPS_ALERT_FEISHU          — fallback on failure
+# The report is ALWAYS written to the job summary, so it is readable without
+# any secret configured. Feishu delivery is best-effort on top of that:
+# an unset HEALTH_REPORT_FEISHU_URL emits a ::warning:: and exits 0 (infra
+# gap), while a configured-but-failing webhook still fails the run (real
+# incident). Before 2026-08-18 both cases failed identically, so the weekly
+# red told you nothing about which had happened.
+#
+# Secrets:
+#   HEALTH_REPORT_FEISHU_URL  — primary Feishu webhook (unset → warn + skip send)
+#   OPS_ALERT_FEISHU          — fallback pinged on real send failures
 #   PROM_URL                  — Prometheus base URL (optional; n/a if missing)
 name: health-report
 

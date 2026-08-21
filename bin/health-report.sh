@@ -153,13 +153,34 @@ echo "----- health report -----"
 echo "$text"
 echo "-------------------------"
 
+# The report must have a destination that does not depend on the Feishu
+# channel being configured, or "webhook unset" silently means "no report".
+if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+  {
+    printf '## Tally V1.5 Health · Week %s\n\n' "$iso_week"
+    printf '```\n%s\n```\n' "$text"
+  } >> "$GITHUB_STEP_SUMMARY"
+fi
+
 if [ "$DRY_RUN" = "1" ]; then
   echo "(DRY_RUN=1, not sending)"
   exit 0
 fi
 
 if [ -z "${HEALTH_REPORT_FEISHU_URL:-}" ]; then
-  ops_alert "HEALTH_REPORT_FEISHU_URL not set"
+  # An unconfigured channel is an infra gap, not a health-report failure.
+  # Failing here made "the webhook secret was never set" indistinguishable
+  # from "a metric breached its red line": the scheduled run had been red
+  # for weeks and the red carried no information. The report itself is on
+  # stdout and in the job summary above, so nothing is lost by exiting 0 —
+  # and the warning keeps the gap visible in the run's annotations.
+  # Set REQUIRE_CHANNEL=1 (once the secret exists) to restore hard-fail so a
+  # later *removal* of the secret does become a real failure again.
+  echo "::warning title=Health report not delivered::HEALTH_REPORT_FEISHU_URL is unset — the report was generated (see job summary) but not sent. Owner-gated infra task, not a code regression."
+  if [ "${REQUIRE_CHANNEL:-0}" = "1" ]; then
+    ops_alert "HEALTH_REPORT_FEISHU_URL not set while REQUIRE_CHANNEL=1"
+  fi
+  exit 0
 fi
 
 if ! post_feishu "$HEALTH_REPORT_FEISHU_URL" "$payload"; then
