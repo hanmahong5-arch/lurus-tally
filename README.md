@@ -1,109 +1,156 @@
-# Lurus Tally (2b-svc-tally)
+[中文](./README.zh-CN.md) | English
 
-> 智能进销存系统 (Smart Purchase-Sales-Inventory)
+# Lurus Tally
 
-**状态**: 27 个业务模块 (account/product/stock/billing/horticulture 等) + 96 个数据库 migration + CI (lint/test/release) 持续跑；多租户 RLS、Platform 计费接入、OIDC 鉴权均已实现 — 非骨架阶段，仍在迭代中（部分模块覆盖率/端到端验证程度不一，详见 `_bmad-output/planning-artifacts/`）
-**产品组**: Platform (P0) 候选 · **目标客群**: 中小企业 B2B (制造/批发/零售/电商)
+An AI-native purchase-sales-inventory (PSI / "进销存") system for small and mid-size businesses — manufacturing, wholesale, retail, and e-commerce sellers who need multi-warehouse stock control without a heavyweight ERP.
 
-## Vision
+Tally is a Go + Next.js web application, not a CRUD form generator: it ships an in-app AI assistant for natural-language stock queries, an agent-suggested replenishment flow, and a command palette for keyboard-first operation. The backend implements a 4-layer architecture (domain / use case / repository / handler) over PostgreSQL with row-level-security multi-tenancy; the CI pipeline runs unit tests, `testcontainers`-based integration tests, and frontend Vitest + Playwright suites on every push. It is deployed to Lurus's staging environment and has also been packaged and installed twice as a self-hosted Docker Compose deliverable for an external customer (see `deploy/customer/`); it has not yet graduated to the company's production cluster.
 
-AI-native 库存智能体（非传统 CRUD 进销存）:
-- **预测**: LLM + 时序预测自动补货 / 滞销预警
-- **决策**: 智能议价、动态定价、多渠道库存最优分配
-- **集成**: 与 Lurus Hub (LLM 网关) + Memorus (AI 记忆) + Platform (账户/计费) 打通
-- **多端**: Web + 微信小程序 + 移动端，覆盖中国 SMB 场景
+## Core Capabilities
 
-## Status
-
-Phase 1-7 全部 DONE (2026-04-23): 命名与骨架 → 开源基座调研 (3 Agent 并行) → 选型决策 (锁定 Go 自研 + Web Only + 顶级 UX) → UX 标杆调研 + 抄代码计划 → PRD + Architecture → Epics 拆分 → Story 1.1 Go 服务骨架。锁定决策见 `_research/decision-lock.md`。
+- Multi-tenant product, SKU, unit, and multi-warehouse stock management with PostgreSQL RLS tenant isolation (`internal/domain/product/`, `internal/domain/stock/`, `internal/domain/warehouse/`)
+- Purchase and sale bill workflows (draft → approve → cancel/restore) driving stock movements and accounts payable/receivable (`internal/app/bill/`, `internal/adapter/handler/bill/`)
+- Cross-border currency and exchange-rate tracking for import/export sellers (`internal/domain/currency/`, `internal/app/currency/`)
+- AI assistant drawer with streaming chat and a `⌘K` command palette backed by an LLM gateway client (`internal/pkg/llmclient/`, `internal/adapter/handler/ai/`, `web/components/ai-assistant/`, `web/components/command-palette/`)
+- Replenishment suggestions, gross-margin/ABC/dead-stock reports, and a weekly "Monday card" digest (`internal/app/replenish/`, `internal/app/reports/`, `internal/app/digest/`)
+- A horticulture (nursery/plant retail) vertical pack: a 200-species plant dictionary and project tracking, gated per-tenant behind an industry flag (`internal/domain/horticulture/`, `internal/app/project/`, `web/components/horticulture/`)
+- Platform-issued subscription billing, OIDC login (vendor-neutral, works against any standards-compliant IdP), and optional Memorus-backed AI memory recall, each degrading gracefully to a disabled state when unconfigured (`internal/adapter/platform/`, `web/auth.ts`, `internal/pkg/memorusclient/`)
 
 ## Quick Start
 
-**Prerequisites**: Go 1.25+ · Bun 1.2+ (for `make dev-web`) · Docker Desktop + Compose v2 (for `make dev` / `make test-integration`) · golangci-lint (for `make lint`)
+Requires Go 1.25+, Bun 1.2+, and Docker Desktop / Compose v2 for local dependencies.
 
 ```bash
 git clone https://github.com/hanmahong5-arch/lurus-tally.git && cd lurus-tally
-cp .env.example .env       # defaults work as-is for local dev — no edits required
-make dev                   # start Postgres + Redis + NATS containers, then Go backend
+cp .env.example .env             # defaults work as-is for local dev
+
+# Backend — starts Postgres + Redis + NATS via Docker, then the Go server
+make dev
 curl http://localhost:18200/internal/v1/tally/health
 # Expected: {"service":"lurus-tally","status":"ok","version":"dev"}
-make dev-web               # (2nd terminal) Next.js frontend at http://localhost:3000
-make dev-stop              # tear down Docker services when done
+
+# Frontend (in a second terminal)
+cd web
+bun install
+bun run dev                      # http://localhost:3000
 ```
 
-## Make Targets
+```bash
+# Tests
+go test -count=1 ./...                                 # backend unit tests
+go test -v -count=1 -tags=integration -race ./...      # backend integration tests (needs Docker)
+cd web && bun run test                                 # frontend Vitest
 
-| Target | Description |
-|--------|-------------|
-| `make dev` | Start Docker services (Postgres + Redis + NATS) then Go backend |
-| `make dev-web` | Start Next.js dev server at http://localhost:3000 |
-| `make dev-stop` | Stop and remove Docker Compose services |
-| `make migrate-up` | Apply all pending migrations against `.env` DATABASE_DSN |
-| `make migrate-down` | Roll back the most recent migration |
-| `make seed` | Seed stub (no-op in MVP stage) |
-| `make test` | Run unit tests (no Docker required) |
-| `make test-integration` | Run testcontainers-go integration tests (requires Docker Desktop) |
-| `make build` | Compile production binary `tally-backend` |
-| `make lint` | Run golangci-lint |
-| `make run` | Start server from source (requires services already up) |
-| `make docker-build` | Build Docker image `lurus-tally:local` |
-| `make clean` | Remove build artifacts |
-| `make coverage` | Generate and open HTML coverage report |
-
-Tests: `make test` (or `go test -count=1 ./...`); CI uses `go test -race -count=1 ./...`.
-
-## Directory Structure (Story 1.1 scope)
-
-```
-2b-svc-tally/
-├── cmd/server/
-│   ├── main.go              # Entry point — config → DI → signal → shutdown
-│   └── main_test.go         # Integration tests
-├── internal/
-│   ├── adapter/handler/
-│   │   ├── health/          # Liveness + readiness handlers
-│   │   └── router/          # Gin route registration
-│   ├── lifecycle/           # App struct, Start/Stop
-│   └── pkg/
-│       ├── config/          # Env loading + startup validation
-│       ├── logger/          # JSON structured logging (log/slog)
-│       └── version/         # Build-time version variable
-├── deploy/k8s/
-│   ├── base/                # K8s manifests (Namespace, Deployment, Service, …)
-│   └── overlays/stage|prod/ # Kustomize overlays
-├── Dockerfile               # Multi-stage: golang:1.25-alpine → scratch
-├── Makefile
-├── .golangci.yml
-├── .env.example
-└── .github/workflows/ci.yaml
+# Production build
+CGO_ENABLED=0 GOOS=linux go build -trimpath -o tally-backend ./cmd/server
+cd web && bun run build
 ```
 
-## Documents
+See `Makefile` for the full target list (`migrate-up`, `migrate-down`, `lint`, `docker-build`, `coverage`, …).
 
-| Document | Path | Status |
-|----------|------|--------|
-| 决策锁定 | `_research/decision-lock.md` | DONE |
-| GitHub 国际开源调研 | `_research/github.md` | DONE |
-| 市场+趋势 | `_research/google.md` | DONE |
-| Gitee 国内开源调研 | `_research/gitee.md` | DONE |
-| 综合选型决策 | `_research/synthesis.md` | DONE |
-| UX 标杆 | `_research/ux-benchmarks.md` | DONE |
-| 抄代码计划 | `_research/code-borrowing-plan.md` | DONE |
-| **PRD** | `_bmad-output/planning-artifacts/prd.md` | DONE |
-| **Architecture** | `_bmad-output/planning-artifacts/architecture.md` | DONE |
-| **Epics** | `_bmad-output/planning-artifacts/epics.md` | DONE |
-| Stories | `_bmad-output/stories/` | Story 1.1 DONE |
+## Architecture
+
+The backend follows a strict 4-layer package layout per business module (`account`, `product`, `stock`, `bill`, `billing`, `horticulture`, `project`, …):
+
+```
+internal/
+├── domain/<module>/     # entities, validation, domain constants — no external deps
+├── app/<module>/        # use cases (Create/Get/List/Update/Delete/Restore) + Repository interfaces
+├── adapter/
+│   ├── repo/<module>/   # Repository implementations — raw SQL via database/sql + pgx/v5, no ORM
+│   ├── handler/<module>/ # Gin HTTP handlers + request/response DTOs
+│   ├── middleware/       # auth, tenant-DB pinning, idempotency, body limits, request timeout, metrics
+│   ├── platform/         # Lurus Platform client (identity, billing, notification)
+│   └── nats/             # NATS JetStream publisher (PSI_EVENTS stream)
+├── pkg/                 # config, logger, llmclient, memorusclient, version, ...
+└── lifecycle/app.go     # dependency injection: repo -> use case -> handler -> router.New(...)
+
+cmd/
+├── server/              # main API server entry point
+├── tally-mcp/           # MCP (Model Context Protocol) server binary
+└── kill-switch-monitor/ # standalone monitor binary shipped alongside the API image
+
+web/
+├── app/(dashboard)/     # authenticated app routes (Next.js App Router route group)
+├── app/(auth)/          # login/auth routes
+├── components/          # ai-assistant, command-palette, horticulture, project, pos, draft, undo, ...
+├── lib/                 # api client, billing, draft (IndexedDB), undo stack
+└── auth.ts              # NextAuth.js OIDC (PKCE) configuration
+
+migrations/              # golang-migrate SQL migrations, embedded into the binary via embed.go
+deploy/
+├── k8s/                 # Kustomize base + stage/prod overlays
+└── customer/            # self-hosted Docker Compose install package (INSTALL.md, acceptance.sh)
+```
+
+Database access is raw SQL through `database/sql` + `jackc/pgx/v5` (no ORM); tenant isolation is enforced by PostgreSQL row-level security, with `internal/adapter/middleware/tenant_db.go` pinning each request to a connection carrying `app.tenant_id`.
+
+## Configuration
+
+Full reference: `.env.example`. Key variables:
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `DATABASE_DSN` | yes | — | PostgreSQL DSN; should include `search_path=tally` |
+| `REDIS_URL` | yes | — | Redis connection URL (DB 5 is reserved for Tally) |
+| `NATS_URL` | yes | — | NATS URL; the `PSI_EVENTS` JetStream stream is auto-created on boot |
+| `PORT` | no | `18200` | HTTP listen port |
+| `LOG_LEVEL` | no | `info` | `debug` \| `info` \| `warn` \| `error` |
+| `GIN_MODE` | no | `debug` | `debug` \| `release` |
+| `SHUTDOWN_TIMEOUT` | no | `5s` | Graceful shutdown deadline |
+| `MIGRATE_ON_BOOT` | no | `true` | Run embedded migrations on service startup |
+| `INTERNAL_API_KEY` | for platform features | `dev-placeholder` | Bearer key for calls to platform-core |
+| `PLATFORM_URL` | for platform features | `http://platform-core.lurus-platform.svc:18104` | platform-core internal URL; billing calls error if unset |
+| `HUB_TOKEN` | no | empty | LLM gateway API key; AI features disable cleanly when blank |
+| `KOVA_URL` | no | empty | Kova agent-execution endpoint; agent features disable when blank |
+| `MEMORUS_BASE_URL` | no | `http://memorus-r.lurus-system.svc:8880/api/v1` | AI memory engine base URL (must include `/api/v1`) |
+| `MEMORUS_API_KEY` | no | empty | Blank disables memory recall; AI still works without it |
+| `OIDC_ISSUER` | for auth | `identity.lurus.cn` | OIDC issuer (bare host or full URL) |
+| `OIDC_CLIENT_ID` | for auth | empty | Confidential OIDC client ID |
+| `OIDC_AUDIENCE` | for auth | empty | Expected `aud` claim |
+| `OIDC_JWKS_PATH` | no | `/oauth/v2/keys` | JWKS path appended to the issuer |
+| `SEED_NURSERY_DICT` | no | `false` | Load the 200-species nursery seed data on startup (idempotent) |
+| `TALLY_NOTIFY_WECOM_WEBHOOK` / `TALLY_NOTIFY_DINGTALK_WEBHOOK` / `TALLY_NOTIFY_FEISHU_WEBHOOK` | no | empty | Group-bot notification webhooks (currently not wired into the DI graph — see `.env.example` comments) |
+
+## API Overview
+
+All business routes are mounted under `/api/v1` (see `internal/adapter/handler/router/router.go`); `/internal/v1/tally/health` and `/internal/v1/tally/ready` are unauthenticated liveness/readiness probes, and `/internal/v1/metrics` exposes Prometheus-format LLM observability metrics behind a bearer-token gate.
+
+| Group | Examples |
+|---|---|
+| Auth & tenant profile | `GET /api/v1/me`, `POST /api/v1/tenant/profile`, PAT CRUD under `/api/v1/auth/pats` |
+| Products & units | `/api/v1/products`, `/api/v1/units` |
+| Stock | `GET /api/v1/stock/snapshots`, `/api/v1/stock/movements`, `/api/v1/stock/alerts/low-stock` (read-only; mutations happen via bill approval) |
+| Purchase / sale bills | `/api/v1/purchase-bills`, `/api/v1/sale-bills`, `/api/v1/sale-bills/quick-checkout` |
+| Payments & billing | `/api/v1/payments`, `/api/v1/billing/overview`, `/api/v1/billing/subscribe` |
+| AI assistant | `POST /api/v1/ai/chat` (SSE), `/api/v1/ai/plans` (proposal/confirm/cancel/revert) |
+| Horticulture & projects | `/api/v1/nursery-dict`, `/api/v1/projects` |
+| Suppliers & warehouses | `/api/v1/suppliers`, `/api/v1/warehouses` |
+| Reports & search | `/api/v1/reports/{gross-margin,abc,dead-stock,sales-top}`, `/api/v1/search`, `/api/v1/weekly-summary` |
+| Exports & imports | `/api/v1/exports/{bills,stock,payments}.csv`, `/api/v1/imports/orders` |
+| Account center | `/api/v1/account/{sessions,audit-log,profile,avatar}` |
+| Onboarding | `/api/v1/onboarding/{seed-demo,clear-demo}` |
+
+Every write route requires an `Idempotency-Key` header (enforced by `internal/adapter/middleware/idempotency_require.go`), independent of whether the optional Redis-backed dedup layer is active.
+
+## Development Conventions
+
+From this repo's contributor guide:
+
+- Backend: `go run ./cmd/server` (`:18200`); build with `CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -trimpath`.
+- Frontend: `bun install` / `bun run dev` / `bun run build` / `bun run lint` — Bun only, no npm/yarn/npx/node.
+- License: Apache-2.0 (see `LICENSE`); third-party notices in `NOTICE` and `THIRD_PARTY_LICENSES/`.
+- New backend modules follow the same 4-layer package layout described above; adding a handler changes the `router.New(...)` signature, which is a breaking change requiring test and DI updates in the same commit.
+
+## Related Projects
+
+Tally is one of several services in the Lurus platform monorepo and consumes several of its shared capabilities at runtime:
+
+- **platform-core** (`2l-svc-platform`) — identity, subscription billing, and notification, called via `internal/adapter/platform/`
+- **LLM gateway** — the platform's OpenAI-compatible inference gateway, called by `internal/pkg/llmclient/` for the AI assistant (`HUB_TOKEN`)
+- **Memorus** — AI memory/recall service, optional dependency via `internal/pkg/memorusclient/`
+- **Kova** — agent-execution runtime for the replenishment agent (endpoint configured via `KOVA_URL`; not yet wired to a handler)
 
 ## Open-Source Lineage
 
-详见 `NOTICE` 文件。借鉴: **jshERP** (Apache-2.0, 核心进销存数据模型) · **GreaterWMS** (Apache-2.0, WMS schema 六状态库存) · **Apache OFBiz** (Apache-2.0, 设计模式参考) · **shadcn/ui + Radix** (MIT, 前端组件) · **Medusa.js v2** (MIT, Headless inventory 架构参考)。Third-party license notices 收集于 `THIRD_PARTY_LICENSES/`（Go module 依赖，由 `go-licenses save ./...` 生成；前端 npm 依赖许可证另见 `web/package.json` + 各包自带 LICENSE）。
-
-License 红榜 (永不引入): GPL/AGPL 系列、JeecgBoot 附加禁制、Vendure v3+。
-
-## BMAD
-
-| Resource | Path |
-|----------|------|
-| PRD | `./_bmad-output/planning-artifacts/prd.md` |
-| Epics | `./_bmad-output/planning-artifacts/epics.md` |
-| Architecture | `./_bmad-output/planning-artifacts/architecture.md` |
+Data model and schema design borrow from **jshERP** and **GreaterWMS** (Apache-2.0) and **Apache OFBiz** (design patterns); frontend components build on **shadcn/ui + Radix** (MIT) and reference **Medusa.js v2** (MIT). Full attribution in `NOTICE`; third-party dependency licenses are collected in `THIRD_PARTY_LICENSES/` (Go modules) and `web/package.json` (npm packages).
