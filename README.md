@@ -16,6 +16,11 @@ Tally is a Go + Next.js web application, not a CRUD form generator: it ships an 
 - A horticulture (nursery/plant retail) vertical pack: a 200-species plant dictionary and project tracking, gated per-tenant behind an industry flag (`internal/domain/horticulture/`, `internal/app/project/`, `web/components/horticulture/`)
 - Platform-issued subscription billing, OIDC login (vendor-neutral, works against any standards-compliant IdP), and optional Memorus-backed AI memory recall, each degrading gracefully to a disabled state when unconfigured (`internal/adapter/platform/`, `web/auth.ts`, `internal/pkg/memorusclient/`)
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
+  <img alt="Layer stack showing Tally's adapter, app, and domain backend layers primarily depending inward toward a zero-dependency domain core, with a documented exception where some app-layer use cases import adapter packages directly, a shared pkg utility used only by adapter and app, and PostgreSQL row-level security enforcing tenant isolation via a tenant-pinned connection from the adapter layer." src="docs/diagrams/architecture.svg">
+</picture>
+
 ## Quick Start
 
 Requires Go 1.25+, Bun 1.2+, and Docker Desktop / Compose v2 for local dependencies.
@@ -85,6 +90,8 @@ deploy/
 
 Database access is raw SQL through `database/sql` + `jackc/pgx/v5` (no ORM); tenant isolation is enforced by PostgreSQL row-level security, with `internal/adapter/middleware/tenant_db.go` pinning each request to a connection carrying `app.tenant_id`.
 
+The inward-dependency direction shown in the diagram above is the target, not an absolute: a handful of `app/<module>` use cases import `adapter/middleware` (e.g. to emit metrics) or a concrete `adapter/repo/<module>` package directly instead of going through the injected `Repository` interface — a documented layering exception, not a hidden one.
+
 ## Configuration
 
 Full reference: `.env.example`. Key variables:
@@ -96,16 +103,17 @@ Full reference: `.env.example`. Key variables:
 | `NATS_URL` | yes | — | NATS URL; the `PSI_EVENTS` JetStream stream is auto-created on boot |
 | `PORT` | no | `18200` | HTTP listen port |
 | `LOG_LEVEL` | no | `info` | `debug` \| `info` \| `warn` \| `error` |
-| `GIN_MODE` | no | `debug` | `debug` \| `release` |
+| `GIN_MODE` | no | `release` | `debug` \| `release` |
 | `SHUTDOWN_TIMEOUT` | no | `5s` | Graceful shutdown deadline |
 | `MIGRATE_ON_BOOT` | no | `true` | Run embedded migrations on service startup |
-| `INTERNAL_API_KEY` | for platform features | `dev-placeholder` | Bearer key for calls to platform-core |
-| `PLATFORM_URL` | for platform features | `http://platform-core.lurus-platform.svc:18104` | platform-core internal URL; billing calls error if unset |
-| `HUB_TOKEN` | no | empty | LLM gateway API key; AI features disable cleanly when blank |
+| `PLATFORM_INTERNAL_KEY` | for platform features | empty | Bearer key for calls to platform-core |
+| `PLATFORM_BASE_URL` | for platform features | `http://platform-core.lurus-platform.svc:18104` | platform-core internal URL; billing calls error if unset |
+| `NEWAPI_API_KEY` | no | empty | LLM gateway (newapi) API key; AI features disable cleanly when blank |
+| `NEWAPI_BASE_URL` | no | `https://newapi.lurus.cn/v1` | LLM gateway base URL |
 | `KOVA_URL` | no | empty | Kova agent-execution endpoint; agent features disable when blank |
 | `MEMORUS_BASE_URL` | no | `http://memorus-r.lurus-system.svc:8880/api/v1` | AI memory engine base URL (must include `/api/v1`) |
 | `MEMORUS_API_KEY` | no | empty | Blank disables memory recall; AI still works without it |
-| `OIDC_ISSUER` | for auth | `identity.lurus.cn` | OIDC issuer (bare host or full URL) |
+| `OIDC_ISSUER` | for auth | empty | OIDC issuer (bare host or full URL); if left empty the service **fails to start** unless `TALLY_DEV_MODE=true` is also set, since an unset issuer would otherwise leave `/api/v1` unauthenticated |
 | `OIDC_CLIENT_ID` | for auth | empty | Confidential OIDC client ID |
 | `OIDC_AUDIENCE` | for auth | empty | Expected `aud` claim |
 | `OIDC_JWKS_PATH` | no | `/oauth/v2/keys` | JWKS path appended to the issuer |
@@ -147,7 +155,7 @@ From this repo's contributor guide:
 Tally is one of several services in the Lurus platform monorepo and consumes several of its shared capabilities at runtime:
 
 - **platform-core** (`2l-svc-platform`) — identity, subscription billing, and notification, called via `internal/adapter/platform/`
-- **LLM gateway** — the platform's OpenAI-compatible inference gateway, called by `internal/pkg/llmclient/` for the AI assistant (`HUB_TOKEN`)
+- **LLM gateway** — the platform's OpenAI-compatible inference gateway, called by `internal/pkg/llmclient/` for the AI assistant (`NEWAPI_BASE_URL` / `NEWAPI_API_KEY`)
 - **Memorus** — AI memory/recall service, optional dependency via `internal/pkg/memorusclient/`
 - **Kova** — agent-execution runtime for the replenishment agent (endpoint configured via `KOVA_URL`; not yet wired to a handler)
 

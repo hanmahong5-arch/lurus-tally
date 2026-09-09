@@ -16,6 +16,11 @@ Tally 是一套 Go + Next.js 的 Web 应用，而非表单堆砌的 CRUD 系统�
 - 苗木零售垂直行业包：200 种苗木字典 + 项目管理，按租户通过行业开关（industry flag）门控（`internal/domain/horticulture/`、`internal/app/project/`、`web/components/horticulture/`）
 - Platform 侧订阅计费、OIDC 登录（厂商中立，可对接任意标准兼容的身份提供方）、可选的 Memorus AI 记忆召回 —— 未配置时均优雅降级为禁用状态（`internal/adapter/platform/`、`web/auth.ts`、`internal/pkg/memorusclient/`）
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/diagrams/architecture-dark.svg">
+  <img alt="分层架构图：Tally 后端 adapter/app/domain 三层依赖方向总体向内收敛到零外部依赖的 domain 核心，但存在一个已记录的例外——部分 app 层用例会直接 import adapter 包；pkg 是仅供 adapter 与 app 使用的共享基础设施；PostgreSQL 行级安全通过 adapter 层建立的租户绑定连接强制租户隔离。" src="docs/diagrams/architecture.svg">
+</picture>
+
 ## 快速开始
 
 需要 Go 1.25+、Bun 1.2+，以及 Docker Desktop / Compose v2（用于本地依赖服务）。
@@ -85,6 +90,8 @@ deploy/
 
 数据库访问全部走 `database/sql` + `jackc/pgx/v5` 手写 SQL（无 ORM）；租户隔离由 PostgreSQL 行级安全（RLS）在数据库层强制执行，`internal/adapter/middleware/tenant_db.go` 会将每个请求绑定到携带 `app.tenant_id` 的数据库连接上。
 
+上图所示的向内依赖方向是目标形态而非绝对约束：少数 `app/<module>` 用例会直接 import `adapter/middleware`（例如上报 metrics）或某个具体的 `adapter/repo/<module>` 包，而不是走注入的 `Repository` 接口——这是一个已记录在案的分层例外，而非隐藏问题。
+
 ## 配置
 
 完整参考见 `.env.example`。关键环境变量：
@@ -96,16 +103,17 @@ deploy/
 | `NATS_URL` | 是 | — | NATS 地址；`PSI_EVENTS` JetStream stream 会在启动时自动创建 |
 | `PORT` | 否 | `18200` | HTTP 监听端口 |
 | `LOG_LEVEL` | 否 | `info` | `debug` \| `info` \| `warn` \| `error` |
-| `GIN_MODE` | 否 | `debug` | `debug` \| `release` |
+| `GIN_MODE` | 否 | `release` | `debug` \| `release` |
 | `SHUTDOWN_TIMEOUT` | 否 | `5s` | 优雅关闭超时时间 |
 | `MIGRATE_ON_BOOT` | 否 | `true` | 启动时执行内嵌的 migration |
-| `INTERNAL_API_KEY` | Platform 功能需要 | `dev-placeholder` | 调用 platform-core 的 Bearer key |
-| `PLATFORM_URL` | Platform 功能需要 | `http://platform-core.lurus-platform.svc:18104` | platform-core 内网地址；未设置时计费相关调用会报错 |
-| `HUB_TOKEN` | 否 | 空 | LLM 网关 API key；留空时 AI 功能会干净地禁用 |
+| `PLATFORM_INTERNAL_KEY` | Platform 功能需要 | 空 | 调用 platform-core 的 Bearer key |
+| `PLATFORM_BASE_URL` | Platform 功能需要 | `http://platform-core.lurus-platform.svc:18104` | platform-core 内网地址；未设置时计费相关调用会报错 |
+| `NEWAPI_API_KEY` | 否 | 空 | LLM 网关（newapi）API key；留空时 AI 功能会干净地禁用 |
+| `NEWAPI_BASE_URL` | 否 | `https://newapi.lurus.cn/v1` | LLM 网关地址 |
 | `KOVA_URL` | 否 | 空 | Kova Agent 执行端点；留空时 Agent 功能禁用 |
 | `MEMORUS_BASE_URL` | 否 | `http://memorus-r.lurus-system.svc:8880/api/v1` | AI 记忆引擎地址（须含 `/api/v1`） |
 | `MEMORUS_API_KEY` | 否 | 空 | 留空则禁用记忆召回；AI 功能本身仍可用 |
-| `OIDC_ISSUER` | 鉴权需要 | `identity.lurus.cn` | OIDC issuer（可为裸域名或完整 URL） |
+| `OIDC_ISSUER` | 鉴权需要 | 空 | OIDC issuer（可为裸域名或完整 URL）；留空且未同时设置 `TALLY_DEV_MODE=true` 时服务**会拒绝启动**，因为留空会让整个 `/api/v1` 处于未鉴权状态 |
 | `OIDC_CLIENT_ID` | 鉴权需要 | 空 | Confidential OIDC client ID |
 | `OIDC_AUDIENCE` | 鉴权需要 | 空 | 预期的 `aud` claim |
 | `OIDC_JWKS_PATH` | 否 | `/oauth/v2/keys` | 拼接在 issuer 后的 JWKS 路径 |
@@ -147,7 +155,7 @@ deploy/
 Tally 是 Lurus 平台 monorepo 中的服务之一，运行时消费以下若干共享能力：
 
 - **platform-core**（`2l-svc-platform`）—— 身份、订阅计费、通知，通过 `internal/adapter/platform/` 调用
-- **LLM 网关** —— 平台的 OpenAI 兼容推理网关，由 `internal/pkg/llmclient/` 调用以驱动 AI 助手（`HUB_TOKEN`）
+- **LLM 网关** —— 平台的 OpenAI 兼容推理网关，由 `internal/pkg/llmclient/` 调用以驱动 AI 助手（`NEWAPI_BASE_URL` / `NEWAPI_API_KEY`）
 - **Memorus** —— AI 记忆/召回服务，通过 `internal/pkg/memorusclient/` 接入，为可选依赖
 - **Kova** —— 补货 Agent 所依赖的 Agent 执行运行时（端点通过 `KOVA_URL` 配置；尚未接入具体 handler）
 
