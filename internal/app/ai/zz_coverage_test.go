@@ -77,6 +77,14 @@ func (f *cxSaleRepo) ListRecentSaleLines(_ context.Context, _ uuid.UUID, _ int) 
 	return f.rows, nil
 }
 
+func (f *cxSaleRepo) MatchCustomers(_ context.Context, _ uuid.UUID, _ string) ([]CustomerRef, error) {
+	return nil, f.err
+}
+
+func (f *cxSaleRepo) ListCustomerSales(_ context.Context, _ uuid.UUID, _ CustomerRef, _ int) ([]CustomerBill, error) {
+	return nil, f.err
+}
+
 type cxExchangeRepo struct {
 	rate decimal.Decimal
 	err  error
@@ -1570,7 +1578,7 @@ func TestBuildMemorySummary_IsTheUsersWordsWithoutTenantOrFraming(t *testing.T) 
 	if strings.Contains(summary, tenant.String()) {
 		t.Errorf("tenant id leaked into the remembered text: %q", summary)
 	}
-	if MemoryWriteMeta(tenant)["tally_tenant_id"] != tenant.String() {
+	if MemoryWriteMeta(tenant, nil)["tally_tenant_id"] != tenant.String() {
 		t.Error("tenant id must travel in the write metadata")
 	}
 }

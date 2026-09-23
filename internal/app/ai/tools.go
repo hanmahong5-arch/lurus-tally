@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -53,6 +54,33 @@ type SaleRow struct {
 	SoldAt      time.Time
 }
 
+// CustomerRef identifies a customer a question may be about. ID is uuid.Nil
+// for a walk-in name that only appears on quick-checkout bills (quick checkout
+// has no partner record and writes the customer's name into bill_head.remark).
+type CustomerRef struct {
+	ID    uuid.UUID
+	Name  string
+	Code  string
+	Phone string
+}
+
+// CustomerBill is one approved sale bill of a customer, with its lines.
+type CustomerBill struct {
+	BillNo   string
+	BillDate time.Time
+	Total    decimal.Decimal
+	Lines    []CustomerBillLine
+}
+
+// CustomerBillLine is one line of a CustomerBill.
+type CustomerBillLine struct {
+	ProductName string
+	Unit        string
+	Qty         decimal.Decimal
+	UnitPrice   decimal.Decimal
+	Amount      decimal.Decimal
+}
+
 // ProductRepo is the minimal read interface required by the AI tools.
 type ProductRepo interface {
 	// SearchProducts returns products matching the query (name/code/mnemonic/brand full-text search).
@@ -71,6 +99,13 @@ type StockRepo interface {
 type SaleRepo interface {
 	// ListRecentSaleLines returns individual sale line rows within the past N days.
 	ListRecentSaleLines(ctx context.Context, tenantID uuid.UUID, days int) ([]SaleRow, error)
+	// MatchCustomers returns customers whose name contains name, plus walk-in
+	// names on quick-checkout bills equal to name.
+	MatchCustomers(ctx context.Context, tenantID uuid.UUID, name string) ([]CustomerRef, error)
+	// ListCustomerSales returns the customer's latest approved sale bills,
+	// newest first: bills with its partner id, and quick-checkout bills
+	// carrying its name.
+	ListCustomerSales(ctx context.Context, tenantID uuid.UUID, c CustomerRef, limit int) ([]CustomerBill, error)
 }
 
 // ExchangeRateRepo is the minimal interface for exchange rate queries.
@@ -169,6 +204,18 @@ func ToolDefs() []llmclient.Tool {
 			}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
+			Name:        "customer_recent_purchases",
+			Description: "A customer's latest sale bills with every line (date, product, qty, unit price, amount), read from the books. Call this for 上次买了什么/买过什么/最近买了什么/老客户 又来了 questions about a named customer. If several customers match the name it returns the candidates instead of guessing — ask the user which one.",
+			Parameters: mustJSON(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"customer": map[string]string{"type": "string", "description": "Customer name as the user said it"},
+					"limit":    map[string]interface{}{"type": "integer", "description": "Number of latest bills (default 5, max 20)"},
+				},
+				"required": []string{"customer"},
+			}),
+		}},
+		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "query_exchange_rate",
 			Description: "Returns the current exchange rate from one currency to CNY (or another target).",
 			Parameters: mustJSON(map[string]interface{}{
@@ -259,6 +306,8 @@ func (r *Registry) Dispatch(ctx context.Context, tenantID uuid.UUID, call llmcli
 		resultJSON, err = r.recentSalesTop(ctx, tenantID, call.Function.Arguments)
 	case "gross_margin_summary":
 		resultJSON, err = r.grossMarginSummary(ctx, tenantID, call.Function.Arguments)
+	case "customer_recent_purchases":
+		resultJSON, err = r.customerRecentPurchases(ctx, tenantID, call.Function.Arguments)
 	case "query_exchange_rate":
 		resultJSON, err = r.queryExchangeRate(ctx, tenantID, call.Function.Arguments)
 	case "propose_price_change":
@@ -854,6 +903,116 @@ func computeROP(s StockRow) decimal.Decimal {
 	sqrtLT := decimal.NewFromFloat(math.Sqrt(float64(s.LeadTimeDays)))
 	safetyStock := z.Mul(sigma).Mul(sqrtLT)
 	return lt.Mul(avgDaily).Add(safetyStock)
+}
+
+func (r *Registry) customerRecentPurchases(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
+	var args struct {
+		Customer string `json:"customer"`
+		Limit    *int   `json:"limit"`
+	}
+	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
+		return "", fmt.Errorf("customer_recent_purchases: invalid args: %w", err)
+	}
+	name := strings.TrimSpace(args.Customer)
+	if name == "" {
+		return "", fmt.Errorf("customer_recent_purchases: customer is required")
+	}
+	limit := 5
+	if args.Limit != nil && *args.Limit > 0 {
+		limit = min(*args.Limit, 20)
+	}
+
+	cands, err := r.saleRepo.MatchCustomers(ctx, tenantID, name)
+	if err != nil {
+		return "", fmt.Errorf("customer_recent_purchases: %w", err)
+	}
+	chosen, ambiguous := pickCustomer(name, cands)
+	if len(ambiguous) > 0 {
+		out := make([]map[string]string, 0, len(ambiguous))
+		for _, c := range ambiguous {
+			out = append(out, map[string]string{"name": c.Name, "code": c.Code, "phone": c.Phone})
+		}
+		return jsonMarshal(map[string]interface{}{
+			"ambiguous":  true,
+			"candidates": out,
+			"note":       "several customers match; ask the user which one before answering",
+		})
+	}
+	if chosen == nil {
+		return jsonMarshal(map[string]interface{}{"found": false, "customer": name})
+	}
+
+	bills, err := r.saleRepo.ListCustomerSales(ctx, tenantID, *chosen, limit)
+	if err != nil {
+		return "", fmt.Errorf("customer_recent_purchases: %w", err)
+	}
+	type line struct {
+		Product   string `json:"product"`
+		Qty       string `json:"qty"`
+		Unit      string `json:"unit,omitempty"`
+		UnitPrice string `json:"unit_price"`
+		Amount    string `json:"amount"`
+	}
+	type bill struct {
+		BillNo string `json:"bill_no"`
+		Date   string `json:"date"`
+		Total  string `json:"total"`
+		Items  []line `json:"items"`
+	}
+	outBills := make([]bill, 0, len(bills))
+	for _, b := range bills {
+		ob := bill{BillNo: b.BillNo, Date: b.BillDate.Format("2006-01-02"), Total: b.Total.StringFixed(2)}
+		for _, l := range b.Lines {
+			ob.Items = append(ob.Items, line{
+				Product:   l.ProductName,
+				Qty:       l.Qty.String(),
+				Unit:      l.Unit,
+				UnitPrice: l.UnitPrice.StringFixed(2),
+				Amount:    l.Amount.StringFixed(2),
+			})
+		}
+		outBills = append(outBills, ob)
+	}
+	return jsonMarshal(map[string]interface{}{
+		"found":    true,
+		"customer": map[string]string{"name": chosen.Name, "code": chosen.Code},
+		"bills":    outBills,
+		"count":    len(outBills),
+	})
+}
+
+// pickCustomer resolves the name a user said to one customer, or returns the
+// candidates when it cannot tell. An exact name wins over names that merely
+// contain it ("张三" is 张三, not 张三丰); several exact partners, or several
+// partial matches and no exact one, are ambiguous. A walk-in name (quick
+// checkout, no partner record) is used only when no partner has that name.
+func pickCustomer(name string, cands []CustomerRef) (*CustomerRef, []CustomerRef) {
+	var exactPartners, walkIns, partners []CustomerRef
+	for _, c := range cands {
+		exact := strings.EqualFold(strings.TrimSpace(c.Name), name)
+		switch {
+		case c.ID == uuid.Nil && exact:
+			walkIns = append(walkIns, c)
+		case c.ID == uuid.Nil:
+		case exact:
+			exactPartners = append(exactPartners, c)
+		default:
+			partners = append(partners, c)
+		}
+	}
+	switch {
+	case len(exactPartners) == 1:
+		return &exactPartners[0], nil
+	case len(exactPartners) > 1:
+		return nil, exactPartners
+	case len(walkIns) > 0:
+		return &walkIns[0], nil
+	case len(partners) == 1:
+		return &partners[0], nil
+	case len(partners) > 1:
+		return nil, partners
+	}
+	return nil, nil
 }
 
 func jsonMarshal(v interface{}) (string, error) {

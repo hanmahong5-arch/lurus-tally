@@ -84,6 +84,12 @@ type mockSaleRepo struct{}
 func (m *mockSaleRepo) ListRecentSaleLines(_ context.Context, _ uuid.UUID, _ int) ([]appai.SaleRow, error) {
 	return nil, nil
 }
+func (m *mockSaleRepo) MatchCustomers(_ context.Context, _ uuid.UUID, _ string) ([]appai.CustomerRef, error) {
+	return nil, nil
+}
+func (m *mockSaleRepo) ListCustomerSales(_ context.Context, _ uuid.UUID, _ appai.CustomerRef, _ int) ([]appai.CustomerBill, error) {
+	return nil, nil
+}
 
 // TestRegistry_Dispatch_SearchProducts_ReturnsResults verifies that searchProducts
 // correctly marshals the repo output to JSON for the LLM.
@@ -589,7 +595,7 @@ func TestToolDefs_AllToolsHaveRequiredFields(t *testing.T) {
 	required := []string{
 		"search_products", "get_stock_summary", "list_low_stock", "list_dead_stock",
 		"abc_classify", "recent_sales_top", "gross_margin_summary", "query_exchange_rate",
-		"propose_price_change", "propose_create_purchase_draft", "propose_bulk_stock_adjust",
+		"customer_recent_purchases", "propose_price_change", "propose_create_purchase_draft", "propose_bulk_stock_adjust",
 	}
 	for _, name := range required {
 		if !names[name] {

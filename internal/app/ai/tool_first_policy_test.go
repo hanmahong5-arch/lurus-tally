@@ -46,6 +46,8 @@ func TestSystemPrompt_HasChineseTriggerMapping(t *testing.T) {
 		{"滞销", "list_dead_stock"},
 		{"毛利", "gross_margin_summary"},
 		{"畅销", "recent_sales_top"},
+		{"上次买了什么", "customer_recent_purchases"},
+		{"老客户", "customer_recent_purchases"},
 	}
 	for _, c := range cases {
 		if !strings.Contains(systemPrompt, c.trigger) {

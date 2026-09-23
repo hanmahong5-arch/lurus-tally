@@ -36,6 +36,10 @@ type probe struct {
 }
 
 func main() {
+	if os.Getenv("CUSTOMERS") == "1" {
+		runCustomers()
+		return
+	}
 	base := os.Getenv("MEMORUS_URL")
 	c, err := memorusclient.New(memorusclient.Config{BaseURL: base, APIKey: "probekey"})
 	if err != nil || c == nil {
@@ -110,39 +114,39 @@ func indent(s string) string {
 // The scenario the tally-side changes were looked at while being made.
 func devScenario() ([]string, []string, []probe) {
 	return []string{
-		"客户张三要求每次送货前一天电话确认",
-		"今天有哪些订单待发货？",
-		"矿泉水 550ml 的进价是每箱 32 元",
-		"李四的账期是 30 天",
-		"上周销售额是多少？",
-		"以后库存预警阈值按 50 箱算",
-	}, []string{
-		"矿泉水 550ml 的进价调整为每箱 35 元",
-		"客户张三要求每次送货前一天电话确认",
-	}, []probe{
-		{q: "给张三安排明天送货，要注意什么？", want: "电话确认"},
-		{q: "矿泉水现在进价多少？", want: "35 元", stale: "32 元"},
-		{q: "李四的账期多久？", want: "30 天"},
-		{q: "库存预警阈值是多少？", want: "50 箱"},
-	}
+			"客户张三要求每次送货前一天电话确认",
+			"今天有哪些订单待发货？",
+			"矿泉水 550ml 的进价是每箱 32 元",
+			"李四的账期是 30 天",
+			"上周销售额是多少？",
+			"以后库存预警阈值按 50 箱算",
+		}, []string{
+			"矿泉水 550ml 的进价调整为每箱 35 元",
+			"客户张三要求每次送货前一天电话确认",
+		}, []probe{
+			{q: "给张三安排明天送货，要注意什么？", want: "电话确认"},
+			{q: "矿泉水现在进价多少？", want: "35 元", stale: "32 元"},
+			{q: "李四的账期多久？", want: "30 天"},
+			{q: "库存预警阈值是多少？", want: "50 箱"},
+		}
 }
 
 // Written and frozen before any tally-side change was run against it.
 func holdoutScenario() ([]string, []string, []probe) {
 	return []string{
-		"供应商宏达的最小起订量是 200 件",
-		"昨天退货了几单？",
-		"给老客户赵六的折扣是九五折",
-		"周末不安排送货",
-		"哪个商品库存最少？",
-		"仓库盘点每月最后一个周五做",
-	}, []string{
-		"供应商宏达的最小起订量改为 300 件",
-		"给老客户赵六的折扣是九五折",
-	}, []probe{
-		{q: "向宏达下单最少要订多少？", want: "300 件", stale: "200 件"},
-		{q: "赵六买东西打几折？", want: "九五折"},
-		{q: "这周六能送货吗？", want: "周末不安排送货"},
-		{q: "盘点一般哪天做？", want: "最后一个周五"},
-	}
+			"供应商宏达的最小起订量是 200 件",
+			"昨天退货了几单？",
+			"给老客户赵六的折扣是九五折",
+			"周末不安排送货",
+			"哪个商品库存最少？",
+			"仓库盘点每月最后一个周五做",
+		}, []string{
+			"供应商宏达的最小起订量改为 300 件",
+			"给老客户赵六的折扣是九五折",
+		}, []probe{
+			{q: "向宏达下单最少要订多少？", want: "300 件", stale: "200 件"},
+			{q: "赵六买东西打几折？", want: "九五折"},
+			{q: "这周六能送货吗？", want: "周末不安排送货"},
+			{q: "盘点一般哪天做？", want: "最后一个周五"},
+		}
 }
