@@ -186,9 +186,9 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 					Total:      resp.Usage.TotalTokens,
 				}, nil)
 			}
-			// Async write-back: summarise this turn to memorus (non-blocking).
+			// Async write-back: remember what the user stated (non-blocking).
 			summary := BuildMemorySummary(in.TenantID, in.UserMessage, content)
-			AsyncWriteMemory(o.memory, userID, summary, map[string]any{"source": "tally-ai"})
+			AsyncWriteMemory(o.memory, userID, summary, MemoryWriteMeta(in.TenantID))
 			return &ChatOutput{
 				AssistantText: content,
 				Plans:         plans,
@@ -298,9 +298,9 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 					Total:      resp.Usage.TotalTokens,
 				}, nil)
 			}
-			// Async write-back: summarise this turn to memorus (non-blocking).
+			// Async write-back: remember what the user stated (non-blocking).
 			summary := BuildMemorySummary(in.TenantID, in.UserMessage, finalText)
-			AsyncWriteMemory(o.memory, userID, summary, map[string]any{"source": "tally-ai"})
+			AsyncWriteMemory(o.memory, userID, summary, MemoryWriteMeta(in.TenantID))
 			return &ChatOutput{
 				AssistantText: finalText,
 				Plans:         plans,

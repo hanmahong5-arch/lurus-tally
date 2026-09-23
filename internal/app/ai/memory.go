@@ -10,7 +10,6 @@ package ai
 
 import (
 	"context"
-	"fmt"
 	"strings"
 	"time"
 
@@ -62,30 +61,87 @@ func AugmentMessagesWithMemoryOrFallback(mc MemoryClient, ctx context.Context, u
 		return userMessage
 	}
 	memories, err := mc.Search(ctx, userID, userMessage, memorySearchLimit)
-	if err != nil || len(memories) == 0 {
+	if err != nil {
+		return userMessage
+	}
+	memories = relevantMemories(memories)
+	if len(memories) == 0 {
 		return userMessage
 	}
 	return AugmentMessagesWithMemory(memories, userMessage)
 }
 
-// BuildMemorySummary builds a short, storage-efficient summary of a single
-// conversation turn for async write-back to memorus.
-//
-// Summary format: "用户问了：<first 100 chars of question>"
-// This is intentionally minimal to keep storage low and stay privacy-safe.
-func BuildMemorySummary(tenantID uuid.UUID, userMsg, _ string) string {
-	snippet := userMsg
-	if len(snippet) > 100 {
-		snippet = snippet[:100]
+// memoryRelativeFloor drops hits scoring below this fraction of the best hit.
+// memorus always returns its top-k, relevant or not; unfiltered, 16 of the 20
+// lines a replayed scenario injected into the prompt were unrelated to the
+// question. 0.5 was fixed before measuring, not tuned on the scenario.
+const memoryRelativeFloor = 0.5
+
+// relevantMemories keeps what is worth putting in front of the LLM: not an
+// older value that a later statement replaced (memorus marks it
+// `superseded_by` and keeps it only as history), not an empty hit, and not a
+// hit far below the best one.
+func relevantMemories(ms []memorusclient.Memory) []memorusclient.Memory {
+	var top float64
+	for _, m := range ms {
+		if m.Score > top {
+			top = m.Score
+		}
 	}
-	return fmt.Sprintf("用户问了：%s (tenant=%s)", snippet, tenantID.String())
+	out := make([]memorusclient.Memory, 0, len(ms))
+	for _, m := range ms {
+		if strings.TrimSpace(m.Content) == "" {
+			continue
+		}
+		if s, ok := m.Metadata["superseded_by"].(string); ok && s != "" {
+			continue
+		}
+		if top > 0 && m.Score < memoryRelativeFloor*top {
+			continue
+		}
+		out = append(out, m)
+	}
+	return out
+}
+
+// memoryTextMaxRunes bounds one remembered statement. Counted in runes: the
+// old byte cut split Chinese characters and wrote invalid UTF-8.
+const memoryTextMaxRunes = 500
+
+// BuildMemorySummary returns what to remember from one chat turn: the user's
+// own words, which is where the business facts live ("张三要求送货前一天电话
+// 确认", "矿泉水进价调整为每箱 35 元"). memorus deduplicates repeats and lets a
+// changed value supersede the old one, so the text is stored as said.
+//
+// Returns "" (nothing to remember) for a pure question — it states no fact.
+// The tenant goes into the write's metadata, not into the text: in the text it
+// polluted matching and was echoed into every prompt.
+func BuildMemorySummary(_ uuid.UUID, userMsg, _ string) string {
+	text := strings.TrimSpace(userMsg)
+	if text == "" || isPureQuestion(text) {
+		return ""
+	}
+	if r := []rune(text); len(r) > memoryTextMaxRunes {
+		text = string(r[:memoryTextMaxRunes])
+	}
+	return text
+}
+
+func isPureQuestion(text string) bool {
+	return strings.HasSuffix(text, "？") || strings.HasSuffix(text, "?")
+}
+
+// MemoryWriteMeta is the metadata attached to a turn written back to memorus.
+func MemoryWriteMeta(tenantID uuid.UUID) map[string]any {
+	return map[string]any{"source": "tally-ai", "tally_tenant_id": tenantID.String()}
 }
 
 // AsyncWriteMemory fires a goroutine to write a memory summary to memorus.
-// It is a no-op when mc is nil. Panics in the goroutine are recovered silently
-// so a memorus failure can never crash the server.
+// It is a no-op when mc is nil or there is nothing to remember. Panics in the
+// goroutine are recovered silently so a memorus failure can never crash the
+// server.
 func AsyncWriteMemory(mc MemoryClient, userID string, summary string, meta map[string]any) {
-	if mc == nil {
+	if mc == nil || summary == "" {
 		return
 	}
 	go func() {
