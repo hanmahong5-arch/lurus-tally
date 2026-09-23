@@ -70,6 +70,14 @@ func runCustomers() {
 	sales := repoai.NewSQLSaleRepo(appDB)
 
 	fmt.Printf("== scenario=%s noattr=%v tenant=%s\n", label, noAttr, tenant)
+	if os.Getenv("ALIASES") == "1" {
+		al := devAliases()
+		if label == "holdout" {
+			al = holdoutAliases()
+		}
+		runAliases(ctx, sales, tenant, sc, al, label, noAttr)
+		return
+	}
 	p1 := purchases(ctx, sales, tenant, sc, partners)
 	m := memories(ctx, sales, tenant, sc, noAttr)
 	fmt.Printf("SCORE scenario=%s noattr=%v | purchases: exact=%d/%d ambiguous_ok=%v | memory: own_facts=%d/%d foreign_lines=%d stale_lines=%d injected_lines=%d\n",
@@ -373,4 +381,37 @@ func memories(ctx context.Context, sales *repoai.SQLSaleRepo, tenant uuid.UUID, 
 			p.q, resolved, found, len(wantKeys), foreign, stale, indent(injected))
 	}
 	return s
+}
+
+// runAliases asks about customers the way shop owners name them (老张, 王老板).
+func runAliases(ctx context.Context, sales *repoai.SQLSaleRepo, tenant uuid.UUID,
+	sc customerScenario, al aliasScenario, label string, noAttr bool) {
+	ok := 0
+	for _, p := range al.purchases {
+		tr, raw := dispatch(ctx, sales, tenant, p.alias)
+		var pass bool
+		switch {
+		case p.want != "":
+			pass = tr.Found && tr.Customer.Name == p.want &&
+				strings.Join(expectedBills(sc, p.want), "\n") == strings.Join(gotBills(tr), "\n")
+		case len(p.cands) > 0:
+			var names []string
+			for _, c := range tr.Candidates {
+				names = append(names, c.Name)
+			}
+			sort.Strings(names)
+			pass = tr.Ambiguous && strings.Join(names, ",") == strings.Join(p.cands, ",")
+		default:
+			pass = !tr.Found && !tr.Ambiguous
+		}
+		if pass {
+			ok++
+		}
+		fmt.Printf("ALIAS-PURCHASE ok=%v q=%s want=%q cands=%v\n  raw: %s\n", pass, p.alias, p.want, p.cands, raw)
+	}
+	sc.session2 = append(append([]fact{}, sc.session2...), al.session3...)
+	sc.memoryProbes = al.memory
+	m := memories(ctx, sales, tenant, sc, noAttr)
+	fmt.Printf("SCORE aliases scenario=%s noattr=%v | purchases: %d/%d | memory: own_facts=%d/%d foreign_lines=%d stale_lines=%d injected_lines=%d\n",
+		label, noAttr, ok, len(al.purchases), m.found, m.want, m.foreign, m.stale, m.lines)
 }

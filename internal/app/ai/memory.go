@@ -248,7 +248,7 @@ func ResolveCustomer(ctx context.Context, cr CustomerResolver, tenantID uuid.UUI
 		return nil
 	}
 	cands, err := cr.MatchCustomersInText(ctx, tenantID, text)
-	if err != nil || len(cands) == 0 {
+	if err != nil {
 		return nil
 	}
 	byName := make(map[string][]CustomerRef)
@@ -267,6 +267,13 @@ func ResolveCustomer(ctx context.Context, cr CustomerResolver, tenantID uuid.UUI
 			named = append(named, n)
 			rest = strings.ReplaceAll(rest, n, "\x00")
 		}
+	}
+	if len(named) == 0 {
+		// Named only by an address form (老李 / 王老板)?
+		if sm, ok := cr.(SurnameMatcher); ok {
+			return resolveAliasInText(ctx, sm, tenantID, text)
+		}
+		return nil
 	}
 	if len(named) != 1 || len(byName[named[0]]) != 1 {
 		return nil

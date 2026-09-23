@@ -205,7 +205,7 @@ func ToolDefs() []llmclient.Tool {
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "customer_recent_purchases",
-			Description: "A customer's latest sale bills with every line (date, product, qty, unit price, amount), read from the books. Call this for 上次买了什么/买过什么/最近买了什么/老客户 又来了 questions about a named customer. If several customers match the name it returns the candidates instead of guessing — ask the user which one.",
+			Description: "A customer's latest sale bills with every line (date, product, qty, unit price, amount), read from the books. Call this for 上次买了什么/买过什么/最近买了什么/老客户 又来了 questions about a named customer. Pass the customer as the user said it, including address forms like 老张/王老板/李总 — they are resolved by surname. If several customers match the name it returns the candidates instead of guessing — ask the user which one.",
 			Parameters: mustJSON(map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
@@ -927,6 +927,23 @@ func (r *Registry) customerRecentPurchases(ctx context.Context, tenantID uuid.UU
 		return "", fmt.Errorf("customer_recent_purchases: %w", err)
 	}
 	chosen, ambiguous := pickCustomer(name, cands)
+	resolvedFrom := ""
+	if chosen == nil && len(ambiguous) == 0 {
+		// "老张" / "王老板": the customer record has the full name.
+		if s := aliasSurname(name); s != "" {
+			byName, err := r.saleRepo.MatchCustomers(ctx, tenantID, s)
+			if err != nil {
+				return "", fmt.Errorf("customer_recent_purchases: %w", err)
+			}
+			switch m := customersWithSurname(byName, s); len(m) {
+			case 1:
+				chosen, resolvedFrom = &m[0], name
+			case 0:
+			default:
+				ambiguous = m
+			}
+		}
+	}
 	if len(ambiguous) > 0 {
 		out := make([]map[string]string, 0, len(ambiguous))
 		for _, c := range ambiguous {
@@ -973,12 +990,17 @@ func (r *Registry) customerRecentPurchases(ctx context.Context, tenantID uuid.UU
 		}
 		outBills = append(outBills, ob)
 	}
-	return jsonMarshal(map[string]interface{}{
+	out := map[string]interface{}{
 		"found":    true,
 		"customer": map[string]string{"name": chosen.Name, "code": chosen.Code},
 		"bills":    outBills,
 		"count":    len(outBills),
-	})
+	}
+	if resolvedFrom != "" {
+		out["resolved_from"] = resolvedFrom
+		out["note"] = fmt.Sprintf("%s was taken to mean customer %s (the only customer with that surname); say so in the answer", resolvedFrom, chosen.Name)
+	}
+	return jsonMarshal(out)
 }
 
 // pickCustomer resolves the name a user said to one customer, or returns the
