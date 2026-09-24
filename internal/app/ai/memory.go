@@ -72,6 +72,12 @@ type FilteredSearcher interface {
 // rarely share words with the question.
 const customerMemoryLimit = 10
 
+// customerMemoryFetch is how many of the customer's own memories are asked
+// for: every changed value leaves its old row behind as history, which is
+// dropped here, so asking for only customerMemoryLimit let a long history
+// (a payment method changed a dozen times) push the current facts out.
+const customerMemoryFetch = 30
+
 // AugmentWithCustomerMemory is AugmentMessagesWithMemoryOrFallback for a
 // message about customer (nil = not about exactly one customer).
 //
@@ -92,7 +98,7 @@ func AugmentWithCustomerMemory(mc MemoryClient, ctx context.Context, userID, use
 		subject := CustomerSubject(customer.ID)
 		var own []memorusclient.Memory
 		if fs, ok := mc.(FilteredSearcher); ok {
-			own, _ = fs.SearchWithFilter(ctx, userID, userMessage, customerMemoryLimit,
+			own, _ = fs.SearchWithFilter(ctx, userID, userMessage, customerMemoryFetch,
 				map[string]string{MemorySubjectKey: subject})
 		}
 		memories = customerMemories(own, memories, subject, customer.Name)
@@ -124,10 +130,15 @@ func customerMemories(own, similar []memorusclient.Memory, subject, name string)
 		}
 	}
 	out := relevantMemories(untagged)
+	kept := 0
 	for _, m := range mine {
 		if strings.TrimSpace(m.Content) == "" || isSuperseded(m) {
 			continue
 		}
+		if kept == customerMemoryLimit {
+			break
+		}
+		kept++
 		if name != "" {
 			// "老李说…" is about 李四; say so, or the model doubts it applies.
 			label := name

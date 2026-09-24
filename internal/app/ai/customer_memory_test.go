@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -173,9 +174,10 @@ func TestMemoryWriteMeta_TagsTheCustomer(t *testing.T) {
 }
 
 type filteringMemory struct {
-	similar  []memorusclient.Memory
-	own      []memorusclient.Memory
-	filtered map[string]string
+	similar     []memorusclient.Memory
+	own         []memorusclient.Memory
+	filtered    map[string]string
+	filterLimit int
 }
 
 func (f *filteringMemory) Search(context.Context, string, string, int) ([]memorusclient.Memory, error) {
@@ -186,8 +188,12 @@ func (f *filteringMemory) Add(context.Context, string, string, map[string]any) (
 	return nil, nil
 }
 
-func (f *filteringMemory) SearchWithFilter(_ context.Context, _, _ string, _ int, metaEq map[string]string) ([]memorusclient.Memory, error) {
+func (f *filteringMemory) SearchWithFilter(_ context.Context, _, _ string, limit int, metaEq map[string]string) ([]memorusclient.Memory, error) {
 	f.filtered = metaEq
+	f.filterLimit = limit
+	if limit < len(f.own) {
+		return f.own[:limit], nil
+	}
 	return f.own, nil
 }
 
@@ -270,5 +276,41 @@ func TestWithMemoryPolicy_OnlyWhenMemoryIsOn(t *testing.T) {
 	}
 	if strings.Contains(systemPrompt, "MEMORY:") {
 		t.Fatal("the shared constant must stay unchanged")
+	}
+}
+
+// A payment method changed a dozen times leaves eleven history rows, which
+// memorus may rank above the customer's other current facts. Asked for only
+// ten, recall came back with one current fact.
+func TestAugmentWithCustomerMemory_LongHistoryDoesNotCrowdOutCurrentFacts(t *testing.T) {
+	li := CustomerSubject(liID)
+	var own []memorusclient.Memory
+	for i := 0; i < 11; i++ {
+		own = append(own, hit(fmt.Sprintf("h%d", i), fmt.Sprintf("李四付款旧方式%d", i), 0.9, li, true))
+	}
+	current := []string{"李四改用微信", "李四要塑料袋装", "李四对接人是他侄子", "李四开普票"}
+	for i, c := range current {
+		own = append(own, hit(fmt.Sprintf("c%d", i), c, 0.5, li, false))
+	}
+	mc := &filteringMemory{own: own}
+	out := AugmentWithCustomerMemory(mc, context.Background(), "u", "李四付款要注意什么", &CustomerRef{ID: liID, Name: "李四"})
+	for _, c := range current {
+		if !strings.Contains(out, c) {
+			t.Errorf("current fact %q crowded out:\n%s", c, out)
+		}
+	}
+	if strings.Contains(out, "旧方式") {
+		t.Errorf("history must not be injected:\n%s", out)
+	}
+}
+
+func TestCustomerMemories_CapsTheCustomersOwnFacts(t *testing.T) {
+	li := CustomerSubject(liID)
+	var own []memorusclient.Memory
+	for i := 0; i < customerMemoryLimit+5; i++ {
+		own = append(own, hit(fmt.Sprintf("c%d", i), fmt.Sprintf("李四事实%d", i), 0.5, li, false))
+	}
+	if got := len(customerMemories(own, nil, li, "李四")); got != customerMemoryLimit {
+		t.Fatalf("kept %d, want %d", got, customerMemoryLimit)
 	}
 }
