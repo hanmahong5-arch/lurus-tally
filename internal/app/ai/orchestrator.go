@@ -164,7 +164,7 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 	inAugmented := in
 	inAugmented.UserMessage = augmented
 
-	messages := buildMessages(inAugmented)
+	messages := o.withMemoryPolicy(buildMessages(inAugmented))
 	tools := ToolDefs()
 
 	var plans []*domainai.Plan
@@ -273,7 +273,7 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 	inAugmented := in
 	inAugmented.UserMessage = augmented
 
-	messages := buildMessages(inAugmented)
+	messages := o.withMemoryPolicy(buildMessages(inAugmented))
 	tools := ToolDefs()
 
 	var plans []*domainai.Plan
@@ -510,6 +510,27 @@ var ErrPlanExpired = fmt.Errorf("plan expired")
 var ErrPlanExecutionFailed = fmt.Errorf("plan execution failed")
 
 // buildMessages assembles the full message list for the LLM.
+// memoryPolicy is appended to the system prompt when memory is enabled.
+// Without it the model, seeing no "save" tool, told owners "我无法记录" right
+// after tally had stored what they said, and waved recalled notes away as
+// "只是历史备注，别默认按记忆走" (measured with cmd/memscenario LLM=1).
+// Static text: it keeps the system prompt cacheable per deployment.
+const memoryPolicy = `
+
+MEMORY: this assistant has long-term memory. What the user tells you about customers, suppliers and the shop (preferences, payment methods, delivery arrangements, allergies, agreements) is saved automatically and recalled in later conversations. When the user states such a fact, confirm briefly that you will remember it — never say you cannot record or save it.
+A "--- 历史记忆 ---" block before the user's message holds notes the shop owner told you earlier. Lines marked （客户 X） are about customer X, even when the note calls them by a nickname such as 老李 or 王老板. Treat these notes as the owner's own knowledge: use them directly for service details and do not call them unverifiable. Purchase history, amounts and balances still come only from the tools (the books), never from notes.`
+
+// withMemoryPolicy adds memoryPolicy to the system message when memory is on.
+func (o *Orchestrator) withMemoryPolicy(msgs []llmclient.Message) []llmclient.Message {
+	if o.memory == nil || len(msgs) == 0 || msgs[0].Role != "system" {
+		return msgs
+	}
+	if s, ok := msgs[0].Content.(string); ok {
+		msgs[0].Content = s + memoryPolicy
+	}
+	return msgs
+}
+
 func buildMessages(in ChatInput) []llmclient.Message {
 	msgs := make([]llmclient.Message, 0, 1+len(in.History)+1)
 	msgs = append(msgs, llmclient.Message{Role: "system", Content: systemPrompt})

@@ -43,7 +43,7 @@ func AugmentMessagesWithMemory(memories []memorusclient.Memory, userMessage stri
 		return userMessage
 	}
 	var b strings.Builder
-	b.WriteString("--- 历史记忆（仅供参考）---\n")
+	b.WriteString("--- 历史记忆（店主此前告诉你的备注）---\n")
 	for _, m := range memories {
 		b.WriteString("• ")
 		b.WriteString(m.Content)
@@ -95,7 +95,7 @@ func AugmentWithCustomerMemory(mc MemoryClient, ctx context.Context, userID, use
 			own, _ = fs.SearchWithFilter(ctx, userID, userMessage, customerMemoryLimit,
 				map[string]string{MemorySubjectKey: subject})
 		}
-		memories = customerMemories(own, memories, subject)
+		memories = customerMemories(own, memories, subject, customer.Name)
 	} else {
 		memories = relevantMemories(memories)
 	}
@@ -108,7 +108,7 @@ func AugmentWithCustomerMemory(mc MemoryClient, ctx context.Context, userID, use
 // customerMemories merges the customer's own memories (first) with the
 // similarity hits, drops hits about other customers, and applies the usual
 // relevance rules to the untagged remainder.
-func customerMemories(own, similar []memorusclient.Memory, subject string) []memorusclient.Memory {
+func customerMemories(own, similar []memorusclient.Memory, subject, name string) []memorusclient.Memory {
 	seen := make(map[string]bool, len(own)+len(similar))
 	var mine, untagged []memorusclient.Memory
 	for _, m := range append(append([]memorusclient.Memory{}, own...), similar...) {
@@ -127,6 +127,10 @@ func customerMemories(own, similar []memorusclient.Memory, subject string) []mem
 	for _, m := range mine {
 		if strings.TrimSpace(m.Content) == "" || isSuperseded(m) {
 			continue
+		}
+		if name != "" {
+			// "老李说…" is about 李四; say so, or the model doubts it applies.
+			m.Content = "（客户 " + name + "）" + m.Content
 		}
 		out = append(out, m)
 	}
@@ -208,8 +212,49 @@ func BuildMemorySummary(_ uuid.UUID, userMsg, _ string) string {
 }
 
 func isPureQuestion(text string) bool {
-	return strings.HasSuffix(text, "？") || strings.HasSuffix(text, "?")
+	if strings.HasSuffix(text, "？") || strings.HasSuffix(text, "?") || hasAny(text, questionWords) {
+		return true
+	}
+	asks := hasAny(text, requestWords) || startsAClause(text, clauseRequestWords)
+	// "以后给他打九五折" is a standing arrangement, not a one-off ask.
+	return asks && !hasAny(text, standingWords)
 }
+
+// startsAClause reports whether a clause of text (split at Chinese/ASCII
+// punctuation) begins with one of words.
+func startsAClause(text string, words []string) bool {
+	clauses := strings.FieldsFunc(text, func(r rune) bool { return strings.ContainsRune("，,。.；;！!、 ", r) })
+	for _, c := range clauses {
+		for _, w := range words {
+			if strings.HasPrefix(c, w) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasAny(text string, words []string) bool {
+	for _, w := range words {
+		if strings.Contains(text, w) {
+			return true
+		}
+	}
+	return false
+}
+
+// A message is a question or a one-off request — not a fact to remember —
+// when it asks something (typed without "？" as often as with it) or asks the
+// assistant to do something now. Stored anyway, "赵六来了，给他推荐点零食"
+// came back as a note and the assistant said "他之前提到是买零食的".
+var (
+	questionWords = []string{"吗", "什么", "多少", "怎么", "哪", "是否", "有没有", "能不能", "可不可以", "为啥", "为什么"}
+	requestWords  = []string{"帮我", "帮忙", "给我", "查一下", "查查", "查下", "看一下", "看看", "列一下", "算一下", "统计一下"}
+	// Imperative only at the start of a clause: "给他推荐点零食" asks, while
+	// "周姐说她女儿下周来帮她取货" narrates.
+	clauseRequestWords = []string{"帮他", "帮她", "给他", "给她"}
+	standingWords      = []string{"以后", "每次", "都要", "一律", "总是", "记一下", "记住", "下次"}
+)
 
 // MemorySubjectKey is the memorus metadata key naming who a memory is about.
 // memorus only compares (dedups / supersedes) memories with the same subject.

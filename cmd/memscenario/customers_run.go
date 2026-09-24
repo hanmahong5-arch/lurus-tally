@@ -70,6 +70,10 @@ func runCustomers() {
 	sales := repoai.NewSQLSaleRepo(appDB)
 
 	fmt.Printf("== scenario=%s noattr=%v tenant=%s\n", label, noAttr, tenant)
+	if os.Getenv("LLM") == "1" {
+		runLLM(ctx, dbHandle{appDB}, sales, tenant)
+		return
+	}
 	if os.Getenv("ALIASES") == "1" {
 		al := devAliases()
 		if label == "holdout" {
@@ -415,3 +419,6 @@ func runAliases(ctx context.Context, sales *repoai.SQLSaleRepo, tenant uuid.UUID
 	fmt.Printf("SCORE aliases scenario=%s noattr=%v | purchases: %d/%d | memory: own_facts=%d/%d foreign_lines=%d stale_lines=%d injected_lines=%d\n",
 		label, noAttr, ok, len(al.purchases), m.found, m.want, m.foreign, m.stale, m.lines)
 }
+
+// dbHandle wraps the tenant-scoped app pool for the LLM run's repos.
+type dbHandle struct{ db *sql.DB }

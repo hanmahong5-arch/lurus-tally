@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/memorusclient"
 	"github.com/shopspring/decimal"
 )
@@ -245,5 +246,29 @@ func TestAugmentWithCustomerMemory_NoCustomerIsUnchanged(t *testing.T) {
 	}
 	if !strings.Contains(out, "李四喜欢全糖") {
 		t.Fatalf("unfiltered recall must be as before:\n%s", out)
+	}
+}
+
+func TestAugmentWithCustomerMemory_LabelsTheCustomersOwnNotes(t *testing.T) {
+	zhang := CustomerSubject(zhangID)
+	mc := &filteringMemory{own: []memorusclient.Memory{hit("z1", "老张说要少糖", 0.8, zhang, false)}}
+	out := AugmentWithCustomerMemory(mc, context.Background(), "u", "接待张三要注意什么", &CustomerRef{ID: zhangID, Name: "张三"})
+	if !strings.Contains(out, "（客户 张三）老张说要少糖") {
+		t.Fatalf("a nickname note must be tied to the customer:\n%s", out)
+	}
+}
+
+func TestWithMemoryPolicy_OnlyWhenMemoryIsOn(t *testing.T) {
+	msgs := func() []llmclient.Message { return buildMessages(ChatInput{UserMessage: "hi"}) }
+	off := (&Orchestrator{}).withMemoryPolicy(msgs())
+	if strings.Contains(off[0].Content.(string), "MEMORY:") {
+		t.Fatal("without memory the prompt must not promise to remember")
+	}
+	on := (&Orchestrator{memory: &filteringMemory{}}).withMemoryPolicy(msgs())
+	if !strings.Contains(on[0].Content.(string), "never say you cannot record") {
+		t.Fatal("with memory the prompt must say facts are remembered")
+	}
+	if strings.Contains(systemPrompt, "MEMORY:") {
+		t.Fatal("the shared constant must stay unchanged")
 	}
 }
