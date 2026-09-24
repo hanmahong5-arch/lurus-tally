@@ -130,7 +130,11 @@ func customerMemories(own, similar []memorusclient.Memory, subject, name string)
 		}
 		if name != "" {
 			// "老李说…" is about 李四; say so, or the model doubts it applies.
-			m.Content = "（客户 " + name + "）" + m.Content
+			label := name
+			if slot, ok := customerSlot(memoryMetaString(m, MemorySlotKey)); ok {
+				label += "·" + slot.Label
+			}
+			m.Content = "（客户 " + label + "）" + m.Content
 		}
 		out = append(out, m)
 	}
@@ -145,8 +149,13 @@ func customerMemories(own, similar []memorusclient.Memory, subject, name string)
 // memorus returns the stored payload as a hit's metadata; the caller's own
 // metadata sits under its "metadata" key.
 func memorySubject(m memorusclient.Memory) string {
+	return memoryMetaString(m, MemorySubjectKey)
+}
+
+// memoryMetaString returns a string the caller wrote into a hit's metadata.
+func memoryMetaString(m memorusclient.Memory, key string) string {
 	inner, _ := m.Metadata["metadata"].(map[string]any)
-	s, _ := inner[MemorySubjectKey].(string)
+	s, _ := inner[key].(string)
 	return s
 }
 

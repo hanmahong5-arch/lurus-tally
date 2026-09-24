@@ -922,39 +922,14 @@ func (r *Registry) customerRecentPurchases(ctx context.Context, tenantID uuid.UU
 		limit = min(*args.Limit, 20)
 	}
 
-	cands, err := r.saleRepo.MatchCustomers(ctx, tenantID, name)
+	res, err := r.ResolveCustomerName(ctx, tenantID, name)
 	if err != nil {
 		return "", fmt.Errorf("customer_recent_purchases: %w", err)
 	}
-	chosen, ambiguous := pickCustomer(name, cands)
-	resolvedFrom := ""
-	if chosen == nil && len(ambiguous) == 0 {
-		// "老张" / "王老板": the customer record has the full name.
-		if s := aliasSurname(name); s != "" {
-			byName, err := r.saleRepo.MatchCustomers(ctx, tenantID, s)
-			if err != nil {
-				return "", fmt.Errorf("customer_recent_purchases: %w", err)
-			}
-			switch m := customersWithSurname(byName, s); len(m) {
-			case 1:
-				chosen, resolvedFrom = &m[0], name
-			case 0:
-			default:
-				ambiguous = m
-			}
-		}
+	if len(res.Ambiguous) > 0 {
+		return ambiguousCustomers(res.Ambiguous, "several customers match; ask the user which one before answering")
 	}
-	if len(ambiguous) > 0 {
-		out := make([]map[string]string, 0, len(ambiguous))
-		for _, c := range ambiguous {
-			out = append(out, map[string]string{"name": c.Name, "code": c.Code, "phone": c.Phone})
-		}
-		return jsonMarshal(map[string]interface{}{
-			"ambiguous":  true,
-			"candidates": out,
-			"note":       "several customers match; ask the user which one before answering",
-		})
-	}
+	chosen, resolvedFrom := res.Customer, res.ResolvedFrom
 	if chosen == nil {
 		return jsonMarshal(map[string]interface{}{"found": false, "customer": name})
 	}
@@ -1001,6 +976,59 @@ func (r *Registry) customerRecentPurchases(ctx context.Context, tenantID uuid.UU
 		out["note"] = fmt.Sprintf("%s was taken to mean customer %s (the only customer with that surname); say so in the answer", resolvedFrom, chosen.Name)
 	}
 	return jsonMarshal(out)
+}
+
+// CustomerResolution is what a name the user said resolves to: one customer,
+// several candidates, or neither.
+type CustomerResolution struct {
+	Customer  *CustomerRef
+	Ambiguous []CustomerRef
+	// ResolvedFrom is the address form ("老张") when Customer was found by
+	// surname rather than by name.
+	ResolvedFrom string
+}
+
+// ResolveCustomerName resolves a customer as the user named them: by name
+// (pickCustomer), else by the surname in an address form (老张 / 王老板).
+func (r *Registry) ResolveCustomerName(ctx context.Context, tenantID uuid.UUID, name string) (CustomerResolution, error) {
+	cands, err := r.saleRepo.MatchCustomers(ctx, tenantID, name)
+	if err != nil {
+		return CustomerResolution{}, err
+	}
+	chosen, ambiguous := pickCustomer(name, cands)
+	if chosen != nil || len(ambiguous) > 0 {
+		return CustomerResolution{Customer: chosen, Ambiguous: ambiguous}, nil
+	}
+	// "老张" / "王老板": the customer record has the full name.
+	s := aliasSurname(name)
+	if s == "" {
+		return CustomerResolution{}, nil
+	}
+	byName, err := r.saleRepo.MatchCustomers(ctx, tenantID, s)
+	if err != nil {
+		return CustomerResolution{}, err
+	}
+	switch m := customersWithSurname(byName, s); len(m) {
+	case 0:
+		return CustomerResolution{}, nil
+	case 1:
+		return CustomerResolution{Customer: &m[0], ResolvedFrom: name}, nil
+	default:
+		return CustomerResolution{Ambiguous: m}, nil
+	}
+}
+
+// ambiguousCustomers is the tool result listing the candidates for a name.
+func ambiguousCustomers(cands []CustomerRef, note string) (string, error) {
+	out := make([]map[string]string, 0, len(cands))
+	for _, c := range cands {
+		out = append(out, map[string]string{"name": c.Name, "code": c.Code, "phone": c.Phone})
+	}
+	return jsonMarshal(map[string]interface{}{
+		"ambiguous":  true,
+		"candidates": out,
+		"note":       note,
+	})
 }
 
 // pickCustomer resolves the name a user said to one customer, or returns the

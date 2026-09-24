@@ -165,7 +165,8 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 	inAugmented.UserMessage = augmented
 
 	messages := o.withMemoryPolicy(buildMessages(inAugmented))
-	tools := ToolDefs()
+	tools := o.toolDefs()
+	remembered := false
 
 	var plans []*domainai.Plan
 	var toolCalls []domainai.ToolCallRecord
@@ -200,9 +201,7 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 					Total:      resp.Usage.TotalTokens,
 				}, nil)
 			}
-			// Async write-back: remember what the user stated (non-blocking).
-			summary := BuildMemorySummary(in.TenantID, in.UserMessage, content)
-			AsyncWriteMemory(o.memory, userID, summary, MemoryWriteMeta(in.TenantID, customer))
+			o.writeBackTurn(in, userID, content, customer, remembered)
 			return &ChatOutput{
 				AssistantText: content,
 				Plans:         plans,
@@ -215,7 +214,7 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 
 		// Dispatch each tool call.
 		for _, tc := range choice.Message.ToolCalls {
-			result := o.registry.Dispatch(ctx, in.TenantID, tc)
+			result := o.dispatch(ctx, in.TenantID, tc, &remembered)
 			if span != nil {
 				span.AttachToolCall(tc.Function.Name, tc.Function.Arguments, result.Content)
 			}
@@ -274,7 +273,8 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 	inAugmented.UserMessage = augmented
 
 	messages := o.withMemoryPolicy(buildMessages(inAugmented))
-	tools := ToolDefs()
+	tools := o.toolDefs()
+	remembered := false
 
 	var plans []*domainai.Plan
 	var toolCalls []domainai.ToolCallRecord
@@ -316,9 +316,7 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 					Total:      resp.Usage.TotalTokens,
 				}, nil)
 			}
-			// Async write-back: remember what the user stated (non-blocking).
-			summary := BuildMemorySummary(in.TenantID, in.UserMessage, finalText)
-			AsyncWriteMemory(o.memory, userID, summary, MemoryWriteMeta(in.TenantID, customer))
+			o.writeBackTurn(in, userID, finalText, customer, remembered)
 			return &ChatOutput{
 				AssistantText: finalText,
 				Plans:         plans,
@@ -329,7 +327,7 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 		// Has tool calls — execute them first (non-streaming).
 		messages = append(messages, choice.Message)
 		for _, tc := range choice.Message.ToolCalls {
-			result := o.registry.Dispatch(ctx, in.TenantID, tc)
+			result := o.dispatch(ctx, in.TenantID, tc, &remembered)
 			if span != nil {
 				span.AttachToolCall(tc.Function.Name, tc.Function.Arguments, result.Content)
 			}
@@ -518,7 +516,20 @@ var ErrPlanExecutionFailed = fmt.Errorf("plan execution failed")
 const memoryPolicy = `
 
 MEMORY: this assistant has long-term memory. What the user tells you about customers, suppliers and the shop (preferences, payment methods, delivery arrangements, allergies, agreements) is saved automatically and recalled in later conversations. When the user states such a fact, confirm briefly that you will remember it — never say you cannot record or save it.
+When the user states a fact about a named customer, call remember_customer_fact to save it — once per attribute the sentence mentions — then confirm from its result.
 A "--- 历史记忆 ---" block before the user's message holds notes the shop owner told you earlier. Lines marked （客户 X） are about customer X, even when the note calls them by a nickname such as 老李 or 王老板. Treat these notes as the owner's own knowledge: use them directly for service details and do not call them unverifiable. Purchase history, amounts and balances still come only from the tools (the books), never from notes.`
+
+// writeBackTurn remembers what the user stated this turn (non-blocking). A
+// turn whose facts the model already saved through remember_customer_fact is
+// not stored again as free text — that would be the same fact in two rows,
+// the untagged one never superseded.
+func (o *Orchestrator) writeBackTurn(in ChatInput, userID, reply string, customer *CustomerRef, remembered bool) {
+	if remembered {
+		return
+	}
+	summary := BuildMemorySummary(in.TenantID, in.UserMessage, reply)
+	AsyncWriteMemory(o.memory, userID, summary, MemoryWriteMeta(in.TenantID, customer))
+}
 
 // withMemoryPolicy adds memoryPolicy to the system message when memory is on.
 func (o *Orchestrator) withMemoryPolicy(msgs []llmclient.Message) []llmclient.Message {

@@ -602,4 +602,9 @@ func TestToolDefs_AllToolsHaveRequiredFields(t *testing.T) {
 			t.Errorf("missing required tool: %s", name)
 		}
 	}
+	// The Registry cannot run remember_customer_fact (the orchestrator adds and
+	// handles it when memory is on).
+	if names["remember_customer_fact"] {
+		t.Error("remember_customer_fact must not be a Registry tool")
+	}
 }
