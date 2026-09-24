@@ -227,6 +227,145 @@ func (r *SQLSaleRepo) ListRecentSaleLines(ctx context.Context, tenantID uuid.UUI
 	return out, rows.Err()
 }
 
+// customerPartnerTypes are the partner types that buy from the tenant.
+const customerPartnerTypes = `('customer','both','member')`
+
+// MatchCustomers returns customers whose name contains name, plus distinct
+// walk-in names on quick-checkout sale bills that equal name (quick checkout
+// has no partner record; it writes the customer's name into bill_head.remark).
+func (r *SQLSaleRepo) MatchCustomers(ctx context.Context, tenantID uuid.UUID, name string) ([]appai.CustomerRef, error) {
+	const q = `
+		SELECT id, name, COALESCE(code,''), COALESCE(NULLIF(mobile,''), phone, '')
+		FROM tally.partner
+		WHERE tenant_id = $1
+		  AND deleted_at IS NULL
+		  AND partner_type IN ` + customerPartnerTypes + `
+		  AND name ILIKE '%' || $2 || '%'
+		UNION ALL
+		SELECT DISTINCT '00000000-0000-0000-0000-000000000000'::uuid, bh.remark, '', ''
+		FROM tally.bill_head bh
+		WHERE bh.tenant_id = $1
+		  AND bh.partner_id IS NULL
+		  AND bh.bill_type = '出库'
+		  AND bh.sub_type  = '销售'
+		  AND bh.status    = 2
+		  AND bh.deleted_at IS NULL
+		  AND bh.remark = $2
+		LIMIT 50`
+
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID, name)
+	if err != nil {
+		return nil, fmt.Errorf("ai match customers: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []appai.CustomerRef
+	for rows.Next() {
+		var c appai.CustomerRef
+		if err := rows.Scan(&c.ID, &c.Name, &c.Code, &c.Phone); err != nil {
+			return nil, fmt.Errorf("ai match customers scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ListCustomerSales returns the customer's latest `limit` approved sale bills
+// with their lines, newest first. A partner's quick-checkout bills (no partner
+// id, its name in remark) are included.
+func (r *SQLSaleRepo) ListCustomerSales(ctx context.Context, tenantID uuid.UUID, c appai.CustomerRef, limit int) ([]appai.CustomerBill, error) {
+	const q = `
+		WITH heads AS (
+			SELECT bh.id, bh.bill_no, bh.bill_date, bh.total_amount
+			FROM tally.bill_head bh
+			WHERE bh.tenant_id = $1
+			  AND bh.bill_type = '出库'
+			  AND bh.sub_type  = '销售'
+			  AND bh.status    = 2
+			  AND bh.deleted_at IS NULL
+			  AND (bh.partner_id = $2 OR (bh.partner_id IS NULL AND bh.remark = $3))
+			ORDER BY bh.bill_date DESC, bh.bill_no DESC
+			LIMIT $4
+		)
+		SELECT h.bill_no, h.bill_date, h.total_amount,
+		       p.name, COALESCE(bi.unit_name,''), bi.qty,
+		       COALESCE(bi.unit_price, 0),
+		       COALESCE(bi.line_amount, bi.qty * COALESCE(bi.unit_price, 0))
+		FROM heads h
+		JOIN tally.bill_item bi ON bi.head_id = h.id AND bi.deleted_at IS NULL
+		JOIN tally.product   p  ON p.id = bi.product_id
+		ORDER BY h.bill_date DESC, h.bill_no DESC, bi.line_no`
+
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID, c.ID, c.Name, limit)
+	if err != nil {
+		return nil, fmt.Errorf("ai customer sales: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []appai.CustomerBill
+	for rows.Next() {
+		var billNo, unit, product, totalStr, qtyStr, priceStr, amtStr string
+		var billDate time.Time
+		if err := rows.Scan(&billNo, &billDate, &totalStr, &product, &unit, &qtyStr, &priceStr, &amtStr); err != nil {
+			return nil, fmt.Errorf("ai customer sales scan: %w", err)
+		}
+		if len(out) == 0 || out[len(out)-1].BillNo != billNo {
+			total, err := decimalutil.Parse(totalStr, "total_amount")
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, appai.CustomerBill{BillNo: billNo, BillDate: billDate, Total: total})
+		}
+		var l appai.CustomerBillLine
+		l.ProductName, l.Unit = product, unit
+		if l.Qty, err = decimalutil.Parse(qtyStr, "qty"); err != nil {
+			return nil, err
+		}
+		if l.UnitPrice, err = decimalutil.Parse(priceStr, "unit_price"); err != nil {
+			return nil, err
+		}
+		if l.Amount, err = decimalutil.Parse(amtStr, "line_amount"); err != nil {
+			return nil, err
+		}
+		b := &out[len(out)-1]
+		b.Lines = append(b.Lines, l)
+	}
+	return out, rows.Err()
+}
+
+// MatchCustomersInText returns the customers whose name (2+ characters)
+// appears in text. Implements appai.CustomerResolver.
+func (r *SQLSaleRepo) MatchCustomersInText(ctx context.Context, tenantID uuid.UUID, text string) ([]appai.CustomerRef, error) {
+	const q = `
+		SELECT id, name
+		FROM tally.partner
+		WHERE tenant_id = $1
+		  AND deleted_at IS NULL
+		  AND partner_type IN ` + customerPartnerTypes + `
+		  AND char_length(name) >= 2
+		  AND strpos($2, name) > 0
+		LIMIT 50`
+
+	dbh := dbscope.From(ctx, r.db)
+	rows, err := dbh.QueryContext(ctx, q, tenantID, text)
+	if err != nil {
+		return nil, fmt.Errorf("ai customers in text: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var out []appai.CustomerRef
+	for rows.Next() {
+		var c appai.CustomerRef
+		if err := rows.Scan(&c.ID, &c.Name); err != nil {
+			return nil, fmt.Errorf("ai customers in text scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+var _ appai.CustomerResolver = (*SQLSaleRepo)(nil)
+
 // SQLExchangeRateRepo implements appai.ExchangeRateRepo using PostgreSQL.
 type SQLExchangeRateRepo struct {
 	db *sql.DB

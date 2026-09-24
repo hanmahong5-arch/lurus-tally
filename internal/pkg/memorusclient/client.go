@@ -245,3 +245,68 @@ func classifyStatus(code int) error {
 		return fmt.Errorf("%w: HTTP %d", ErrUnavailable, code)
 	}
 }
+
+// SearchWithFilter is Search restricted to memories whose caller metadata
+// matches every entry of metaEq exactly, e.g. {"subject_id": "partner:<uuid>"}
+// (sent as metadata.<key>=<value>, which memorus turns into equality filters).
+func (c *Client) SearchWithFilter(ctx context.Context, userID, query string, limit int, metaEq map[string]string) ([]Memory, error) {
+	params := url.Values{}
+	params.Set("query", query)
+	if userID != "" {
+		params.Set("user_id", userID)
+	}
+	if limit > 0 {
+		params.Set("limit", strconv.Itoa(limit))
+	}
+	for k, v := range metaEq {
+		params.Set("metadata."+k, v)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		c.baseURL+"/memories/search?"+params.Encode(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("%w: create search request: %s", ErrUnavailable, err)
+	}
+	req.Header.Set("X-API-Key", c.apiKey)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrUnavailable, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if err := classifyStatus(resp.StatusCode); err != nil {
+		return nil, err
+	}
+
+	var envelope struct {
+		Results []struct {
+			ID        string         `json:"id"`
+			Memory    string         `json:"memory"`
+			UserID    string         `json:"user_id"`
+			Score     float64        `json:"score"`
+			Metadata  map[string]any `json:"metadata"`
+			CreatedAt string         `json:"created_at"`
+		} `json:"results"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&envelope); err != nil {
+		return nil, fmt.Errorf("%w: decode search response: %s", ErrUnavailable, err)
+	}
+
+	out := make([]Memory, 0, len(envelope.Results))
+	for _, r := range envelope.Results {
+		var createdAt time.Time
+		if r.CreatedAt != "" {
+			createdAt, _ = time.Parse(time.RFC3339, r.CreatedAt)
+		}
+		out = append(out, Memory{
+			ID:        r.ID,
+			UserID:    r.UserID,
+			Content:   r.Memory,
+			Metadata:  r.Metadata,
+			Score:     r.Score,
+			CreatedAt: createdAt,
+		})
+	}
+	return out, nil
+}

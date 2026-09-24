@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
@@ -74,6 +75,14 @@ func (f *cxSaleRepo) ListRecentSaleLines(_ context.Context, _ uuid.UUID, _ int) 
 		return nil, f.err
 	}
 	return f.rows, nil
+}
+
+func (f *cxSaleRepo) MatchCustomers(_ context.Context, _ uuid.UUID, _ string) ([]CustomerRef, error) {
+	return nil, f.err
+}
+
+func (f *cxSaleRepo) ListCustomerSales(_ context.Context, _ uuid.UUID, _ CustomerRef, _ int) ([]CustomerBill, error) {
+	return nil, f.err
 }
 
 type cxExchangeRepo struct {
@@ -1547,21 +1556,68 @@ func TestAugmentMessagesWithMemoryOrFallback_HappyPath_PrependsContext(t *testin
 	}
 }
 
-func TestBuildMemorySummary_TruncatesOver100Chars(t *testing.T) {
-	userMsg := strings.Repeat("a", 99) + "Z" + strings.Repeat("q", 50) // char 100 is 'Z', chars after are 'q's.
+func TestBuildMemorySummary_KeepsTheStatementCutAtRuneBoundary(t *testing.T) {
+	// 600 CJK characters: the old byte cut at 100 split a character and wrote
+	// invalid UTF-8 to memorus.
+	userMsg := strings.Repeat("矿", 600)
 	summary := BuildMemorySummary(uuid.New(), userMsg, "reply")
-
-	tenantIdx := strings.LastIndex(summary, " (tenant=")
-	if tenantIdx < 0 {
-		t.Fatalf("summary missing tenant suffix: %q", summary)
+	if !utf8.ValidString(summary) {
+		t.Fatalf("summary is not valid UTF-8: %q", summary)
 	}
-	beforeTenant := summary[:tenantIdx] // "用户问了：<snippet>"
-
-	if strings.Contains(beforeTenant, "q") {
-		t.Errorf("snippet must truncate at 100 chars (no trailing 'q's), got %q", beforeTenant)
+	if got := utf8.RuneCountInString(summary); got != memoryTextMaxRunes {
+		t.Errorf("summary has %d runes, want %d", got, memoryTextMaxRunes)
 	}
-	if !strings.HasSuffix(beforeTenant, "Z") {
-		t.Errorf("snippet must end at the 100th char 'Z', got %q", beforeTenant)
+}
+
+func TestBuildMemorySummary_IsTheUsersWordsWithoutTenantOrFraming(t *testing.T) {
+	tenant := uuid.New()
+	summary := BuildMemorySummary(tenant, "  客户张三要求每次送货前一天电话确认 ", "好的")
+	if summary != "客户张三要求每次送货前一天电话确认" {
+		t.Errorf("got %q", summary)
+	}
+	if strings.Contains(summary, tenant.String()) {
+		t.Errorf("tenant id leaked into the remembered text: %q", summary)
+	}
+	if MemoryWriteMeta(tenant, nil)["tally_tenant_id"] != tenant.String() {
+		t.Error("tenant id must travel in the write metadata")
+	}
+}
+
+func TestBuildMemorySummary_PureQuestionIsNotRemembered(t *testing.T) {
+	for _, q := range []string{"今天有哪些订单待发货？", "what is my low stock?"} {
+		if got := BuildMemorySummary(uuid.New(), q, "…"); got != "" {
+			t.Errorf("%q → %q, want nothing to remember", q, got)
+		}
+	}
+}
+
+func TestAsyncWriteMemory_NothingToRemember_NoWrite(t *testing.T) {
+	pm := &cxPanicMemClient{done: make(chan struct{})}
+	AsyncWriteMemory(pm, "u", "", nil)
+	select {
+	case <-pm.done:
+		t.Fatal("an empty summary must not reach memorus")
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+func TestRelevantMemories_DropsSupersededEmptyAndFarBelowTop(t *testing.T) {
+	ms := []memorusclient.Memory{
+		{Content: "矿泉水进价调整为每箱 35 元", Score: 0.56},
+		{Content: "矿泉水进价是每箱 32 元", Score: 0.50,
+			Metadata: map[string]any{"superseded_by": "b1"}},
+		{Content: "", Score: 0.55},
+		{Content: "李四的账期是 30 天", Score: 0.30},
+		{Content: "上周销售额是多少", Score: 0.19},
+	}
+	got := relevantMemories(ms)
+	var contents []string
+	for _, m := range got {
+		contents = append(contents, m.Content)
+	}
+	want := []string{"矿泉水进价调整为每箱 35 元", "李四的账期是 30 天"}
+	if strings.Join(contents, "|") != strings.Join(want, "|") {
+		t.Errorf("got %q, want %q", contents, want)
 	}
 }
 

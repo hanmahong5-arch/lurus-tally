@@ -369,13 +369,17 @@ func NewApp(cfg *config.Config) (*App, error) {
 		}
 
 		aiProductRepo := repoai.NewSQLProductRepo(db)
+		aiSaleRepo := repoai.NewSQLSaleRepo(db)
 		registry := appai.NewRegistry(
 			aiProductRepo,
 			repoai.NewSQLStockRepo(db),
-			repoai.NewSQLSaleRepo(db),
+			aiSaleRepo,
 			repoai.NewSQLExchangeRateRepo(db),
 		)
 		orchestrator := appai.NewOrchestrator(llmClient, registry, planStore, cfg.DefaultAIModel)
+		// Attribute AI-drawer memories to the customer a message names, so
+		// recall about one customer never carries another's notes.
+		orchestrator.WithCustomerResolver(aiSaleRepo)
 
 		// Wire the plan executor so confirming an AI plan performs real side
 		// effects (PO draft / price change / stock adjust) instead of a no-op.

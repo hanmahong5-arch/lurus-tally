@@ -32,10 +32,11 @@ type Orchestrator struct {
 	llm       *llmclient.Client
 	registry  *Registry
 	planStore PlanStore
-	executor  PlanExecutor  // nil → ConfirmPlan flips status only (dev / tests)
-	audit     AuditWriter   // nil → AI plan executions are not audited
-	memory    MemoryClient  // nil when memorus disabled
-	tracer    llmobs.Tracer // nil → spans silently skipped
+	executor  PlanExecutor     // nil → ConfirmPlan flips status only (dev / tests)
+	audit     AuditWriter      // nil → AI plan executions are not audited
+	memory    MemoryClient     // nil when memorus disabled
+	customers CustomerResolver // nil → memories are not attributed to customers
+	tracer    llmobs.Tracer    // nil → spans silently skipped
 	model     string
 }
 
@@ -56,6 +57,14 @@ func NewOrchestrator(llm *llmclient.Client, registry *Registry, planStore PlanSt
 // Passing nil disables memory (same as default).
 func (o *Orchestrator) WithMemory(mc MemoryClient) *Orchestrator {
 	o.memory = mc
+	return o
+}
+
+// WithCustomerResolver lets the orchestrator attribute memories to the one
+// customer a message names, and keep other customers' memories out of a
+// prompt about that customer. Passing nil disables attribution.
+func (o *Orchestrator) WithCustomerResolver(cr CustomerResolver) *Orchestrator {
+	o.customers = cr
 	return o
 }
 
@@ -111,6 +120,7 @@ Common Chinese phrasing → tool mapping (resolve intent to a tool call, do not 
 - 滞销 / 呆滞 / 库存积压 / 卖不动 → list_dead_stock
 - 毛利 / 利润率 最低 / 最高 → gross_margin_summary
 - 畅销 / 爆款 / 排行 / 卖得最好 → recent_sales_top
+- 某客户 上次买了什么 / 买过什么 / 最近买了什么 / 老客户又来了 → customer_recent_purchases (never answer a customer's purchase history from memory notes — they are not the books)
 - 库存总体情况 / 仓库概况 → get_stock_summary
 - ABC分类 / 帕累托 → abc_classify
 
@@ -146,12 +156,17 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 	ctx = llmgateway.WithTenant(ctx, in.TenantID.String())
 	// Memory recall: augment user message with relevant past context.
 	userID := in.TenantID.String()
-	augmented := AugmentMessagesWithMemoryOrFallback(o.memory, ctx, userID, in.UserMessage)
+	var customer *CustomerRef
+	if o.memory != nil {
+		customer = ResolveCustomer(ctx, o.customers, in.TenantID, in.UserMessage)
+	}
+	augmented := AugmentWithCustomerMemory(o.memory, ctx, userID, in.UserMessage, customer)
 	inAugmented := in
 	inAugmented.UserMessage = augmented
 
-	messages := buildMessages(inAugmented)
-	tools := ToolDefs()
+	messages := o.withMemoryPolicy(buildMessages(inAugmented))
+	tools := o.toolDefs()
+	remembered := false
 
 	var plans []*domainai.Plan
 	var toolCalls []domainai.ToolCallRecord
@@ -186,9 +201,7 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 					Total:      resp.Usage.TotalTokens,
 				}, nil)
 			}
-			// Async write-back: summarise this turn to memorus (non-blocking).
-			summary := BuildMemorySummary(in.TenantID, in.UserMessage, content)
-			AsyncWriteMemory(o.memory, userID, summary, map[string]any{"source": "tally-ai"})
+			o.writeBackTurn(in, userID, content, customer, remembered)
 			return &ChatOutput{
 				AssistantText: content,
 				Plans:         plans,
@@ -201,7 +214,7 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 
 		// Dispatch each tool call.
 		for _, tc := range choice.Message.ToolCalls {
-			result := o.registry.Dispatch(ctx, in.TenantID, tc)
+			result := o.dispatch(ctx, in.TenantID, tc, &remembered)
 			if span != nil {
 				span.AttachToolCall(tc.Function.Name, tc.Function.Arguments, result.Content)
 			}
@@ -251,12 +264,17 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 	ctx = llmgateway.WithTenant(ctx, in.TenantID.String())
 	// Memory recall: augment user message with relevant past context.
 	userID := in.TenantID.String()
-	augmented := AugmentMessagesWithMemoryOrFallback(o.memory, ctx, userID, in.UserMessage)
+	var customer *CustomerRef
+	if o.memory != nil {
+		customer = ResolveCustomer(ctx, o.customers, in.TenantID, in.UserMessage)
+	}
+	augmented := AugmentWithCustomerMemory(o.memory, ctx, userID, in.UserMessage, customer)
 	inAugmented := in
 	inAugmented.UserMessage = augmented
 
-	messages := buildMessages(inAugmented)
-	tools := ToolDefs()
+	messages := o.withMemoryPolicy(buildMessages(inAugmented))
+	tools := o.toolDefs()
+	remembered := false
 
 	var plans []*domainai.Plan
 	var toolCalls []domainai.ToolCallRecord
@@ -298,9 +316,7 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 					Total:      resp.Usage.TotalTokens,
 				}, nil)
 			}
-			// Async write-back: summarise this turn to memorus (non-blocking).
-			summary := BuildMemorySummary(in.TenantID, in.UserMessage, finalText)
-			AsyncWriteMemory(o.memory, userID, summary, map[string]any{"source": "tally-ai"})
+			o.writeBackTurn(in, userID, finalText, customer, remembered)
 			return &ChatOutput{
 				AssistantText: finalText,
 				Plans:         plans,
@@ -311,7 +327,7 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 		// Has tool calls — execute them first (non-streaming).
 		messages = append(messages, choice.Message)
 		for _, tc := range choice.Message.ToolCalls {
-			result := o.registry.Dispatch(ctx, in.TenantID, tc)
+			result := o.dispatch(ctx, in.TenantID, tc, &remembered)
 			if span != nil {
 				span.AttachToolCall(tc.Function.Name, tc.Function.Arguments, result.Content)
 			}
@@ -492,6 +508,40 @@ var ErrPlanExpired = fmt.Errorf("plan expired")
 var ErrPlanExecutionFailed = fmt.Errorf("plan execution failed")
 
 // buildMessages assembles the full message list for the LLM.
+// memoryPolicy is appended to the system prompt when memory is enabled.
+// Without it the model, seeing no "save" tool, told owners "我无法记录" right
+// after tally had stored what they said, and waved recalled notes away as
+// "只是历史备注，别默认按记忆走" (measured with cmd/memscenario LLM=1).
+// Static text: it keeps the system prompt cacheable per deployment.
+const memoryPolicy = `
+
+MEMORY: this assistant has long-term memory. What the user tells you about customers, suppliers and the shop (preferences, payment methods, delivery arrangements, allergies, agreements) is saved automatically and recalled in later conversations. When the user states such a fact, confirm briefly that you will remember it — never say you cannot record or save it.
+When the user states a fact about a named customer, call remember_customer_fact to save it — once per attribute the sentence mentions — then confirm from its result.
+A "--- 历史记忆 ---" block before the user's message holds notes the shop owner told you earlier. Lines marked （客户 X） are about customer X, even when the note calls them by a nickname such as 老李 or 王老板. Treat these notes as the owner's own knowledge: use them directly for service details and do not call them unverifiable. Purchase history, amounts and balances still come only from the tools (the books), never from notes.`
+
+// writeBackTurn remembers what the user stated this turn (non-blocking). A
+// turn whose facts the model already saved through remember_customer_fact is
+// not stored again as free text — that would be the same fact in two rows,
+// the untagged one never superseded.
+func (o *Orchestrator) writeBackTurn(in ChatInput, userID, reply string, customer *CustomerRef, remembered bool) {
+	if remembered {
+		return
+	}
+	summary := BuildMemorySummary(in.TenantID, in.UserMessage, reply)
+	AsyncWriteMemory(o.memory, userID, summary, MemoryWriteMeta(in.TenantID, customer))
+}
+
+// withMemoryPolicy adds memoryPolicy to the system message when memory is on.
+func (o *Orchestrator) withMemoryPolicy(msgs []llmclient.Message) []llmclient.Message {
+	if o.memory == nil || len(msgs) == 0 || msgs[0].Role != "system" {
+		return msgs
+	}
+	if s, ok := msgs[0].Content.(string); ok {
+		msgs[0].Content = s + memoryPolicy
+	}
+	return msgs
+}
+
 func buildMessages(in ChatInput) []llmclient.Message {
 	msgs := make([]llmclient.Message, 0, 1+len(in.History)+1)
 	msgs = append(msgs, llmclient.Message{Role: "system", Content: systemPrompt})
