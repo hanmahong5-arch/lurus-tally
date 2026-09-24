@@ -70,6 +70,10 @@ func runCustomers() {
 	sales := repoai.NewSQLSaleRepo(appDB)
 
 	fmt.Printf("== scenario=%s noattr=%v tenant=%s\n", label, noAttr, tenant)
+	if os.Getenv("LLM") == "1" && os.Getenv("SLOTS") == "probe" {
+		runSlotProbe(ctx, dbHandle{appDB}, sales, tenant, label)
+		return
+	}
 	if os.Getenv("LLM") == "1" && os.Getenv("SLOTS") == "1" {
 		runSlots(ctx, dbHandle{appDB}, sales, tenant, label, partners)
 		return
