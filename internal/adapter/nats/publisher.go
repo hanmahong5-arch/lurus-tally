@@ -65,6 +65,8 @@ type Publisher interface {
 	PublishBillRejected(ctx context.Context, tenantID string, payload BillRejectedPayload) error
 	// PublishLowStockAlert emits PSI_EVENTS.alert.low_stock.
 	PublishLowStockAlert(ctx context.Context, tenantID string, payload LowStockAlertPayload) error
+	// PublishTenantProfileChanged emits PSI_EVENTS.tenant.profile_changed (observability-only).
+	PublishTenantProfileChanged(ctx context.Context, tenantID string, payload TenantProfileChangedPayload) error
 
 	// Close drains and closes the underlying NATS connection.
 	Close() error

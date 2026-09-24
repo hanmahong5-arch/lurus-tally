@@ -89,3 +89,23 @@ type OverstockAlertPayload struct {
 	CurrentQty  string `json:"current_qty"`
 	Threshold   string `json:"threshold"`
 }
+
+// TenantProfileChangedPayload announces that a tenant's profile_type has been
+// set or replaced. This event is observability-only — it does NOT carry any
+// business semantics consumers should fork on (DL-2: profile is UI-only).
+//
+// Emitted on:
+//   - first-time onboarding (PreviousProfile is empty string)
+//   - explicit profile switch within the 90-day grace window (PreviousProfile
+//     is the prior value)
+//
+// Source-of-truth remains tally.tenant_profile; consumers must NOT cache this
+// event as authoritative state — re-fetch via /api/v1/tenant/profile when
+// they need the current value.
+type TenantProfileChangedPayload struct {
+	TenantID        string `json:"tenant_id"`
+	ProfileType     string `json:"profile_type"`     // new value, e.g. "cross_border" / "retail" / "horticulture"
+	PreviousProfile string `json:"previous_profile"` // "" on first-time onboarding
+	InventoryMethod string `json:"inventory_method"` // derived from profile (DL-4)
+	ChangedBy       string `json:"changed_by"`       // zitadel sub of the user who made the change
+}

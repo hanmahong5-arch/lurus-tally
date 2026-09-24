@@ -54,6 +54,10 @@ export interface SSEEvent {
  * Calls onChunk for each streamed text chunk, onPlan for each plan card, and
  * onDone/onError when the stream terminates.
  *
+ * pageContext is an optional hint about which route the user is currently on
+ * (e.g. "/stock"). The backend uses it as a system-prompt hint and caps it
+ * server-side, so callers may safely pass any window.location.pathname.
+ *
  * Returns a cancel function that aborts the request.
  */
 export function streamChat(
@@ -64,7 +68,8 @@ export function streamChat(
     onPlan: (plan: AIPlan) => void
     onDone: () => void
     onError: (err: string) => void
-  }
+  },
+  pageContext?: string,
 ): () => void {
   const controller = new AbortController()
 
@@ -74,7 +79,7 @@ export function streamChat(
       resp = await fetch(`${BASE}/ai/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message, history }),
+        body: JSON.stringify({ message, history, page_context: pageContext ?? "" }),
         signal: controller.signal,
       })
     } catch (err: unknown) {

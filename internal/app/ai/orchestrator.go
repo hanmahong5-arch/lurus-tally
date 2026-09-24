@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	domainai "github.com/hanmahong5-arch/lurus-tally/internal/domain/ai"
@@ -68,6 +69,9 @@ type ChatInput struct {
 	History []llmclient.Message
 	// UserMessage is the new user message.
 	UserMessage string
+	// PageContext is a short hint about which page the user is on
+	// (e.g. "/stock", "/products"). Optional; injected as a system note.
+	PageContext string
 }
 
 // ChatOutput is the result of a single chat turn.
@@ -279,9 +283,19 @@ func (o *Orchestrator) CancelPlan(ctx context.Context, tenantID, planID uuid.UUI
 var ErrPlanNotFound = fmt.Errorf("plan not found or expired")
 
 // buildMessages assembles the full message list for the LLM.
+// When PageContext is non-empty, it is appended as a second system message so
+// the assistant knows which page the user is currently viewing without
+// polluting the static cache-friendly system prompt.
 func buildMessages(in ChatInput) []llmclient.Message {
-	msgs := make([]llmclient.Message, 0, 1+len(in.History)+1)
+	estCap := 2 + len(in.History) + 1
+	msgs := make([]llmclient.Message, 0, estCap)
 	msgs = append(msgs, llmclient.Message{Role: "system", Content: systemPrompt})
+	if pc := strings.TrimSpace(in.PageContext); pc != "" {
+		msgs = append(msgs, llmclient.Message{
+			Role:    "system",
+			Content: fmt.Sprintf("Context hint: the user is currently on page %q. Use this only if relevant.", pc),
+		})
+	}
 	msgs = append(msgs, in.History...)
 	msgs = append(msgs, llmclient.Message{Role: "user", Content: in.UserMessage})
 	return msgs

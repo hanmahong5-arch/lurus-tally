@@ -57,6 +57,7 @@ func New(h *health.Handler, authMW gin.HandlerFunc, ph *handlerproduct.Handler, 
 			ah.RegisterRoutes(api)
 		} else {
 			api.GET("/me", notImplemented)
+			api.GET("/tenant/profile", notImplemented)
 			api.POST("/tenant/profile", notImplemented)
 			api.POST("/auth/logout", notImplemented)
 		}

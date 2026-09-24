@@ -22,6 +22,27 @@ type PlatformAccountUpserter interface {
 	UpsertAccount(ctx context.Context, req platformclient.UpsertAccountRequest) (*platformclient.Account, error)
 }
 
+// ProfileEventPublisher abstracts the typed PSI_EVENTS NATS publisher so we
+// emit `tenant.profile_changed` for downstream observability without binding
+// the use case to the concrete adapter type. May be nil — failure / absence
+// is non-blocking. Per DL-2, this event is observability-only — consumers
+// must NOT branch business logic on it.
+type ProfileEventPublisher interface {
+	PublishTenantProfileChanged(ctx context.Context, tenantID string, payload ProfileChangedPayload) error
+}
+
+// ProfileChangedPayload is what ProfileEventPublisher emits. We re-declare it
+// here (instead of importing adapternats) so the app layer stays free of
+// transport-side types — the adapter shim adapts this struct to the wire-side
+// nats.TenantProfileChangedPayload.
+type ProfileChangedPayload struct {
+	TenantID        string
+	ProfileType     string
+	PreviousProfile string
+	InventoryMethod string
+	ChangedBy       string
+}
+
 // ErrInconsistentTenantState is returned when a user_identity_mapping exists
 // but no tenant_profile is found for the same tenant. This indicates the
 // initial Bootstrap was interrupted between the two inserts (atomicity bug)
@@ -50,20 +71,22 @@ type ChooseProfileInput struct {
 // All inserts in the fresh path are wrapped in a single transaction so partial
 // state is impossible. RLS is honoured via SET LOCAL app.tenant_id inside the tx.
 type ChooseProfileUseCase struct {
-	store    repoTenant.BootstrapStore
-	upserter PlatformAccountUpserter // may be nil when platform integration is disabled
-	logger   *slog.Logger
+	store     repoTenant.BootstrapStore
+	upserter  PlatformAccountUpserter // may be nil when platform integration is disabled
+	publisher ProfileEventPublisher   // may be nil when NATS is in noop mode
+	logger    *slog.Logger
 }
 
 // NewChooseProfileUseCase wires the use case to a BootstrapStore. The
-// upserter and logger are optional — passing nil disables the platform
-// account provisioning step (clusters without PLATFORM_INTERNAL_KEY) and
-// falls back to slog.Default() respectively.
-func NewChooseProfileUseCase(store repoTenant.BootstrapStore, upserter PlatformAccountUpserter, logger *slog.Logger) *ChooseProfileUseCase {
+// upserter, publisher, and logger are optional — passing nil disables the
+// platform account provisioning step (clusters without PLATFORM_INTERNAL_KEY),
+// the NATS profile-changed event (clusters without NATS), and falls back to
+// slog.Default() respectively.
+func NewChooseProfileUseCase(store repoTenant.BootstrapStore, upserter PlatformAccountUpserter, publisher ProfileEventPublisher, logger *slog.Logger) *ChooseProfileUseCase {
 	if logger == nil {
 		logger = slog.Default()
 	}
-	return &ChooseProfileUseCase{store: store, upserter: upserter, logger: logger}
+	return &ChooseProfileUseCase{store: store, upserter: upserter, publisher: publisher, logger: logger}
 }
 
 // Execute runs the onboarding logic. See type doc for idempotency guarantees.
@@ -137,6 +160,13 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 	// the next /tenant/profile call (idempotent path above) will heal.
 	uc.upsertPlatformAccount(ctx, in)
 
+	// Observability event: announce the new tenant's profile choice on NATS so
+	// downstream services (memorus, kova-agent, billing analytics) can react
+	// without polling. Failure is non-blocking — this is a fire-and-forget
+	// signal, not authoritative state. Per DL-2 consumers must NOT fork
+	// business logic on this event.
+	uc.publishProfileChanged(ctx, created, "", in.ZitadelSub)
+
 	return created, nil
 }
 
@@ -177,6 +207,29 @@ func (uc *ChooseProfileUseCase) upsertPlatformAccount(ctx context.Context, in Ch
 	uc.logger.Info("platform account upserted",
 		slog.String("zitadel_sub", in.ZitadelSub),
 		slog.Int64("account_id", acc.ID))
+}
+
+// publishProfileChanged fires the PSI_EVENTS.tenant.profile_changed event for
+// downstream observability. Errors are logged at WARN and never propagate —
+// this is a non-critical signal. The publisher field may be nil in dev /
+// test clusters; the call short-circuits in that case.
+func (uc *ChooseProfileUseCase) publishProfileChanged(ctx context.Context, profile *domain.TenantProfile, previous, changedBy string) {
+	if uc.publisher == nil || profile == nil {
+		return
+	}
+	payload := ProfileChangedPayload{
+		TenantID:        profile.TenantID.String(),
+		ProfileType:     string(profile.ProfileType),
+		PreviousProfile: previous,
+		InventoryMethod: string(profile.InventoryMethod),
+		ChangedBy:       changedBy,
+	}
+	if err := uc.publisher.PublishTenantProfileChanged(ctx, payload.TenantID, payload); err != nil {
+		uc.logger.Warn("nats publish tenant.profile_changed failed (non-blocking)",
+			slog.String("tenant_id", payload.TenantID),
+			slog.String("profile_type", payload.ProfileType),
+			slog.String("error", err.Error()))
+	}
 }
 
 // deriveTenantName produces a sensible default name for the tenant row when

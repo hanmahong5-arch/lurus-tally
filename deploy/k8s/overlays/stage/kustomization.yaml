@@ -1,5 +1,15 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
+# STAGE overlay — applied via direct `kubectl apply -k` to R6 (100.122.83.20).
+# Decision: lurus/doc/decisions/0006-tally-stage-direct-deploy.md
+# Runbook: ../../STAGE_RUNBOOK.md
+#
+# Secret note: base/secret.yaml ships placeholder values. Real secrets MUST be
+# created out-of-band before apply, via the `kubectl create secret generic
+# tally-secrets ... --dry-run=client | kubectl apply -f -` pattern (see runbook).
+# Required keys: DATABASE_DSN, REDIS_URL, NATS_URL, PLATFORM_INTERNAL_KEY,
+# NEWAPI_API_KEY, MEMORUS_API_KEY, ZITADEL_CLIENT_ID, ZITADEL_CLIENT_SECRET,
+# INTERNAL_API_KEY.
 resources:
   - ../../base
 images:

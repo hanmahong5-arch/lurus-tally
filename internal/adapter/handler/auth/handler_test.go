@@ -69,7 +69,7 @@ func newTestEngine(h *handlerAuth.Handler, sub, email, name string) *gin.Engine 
 
 // TestAuthHandler_GetMe_Unauthenticated_Returns401 verifies /me without sub → 401.
 func TestAuthHandler_GetMe_Unauthenticated_Returns401(t *testing.T) {
-	h := handlerAuth.New(&stubChooseProfile{}, &stubGetMe{result: &appTenant.GetMeOutput{}})
+	h := handlerAuth.New(&stubChooseProfile{}, &stubGetMe{result: &appTenant.GetMeOutput{}}, nil)
 	e := gin.New()
 	h.RegisterRoutes(e.Group("/api/v1"))
 
@@ -92,7 +92,7 @@ func TestAuthHandler_GetMe_Authenticated_Returns200(t *testing.T) {
 			IsFirstTime: false,
 		},
 	}
-	h := handlerAuth.New(&stubChooseProfile{}, stub)
+	h := handlerAuth.New(&stubChooseProfile{}, stub, nil)
 	e := newTestEngine(h, "sub-abc", "alice@x.com", "Alice")
 
 	req, _ := http.NewRequest(http.MethodGet, "/api/v1/me", nil)
@@ -113,7 +113,7 @@ func TestAuthHandler_GetMe_FirstTimeUser_Returns200WithFlag(t *testing.T) {
 			IsFirstTime: true,
 		},
 	}
-	h := handlerAuth.New(&stubChooseProfile{}, stub)
+	h := handlerAuth.New(&stubChooseProfile{}, stub, nil)
 	e := newTestEngine(h, "sub-new", "", "")
 
 	req, _ := http.NewRequest(http.MethodGet, "/api/v1/me", nil)
@@ -136,7 +136,7 @@ func TestAuthHandler_GetMe_FirstTimeUser_Returns200WithFlag(t *testing.T) {
 // with the profile body. Sub/email/name come from middleware-injected context.
 func TestAuthHandler_ChooseProfile_ValidInput_Returns200(t *testing.T) {
 	stub := &stubChooseProfile{}
-	h := handlerAuth.New(stub, &stubGetMe{result: &appTenant.GetMeOutput{}})
+	h := handlerAuth.New(stub, &stubGetMe{result: &appTenant.GetMeOutput{}}, nil)
 	e := newTestEngine(h, "sub-xyz", "carol@x.com", "Carol")
 
 	body := map[string]string{"profile_type": "cross_border"}
@@ -159,7 +159,7 @@ func TestAuthHandler_ChooseProfile_ValidInput_Returns200(t *testing.T) {
 
 // TestAuthHandler_ChooseProfile_NoSub_Returns401 verifies missing auth → 401.
 func TestAuthHandler_ChooseProfile_NoSub_Returns401(t *testing.T) {
-	h := handlerAuth.New(&stubChooseProfile{}, &stubGetMe{result: &appTenant.GetMeOutput{}})
+	h := handlerAuth.New(&stubChooseProfile{}, &stubGetMe{result: &appTenant.GetMeOutput{}}, nil)
 	e := gin.New()
 	h.RegisterRoutes(e.Group("/api/v1"))
 
@@ -178,7 +178,7 @@ func TestAuthHandler_ChooseProfile_NoSub_Returns401(t *testing.T) {
 // TestAuthHandler_ChooseProfile_AlreadySet_Returns409 verifies conflict mapping.
 func TestAuthHandler_ChooseProfile_AlreadySet_Returns409(t *testing.T) {
 	stub := &stubChooseProfile{err: domain.ErrProfileAlreadySet}
-	h := handlerAuth.New(stub, &stubGetMe{result: &appTenant.GetMeOutput{}})
+	h := handlerAuth.New(stub, &stubGetMe{result: &appTenant.GetMeOutput{}}, nil)
 	e := newTestEngine(h, "sub-dup", "", "")
 
 	body := map[string]string{"profile_type": "retail"}
@@ -196,7 +196,7 @@ func TestAuthHandler_ChooseProfile_AlreadySet_Returns409(t *testing.T) {
 // TestAuthHandler_ChooseProfile_InvalidType_Returns400 verifies validation.
 func TestAuthHandler_ChooseProfile_InvalidType_Returns400(t *testing.T) {
 	stub := &stubChooseProfile{err: domain.ErrInvalidProfileType}
-	h := handlerAuth.New(stub, &stubGetMe{result: &appTenant.GetMeOutput{}})
+	h := handlerAuth.New(stub, &stubGetMe{result: &appTenant.GetMeOutput{}}, nil)
 	e := newTestEngine(h, "sub-bad", "", "")
 
 	body := map[string]string{"profile_type": "garbage"}
@@ -213,7 +213,7 @@ func TestAuthHandler_ChooseProfile_InvalidType_Returns400(t *testing.T) {
 
 // TestAuthHandler_Logout_Returns200 verifies logout stub.
 func TestAuthHandler_Logout_Returns200(t *testing.T) {
-	h := handlerAuth.New(&stubChooseProfile{}, &stubGetMe{result: &appTenant.GetMeOutput{}})
+	h := handlerAuth.New(&stubChooseProfile{}, &stubGetMe{result: &appTenant.GetMeOutput{}}, nil)
 	e := newTestEngine(h, "sub-out", "", "")
 
 	req, _ := http.NewRequest(http.MethodPost, "/api/v1/auth/logout", nil)

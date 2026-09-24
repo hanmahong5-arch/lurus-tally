@@ -56,7 +56,14 @@ type chatRequest struct {
 	Message string `json:"message" binding:"required"`
 	// History is the previous conversation turns (optional; omit for first turn).
 	History []historyTurn `json:"history"`
+	// PageContext is the path the user is currently viewing (e.g. "/stock").
+	// Optional; capped server-side to keep the prompt cache hit rate high.
+	PageContext string `json:"page_context"`
 }
+
+// maxPageContextLen caps the server-side trust boundary for page_context.
+// Anything longer is truncated — never trust client-supplied free text.
+const maxPageContextLen = 64
 
 // historyTurn is a single turn in the conversation history.
 type historyTurn struct {
@@ -115,11 +122,16 @@ func (h *Handler) Chat(c *gin.Context) {
 		}
 	}
 
-	// Start streaming.
+	// Start streaming. Truncate page_context defensively at trust boundary.
+	pageCtx := req.PageContext
+	if len(pageCtx) > maxPageContextLen {
+		pageCtx = pageCtx[:maxPageContextLen]
+	}
 	input := appai.ChatInput{
 		TenantID:    tenantID,
 		History:     history,
 		UserMessage: req.Message,
+		PageContext: pageCtx,
 	}
 
 	out, err := h.orchestrator.StreamChat(c.Request.Context(), input, func(chunk string) {

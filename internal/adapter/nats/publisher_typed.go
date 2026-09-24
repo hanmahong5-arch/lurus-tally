@@ -105,6 +105,11 @@ func (p *jsPublisher) PublishLowStockAlert(ctx context.Context, tenantID string,
 	return p.publishEnvelope(ctx, EventTypeAlertLowStock, tenantID, payload)
 }
 
+// PublishTenantProfileChanged — see EventTypeTenantProfileChanged.
+func (p *jsPublisher) PublishTenantProfileChanged(ctx context.Context, tenantID string, payload TenantProfileChangedPayload) error {
+	return p.publishEnvelope(ctx, EventTypeTenantProfileChanged, tenantID, payload)
+}
+
 // --- noopPublisher implementations (NoOpFallback path) ---
 
 func (n *noopPublisher) PublishStockMovementRecorded(_ context.Context, _ string, _ StockMovementRecordedPayload) error {
@@ -123,5 +128,8 @@ func (n *noopPublisher) PublishBillRejected(_ context.Context, _ string, _ BillR
 	return nil
 }
 func (n *noopPublisher) PublishLowStockAlert(_ context.Context, _ string, _ LowStockAlertPayload) error {
+	return nil
+}
+func (n *noopPublisher) PublishTenantProfileChanged(_ context.Context, _ string, _ TenantProfileChangedPayload) error {
 	return nil
 }

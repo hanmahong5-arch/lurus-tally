@@ -55,6 +55,9 @@ func (f *fakePublisher) PublishBillRejected(_ context.Context, _ string, _ adapt
 func (f *fakePublisher) PublishLowStockAlert(_ context.Context, _ string, _ adapternats.LowStockAlertPayload) error {
 	return f.err
 }
+func (f *fakePublisher) PublishTenantProfileChanged(_ context.Context, _ string, _ adapternats.TenantProfileChangedPayload) error {
+	return f.err
+}
 
 func TestNotifyAsync_PublishesToCorrectSubject(t *testing.T) {
 	pub := &fakePublisher{}

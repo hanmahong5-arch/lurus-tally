@@ -1,6 +1,7 @@
 "use client"
 
 import { useState, useRef, useEffect, useCallback } from "react"
+import { usePathname } from "next/navigation"
 import { MessageList, type UIMessage } from "./MessageList"
 import { streamChat, type AIPlan } from "@/lib/api/ai"
 import { useGlobalShortcut } from "@/hooks/useGlobalShortcut"
@@ -51,6 +52,9 @@ export function AIDrawer() {
   const inputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<(() => void) | null>(null)
+  // Current route path; forwarded to the backend as page_context so the
+  // assistant can mention "you're on /stock" without exposing user IDs.
+  const pathname = usePathname()
 
   // Cmd+J toggles drawer.
   useGlobalShortcut({
@@ -145,11 +149,11 @@ export function AIDrawer() {
             return updated
           })
         },
-      })
+      }, pathname ?? "")
       cancelRef.current = cancel
     }, 150)
     return () => clearTimeout(timer)
-  }, [pendingAutoSend, open, isLoading, messages]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [pendingAutoSend, open, isLoading, messages, pathname]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-focus input when drawer opens.
   useEffect(() => {
@@ -250,12 +254,12 @@ export function AIDrawer() {
           return updated
         })
       },
-    })
+    }, pathname ?? "")
 
     cancelRef.current = cancel
     // assistantIdx used for reference only; streaming updates use prev tail.
     void assistantIdx
-  }, [input, isLoading, messages])
+  }, [input, isLoading, messages, pathname])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {

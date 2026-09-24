@@ -13,6 +13,27 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 )
 
+// stubProfileEventPublisher records every profile_changed publish so tests can
+// assert the event is emitted (or not) without spinning up NATS.
+type stubProfileEventPublisher struct {
+	mu        sync.Mutex
+	calls     []appTenant.ProfileChangedPayload
+	returnErr error
+}
+
+func (s *stubProfileEventPublisher) PublishTenantProfileChanged(_ context.Context, _ string, payload appTenant.ProfileChangedPayload) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.calls = append(s.calls, payload)
+	return s.returnErr
+}
+
+func (s *stubProfileEventPublisher) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.calls)
+}
+
 // stubUpserter records calls and lets tests inject failures. Mirrors the
 // production *platformclient.Client surface ChooseProfileUseCase needs.
 type stubUpserter struct {
@@ -92,7 +113,7 @@ func (s *stubBootstrapStore) Bootstrap(_ context.Context, in repoTenant.Bootstra
 // a brand-new sub triggers atomic creation of tenant + mapping + profile.
 func TestChooseProfile_FreshUser_BootstrapsTenantAndProfile(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil, nil)
 
 	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub:  "sub-fresh-001",
@@ -118,7 +139,7 @@ func TestChooseProfile_FreshUser_BootstrapsTenantAndProfile(t *testing.T) {
 // profile_type returns the existing profile without error (no-op).
 func TestChooseProfile_IdempotentSameType(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil, nil)
 	in := appTenant.ChooseProfileInput{
 		ZitadelSub:  "sub-idem-002",
 		ProfileType: "retail",
@@ -141,7 +162,7 @@ func TestChooseProfile_IdempotentSameType(t *testing.T) {
 // profile type after first set returns ErrProfileAlreadySet.
 func TestChooseProfile_DifferentTypeAfterSet_ReturnsConflict(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil, nil)
 	sub := "sub-conflict-003"
 
 	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
@@ -161,7 +182,7 @@ func TestChooseProfile_DifferentTypeAfterSet_ReturnsConflict(t *testing.T) {
 // TestChooseProfile_InvalidType_ReturnsInvalidProfileType verifies validation.
 func TestChooseProfile_InvalidType_ReturnsInvalidProfileType(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil, nil)
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub: "sub-bad", ProfileType: "invalid_type",
@@ -174,7 +195,7 @@ func TestChooseProfile_InvalidType_ReturnsInvalidProfileType(t *testing.T) {
 // TestChooseProfile_HybridRejected verifies "hybrid" (admin-only) is rejected.
 func TestChooseProfile_HybridRejected(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil, nil)
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub: "sub-hyb", ProfileType: "hybrid",
@@ -187,7 +208,7 @@ func TestChooseProfile_HybridRejected(t *testing.T) {
 // TestChooseProfile_MissingSub_Rejected verifies the use case requires a sub.
 func TestChooseProfile_MissingSub_Rejected(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil, nil)
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ProfileType: "retail",
@@ -201,7 +222,7 @@ func TestChooseProfile_MissingSub_Rejected(t *testing.T) {
 func TestChooseProfile_BootstrapFailure_Surfaces(t *testing.T) {
 	store := newStubBootstrapStore()
 	store.bootstrapEr = errors.New("db connection lost")
-	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil, nil)
 
 	_, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub: "sub-fail", ProfileType: "retail",
@@ -217,7 +238,7 @@ func TestChooseProfile_BootstrapFailure_Surfaces(t *testing.T) {
 func TestChooseProfile_FreshUser_UpsertsPlatformAccount(t *testing.T) {
 	store := newStubBootstrapStore()
 	upserter := &stubUpserter{}
-	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil, nil)
 
 	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub:  "sub-platform-001",
@@ -242,7 +263,7 @@ func TestChooseProfile_FreshUser_UpsertsPlatformAccount(t *testing.T) {
 func TestChooseProfile_PlatformUpsertFailure_DoesNotBlockOnboarding(t *testing.T) {
 	store := newStubBootstrapStore()
 	upserter := &stubUpserter{returnErr: errors.New("platform 503 unavailable")}
-	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil, nil)
 
 	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub:  "sub-blip-002",
@@ -275,7 +296,7 @@ func TestChooseProfile_ReturningUser_HealsByReUpserting(t *testing.T) {
 	store.profiles[tenantID] = prof
 
 	upserter := &stubUpserter{}
-	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil, nil)
 
 	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub:  "sub-return-003",
@@ -293,7 +314,7 @@ func TestChooseProfile_ReturningUser_HealsByReUpserting(t *testing.T) {
 // dev clusters where PLATFORM_INTERNAL_KEY is unset (upserter is nil).
 func TestChooseProfile_NilUpserter_NoOp(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil, nil)
 
 	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub:  "sub-nil-004",
@@ -308,7 +329,7 @@ func TestChooseProfile_NilUpserter_NoOp(t *testing.T) {
 // is a valid user-selectable type and boots a fresh tenant correctly.
 func TestChooseProfile_AcceptsHorticulture(t *testing.T) {
 	store := newStubBootstrapStore()
-	uc := appTenant.NewChooseProfileUseCase(store, nil, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, nil, nil, nil)
 
 	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub:  "sub-horti-001",
@@ -332,7 +353,7 @@ func TestChooseProfile_AcceptsHorticulture(t *testing.T) {
 func TestChooseProfile_EmptyEmail_SynthesizesPlaceholder(t *testing.T) {
 	store := newStubBootstrapStore()
 	upserter := &stubUpserter{}
-	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
+	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil, nil)
 
 	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
 		ZitadelSub:  "sub-no-email-005",
@@ -348,5 +369,90 @@ func TestChooseProfile_EmptyEmail_SynthesizesPlaceholder(t *testing.T) {
 	want := "sub-no-email-005@zitadel.local"
 	if got.Email != want {
 		t.Errorf("expected synthesized email %q, got %q", want, got.Email)
+	}
+}
+
+// TestChooseProfile_FreshUser_PublishesProfileChangedEvent verifies that a
+// successful first-time bootstrap emits PSI_EVENTS.tenant.profile_changed
+// with the canonical payload. Per DL-2 this is observability-only — the
+// assertion here is that the event fires, not that any business state is
+// derived from it.
+func TestChooseProfile_FreshUser_PublishesProfileChangedEvent(t *testing.T) {
+	store := newStubBootstrapStore()
+	pub := &stubProfileEventPublisher{}
+	uc := appTenant.NewChooseProfileUseCase(store, nil, pub, nil)
+
+	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub:  "sub-evt-001",
+		Email:       "frank@example.com",
+		ProfileType: "cross_border",
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pub.callCount() != 1 {
+		t.Fatalf("expected exactly 1 profile_changed event, got %d", pub.callCount())
+	}
+	got := pub.calls[0]
+	if got.ProfileType != "cross_border" {
+		t.Errorf("event profile_type = %q, want \"cross_border\"", got.ProfileType)
+	}
+	if got.PreviousProfile != "" {
+		t.Errorf("first-time bootstrap must have empty previous_profile, got %q", got.PreviousProfile)
+	}
+	if got.ChangedBy != "sub-evt-001" {
+		t.Errorf("event changed_by = %q, want sub-evt-001", got.ChangedBy)
+	}
+	if got.InventoryMethod != "fifo" {
+		t.Errorf("cross_border defaults to fifo, got %q", got.InventoryMethod)
+	}
+	if got.TenantID == "" {
+		t.Error("event tenant_id must be populated")
+	}
+}
+
+// TestChooseProfile_PublisherFailure_DoesNotBlockOnboarding verifies that
+// NATS-side failures never propagate to the caller — profile_changed is
+// fire-and-forget. The new tenant must be created and returned regardless.
+func TestChooseProfile_PublisherFailure_DoesNotBlockOnboarding(t *testing.T) {
+	store := newStubBootstrapStore()
+	pub := &stubProfileEventPublisher{returnErr: errors.New("nats unreachable")}
+	uc := appTenant.NewChooseProfileUseCase(store, nil, pub, nil)
+
+	p, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		ZitadelSub:  "sub-evt-002",
+		ProfileType: "retail",
+	})
+	if err != nil {
+		t.Fatalf("publisher failure must not block onboarding: %v", err)
+	}
+	if p == nil || p.ProfileType != domain.ProfileTypeRetail {
+		t.Errorf("expected retail profile despite publisher failure, got %+v", p)
+	}
+	if pub.callCount() != 1 {
+		t.Errorf("expected publish to be attempted once even on failure, got %d", pub.callCount())
+	}
+}
+
+// TestChooseProfile_IdempotentNoOp_DoesNotRepublish verifies that the
+// returning-user heal path (same profile_type already set) does NOT spam
+// the event bus. profile_changed fires only when the profile is genuinely
+// new — re-fetching is a no-op for downstream consumers.
+func TestChooseProfile_IdempotentNoOp_DoesNotRepublish(t *testing.T) {
+	store := newStubBootstrapStore()
+	pub := &stubProfileEventPublisher{}
+	uc := appTenant.NewChooseProfileUseCase(store, nil, pub, nil)
+
+	in := appTenant.ChooseProfileInput{
+		ZitadelSub:  "sub-evt-003",
+		ProfileType: "retail",
+	}
+	if _, err := uc.Execute(context.Background(), in); err != nil {
+		t.Fatalf("first call failed: %v", err)
+	}
+	if _, err := uc.Execute(context.Background(), in); err != nil {
+		t.Fatalf("second call (idempotent) failed: %v", err)
+	}
+	if pub.callCount() != 1 {
+		t.Errorf("expected exactly 1 publish across 2 idempotent calls, got %d", pub.callCount())
 	}
 }

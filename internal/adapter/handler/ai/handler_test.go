@@ -47,6 +47,39 @@ func (s *stubOrchestrator) CancelPlan(_ context.Context, _, _ uuid.UUID) error {
 	return s.cancelErr
 }
 
+// captureOrchestrator records the ChatInput it was called with so tests can
+// assert on field propagation (page_context, message, history, etc).
+type captureOrchestrator struct {
+	streamOut *appai.ChatOutput
+	streamErr error
+	onInput   func(appai.ChatInput)
+}
+
+func (c *captureOrchestrator) StreamChat(_ context.Context, in appai.ChatInput, _ func(string)) (*appai.ChatOutput, error) {
+	if c.onInput != nil {
+		c.onInput(in)
+	}
+	return c.streamOut, c.streamErr
+}
+
+func (c *captureOrchestrator) ConfirmPlan(_ context.Context, _, _ uuid.UUID) (*domainai.Plan, error) {
+	return nil, nil
+}
+
+func (c *captureOrchestrator) CancelPlan(_ context.Context, _, _ uuid.UUID) error {
+	return nil
+}
+
+// repeatRune returns a string of n copies of r — small alternative to
+// strings.Repeat to avoid pulling another import in this test.
+func repeatRune(r rune, n int) string {
+	b := make([]rune, n)
+	for i := range b {
+		b[i] = r
+	}
+	return string(b)
+}
+
 func newTestEngine(h *handlerai.Handler, tenantID uuid.UUID) *gin.Engine {
 	e := gin.New()
 	e.Use(func(c *gin.Context) {
@@ -72,6 +105,40 @@ func TestAIHandler_Chat_NoTenantID_Returns401(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAIHandler_Chat_PageContext_PropagatesAndTruncates verifies the handler
+// forwards page_context to the orchestrator and caps it at 64 chars.
+func TestAIHandler_Chat_PageContext_PropagatesAndTruncates(t *testing.T) {
+	long := "/" + repeatRune('a', 200) // far over 64
+	captured := ""
+	stub := &captureOrchestrator{
+		streamOut: &appai.ChatOutput{AssistantText: "ok"},
+		onInput: func(in appai.ChatInput) {
+			captured = in.PageContext
+		},
+	}
+	h := handlerai.New(stub)
+	e := newTestEngine(h, uuid.New())
+
+	body, _ := json.Marshal(map[string]string{
+		"message":      "hi",
+		"page_context": long,
+	})
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/ai/chat", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if captured == "" {
+		t.Fatalf("expected page_context to be forwarded")
+	}
+	if len(captured) > 64 {
+		t.Errorf("expected page_context truncated to <=64, got len=%d", len(captured))
 	}
 }
 

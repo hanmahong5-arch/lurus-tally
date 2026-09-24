@@ -156,9 +156,14 @@ func NewApp(cfg *config.Config) (*App, error) {
 	l.Info("notification: enabled", slog.String("mode", notifyMode))
 	_ = notifyClient // capability ready; business events wired in subsequent stories
 
+	// NATS-backed profile-changed publisher. Wraps the typed PSI_EVENTS
+	// publisher built earlier; nil-safe when natsPub is in noop fallback.
+	profileEventPub := apptenant.NewNATSProfileEventPublisher(natsPub)
+
 	authHandler := handlerAuth.New(
-		apptenant.NewChooseProfileUseCase(tenantStore, platClient, l),
+		apptenant.NewChooseProfileUseCase(tenantStore, platClient, profileEventPub, l),
 		apptenant.NewGetMeUseCase(tenantStore),
+		apptenant.NewGetTenantProfileUseCase(tenantStore),
 	)
 
 	// Wire stock use cases. MVP: single WAC calculator (FIFO routing per-tenant
@@ -276,7 +281,11 @@ func NewApp(cfg *config.Config) (*App, error) {
 			slog.String("model", cfg.DefaultAIModel),
 			slog.String("newapi_url", cfg.NewAPIBaseURL))
 	} else {
-		l.Warn("AI assistant disabled (NEWAPI_API_KEY not set)")
+		// Mock orchestrator path: returns a canned reply so the AI Drawer UI
+		// is fully testable without an LLM provider configured. Plan endpoints
+		// degrade to "not found" — destructive operations are not available.
+		aiHandler = handlerai.New(appai.NewMockOrchestrator())
+		l.Warn("AI assistant running in mock mode (NEWAPI_API_KEY not set)")
 	}
 
 	// Build AuthMiddleware when ZITADEL_DOMAIN is set. In dev it can be empty;

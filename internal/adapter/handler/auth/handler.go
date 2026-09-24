@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appTenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/tenant"
@@ -22,17 +23,25 @@ type GetMeExecutor interface {
 	Execute(ctx context.Context, in appTenant.GetMeInput) (*appTenant.GetMeOutput, error)
 }
 
-// Handler groups the auth and tenant profile HTTP handlers.
-type Handler struct {
-	chooseProfile ChooseProfileExecutor
-	getMe         GetMeExecutor
+// GetTenantProfileExecutor is the interface satisfied by GetTenantProfileUseCase.
+type GetTenantProfileExecutor interface {
+	Execute(ctx context.Context, tenantID uuid.UUID) (*domain.TenantProfile, error)
 }
 
-// New creates a Handler wired to the provided use cases.
-func New(chooseProfile ChooseProfileExecutor, getMe GetMeExecutor) *Handler {
+// Handler groups the auth and tenant profile HTTP handlers.
+type Handler struct {
+	chooseProfile     ChooseProfileExecutor
+	getMe             GetMeExecutor
+	getTenantProfile  GetTenantProfileExecutor
+}
+
+// New creates a Handler wired to the provided use cases. getTenantProfile
+// may be nil in test contexts; the GET /tenant/profile route then returns 501.
+func New(chooseProfile ChooseProfileExecutor, getMe GetMeExecutor, getTenantProfile GetTenantProfileExecutor) *Handler {
 	return &Handler{
-		chooseProfile: chooseProfile,
-		getMe:         getMe,
+		chooseProfile:    chooseProfile,
+		getMe:            getMe,
+		getTenantProfile: getTenantProfile,
 	}
 }
 
@@ -40,6 +49,7 @@ func New(chooseProfile ChooseProfileExecutor, getMe GetMeExecutor) *Handler {
 // The caller is expected to apply AuthMiddleware before this group.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/me", h.GetMe)
+	rg.GET("/tenant/profile", h.GetTenantProfile)
 	rg.POST("/tenant/profile", h.ChooseProfile)
 	rg.POST("/auth/logout", h.Logout)
 }
@@ -142,6 +152,53 @@ func (h *Handler) GetMe(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, out)
+}
+
+// GetTenantProfile handles GET /api/v1/tenant/profile.
+//
+// Returns the canonical profile for the caller's tenant (resolved from the
+// JWT-injected tenant_id). Per DL-2 the response shape is identical for
+// every profile_type — UI consumers branch on `profile_type` themselves.
+//
+// Status mapping:
+//
+//	200 OK            — profile returned
+//	401 Unauthorized  — no tenant_id in context (not yet onboarded)
+//	404 Not Found     — tenant exists but no profile row (inconsistent state)
+//	501 Not Implemented — handler dependency not wired (dev/test config)
+//	500               — internal failure
+func (h *Handler) GetTenantProfile(c *gin.Context) {
+	if h.getTenantProfile == nil {
+		c.JSON(http.StatusNotImplemented, gin.H{
+			"error":  "not implemented",
+			"detail": "tenant profile read is not configured on this deployment",
+		})
+		return
+	}
+	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"error":  "unauthorized",
+			"detail": "no tenant context — finish onboarding via POST /tenant/profile first",
+		})
+		return
+	}
+	p, err := h.getTenantProfile.Execute(c.Request.Context(), tenantID)
+	if err != nil {
+		if errors.Is(err, appTenant.ErrProfileNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{
+				"error":  "not found",
+				"detail": "no profile is set for this tenant",
+			})
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error":  "internal server error",
+			"detail": err.Error(),
+		})
+		return
+	}
+	c.JSON(http.StatusOK, p)
 }
 
 // Logout handles POST /api/v1/auth/logout.

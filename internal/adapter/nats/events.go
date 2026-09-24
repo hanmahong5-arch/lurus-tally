@@ -21,6 +21,7 @@ const (
 	EventTypeBillRejected          = "bill.rejected"
 	EventTypeAlertLowStock         = "alert.low_stock"
 	EventTypeAlertOverstock        = "alert.overstock"
+	EventTypeTenantProfileChanged  = "tenant.profile_changed"
 )
 
 // Subject constants — fully qualified JetStream subjects.
@@ -32,6 +33,7 @@ const (
 	SubjectBillRejected          = "PSI_EVENTS." + EventTypeBillRejected
 	SubjectAlertLowStock         = "PSI_EVENTS." + EventTypeAlertLowStock
 	SubjectAlertOverstock        = "PSI_EVENTS." + EventTypeAlertOverstock
+	SubjectTenantProfileChanged  = "PSI_EVENTS." + EventTypeTenantProfileChanged
 )
 
 // SubjectFor returns the JetStream subject for a given event type.
