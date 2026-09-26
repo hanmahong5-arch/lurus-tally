@@ -2,7 +2,7 @@ package main
 
 // Customer-memory replay ("熟客记忆") against a real Postgres and memorus.
 //
-//	CUSTOMERS=1 DATABASE_URL=postgres://tally:tallysecret@127.0.0.1:5432/lurus?sslmode=disable \
+//	CUSTOMERS=1 DATABASE_URL="$PG_SUPERUSER_DSN" \
 //	  MEMORUS_URL=http://127.0.0.1:18767/api/v1 [SCENARIO=holdout|v2-dev|v2-holdout] [NOATTR=1] go run ./cmd/memscenario
 //
 // DATABASE_URL must be a superuser (migrations + seeding). Reads run as a

@@ -66,10 +66,8 @@ type v2scenario struct {
 	sessions [3][]v2fact
 }
 
-func devCustomersV2() customerScenario     { return devV2().customers() }
-func holdoutCustomersV2() customerScenario { return holdoutV2().customers() }
-func devSlotsV2() slotScenario             { return devV2().slots() }
-func holdoutSlotsV2() slotScenario         { return holdoutV2().slots() }
+func devSlotsV2() slotScenario     { return devV2().slots() }
+func holdoutSlotsV2() slotScenario { return holdoutV2().slots() }
 
 func devV2() v2scenario {
 	return v2scenario{
