@@ -1215,6 +1215,19 @@ func TestChat_HappyPath_ToolRoundThenFinalAnswer_WithMemory(t *testing.T) {
 	}
 }
 
+// chatModes are the two entry points of a chat turn: Chat (replay, live tests)
+// and StreamChat (the product's drawer). Loop behaviour is asserted through
+// both so the two cannot drift again (StreamChat once dropped Plan.TraceID).
+var chatModes = []struct {
+	name string
+	run  func(o *Orchestrator, ctx context.Context, in ChatInput) (*ChatOutput, error)
+}{
+	{"Chat", func(o *Orchestrator, ctx context.Context, in ChatInput) (*ChatOutput, error) { return o.Chat(ctx, in) }},
+	{"StreamChat", func(o *Orchestrator, ctx context.Context, in ChatInput) (*ChatOutput, error) {
+		return o.StreamChat(ctx, in, func(string) {})
+	}},
+}
+
 func TestChat_LLMChatError_Wrapped(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
@@ -1225,9 +1238,11 @@ func TestChat_LLMChatError_Wrapped(t *testing.T) {
 
 	registry := NewRegistry(&cxProductRepo{}, &cxStockRepo{}, &cxSaleRepo{}, &cxExchangeRepo{})
 	o := NewOrchestrator(newCxLLMClient(t, srv), registry, newCxPlanStore(), "m")
-	_, err := o.Chat(context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"})
-	if err == nil || !strings.Contains(err.Error(), "orchestrator: llm chat") {
-		t.Fatalf("err=%v, want 'orchestrator: llm chat' wrap", err)
+	for _, m := range chatModes {
+		_, err := m.run(o, context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"})
+		if err == nil || !strings.Contains(err.Error(), "orchestrator: llm chat") {
+			t.Fatalf("%s: err=%v, want 'orchestrator: llm chat' wrap", m.name, err)
+		}
 	}
 }
 
@@ -1240,9 +1255,11 @@ func TestChat_NoChoices_Errors(t *testing.T) {
 
 	registry := NewRegistry(&cxProductRepo{}, &cxStockRepo{}, &cxSaleRepo{}, &cxExchangeRepo{})
 	o := NewOrchestrator(newCxLLMClient(t, srv), registry, newCxPlanStore(), "m")
-	_, err := o.Chat(context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"})
-	if err == nil || !strings.Contains(err.Error(), "no choices in response") {
-		t.Fatalf("err=%v, want 'no choices in response'", err)
+	for _, m := range chatModes {
+		_, err := m.run(o, context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"})
+		if err == nil || !strings.Contains(err.Error(), "no choices in response") {
+			t.Fatalf("%s: err=%v, want 'no choices in response'", m.name, err)
+		}
 	}
 }
 
@@ -1257,40 +1274,44 @@ func TestChat_ExceedsMaxToolRounds(t *testing.T) {
 
 	registry := NewRegistry(&cxProductRepo{}, &cxStockRepo{}, &cxSaleRepo{}, &cxExchangeRepo{})
 	o := NewOrchestrator(newCxLLMClient(t, srv), registry, newCxPlanStore(), "m")
-	_, err := o.Chat(context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"})
-	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("exceeded %d tool rounds", maxToolRounds)) {
-		t.Fatalf("err=%v, want exceeded-tool-rounds error", err)
+	for _, m := range chatModes {
+		_, err := m.run(o, context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"})
+		if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("exceeded %d tool rounds", maxToolRounds)) {
+			t.Fatalf("%s: err=%v, want exceeded-tool-rounds error", m.name, err)
+		}
 	}
 }
 
 func TestChat_SavePlanError_IsNonFatal(t *testing.T) {
-	var n int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if atomic.AddInt32(&n, 1) == 1 {
-			w.Write(chatRespJSON(t, llmclient.Message{ToolCalls: []llmclient.ToolCall{{
-				ID: "tc1", Type: "function",
-				Function: llmclient.ToolCallFunction{Name: "propose_price_change", Arguments: `{"filter":"x","action":"+5%"}`},
-			}}}))
-			return
+	for _, m := range chatModes {
+		var n int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if atomic.AddInt32(&n, 1) == 1 {
+				w.Write(chatRespJSON(t, llmclient.Message{ToolCalls: []llmclient.ToolCall{{
+					ID: "tc1", Type: "function",
+					Function: llmclient.ToolCallFunction{Name: "propose_price_change", Arguments: `{"filter":"x","action":"+5%"}`},
+				}}}))
+				return
+			}
+			w.Write(chatRespJSON(t, llmclient.Message{Content: "ok"}))
+		}))
+		defer srv.Close()
+
+		store := &cxPlanStore{plans: map[string]*domainai.Plan{}, saveErr: errors.New("save down")}
+		registry := NewRegistry(&cxProductRepo{rows: manyProducts(2)}, &cxStockRepo{}, &cxSaleRepo{}, &cxExchangeRepo{})
+		o := NewOrchestrator(newCxLLMClient(t, srv), registry, store, "m")
+
+		out, err := m.run(o, context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"})
+		if err != nil {
+			t.Fatalf("%s must not fail when SavePlan errors (non-fatal): %v", m.name, err)
 		}
-		w.Write(chatRespJSON(t, llmclient.Message{Content: "ok"}))
-	}))
-	defer srv.Close()
-
-	store := &cxPlanStore{plans: map[string]*domainai.Plan{}, saveErr: errors.New("save down")}
-	registry := NewRegistry(&cxProductRepo{rows: manyProducts(2)}, &cxStockRepo{}, &cxSaleRepo{}, &cxExchangeRepo{})
-	o := NewOrchestrator(newCxLLMClient(t, srv), registry, store, "m")
-
-	out, err := o.Chat(context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"})
-	if err != nil {
-		t.Fatalf("Chat must not fail when SavePlan errors (non-fatal): %v", err)
-	}
-	if len(out.Plans) != 0 {
-		t.Errorf("Plans=%+v, want none (save failed)", out.Plans)
-	}
-	if len(out.ToolCalls) != 1 || out.ToolCalls[0].Error == nil {
-		t.Errorf("expected ToolCalls[0].Error set, got %+v", out.ToolCalls)
+		if len(out.Plans) != 0 {
+			t.Errorf("%s: Plans=%+v, want none (save failed)", m.name, out.Plans)
+		}
+		if len(out.ToolCalls) != 1 || out.ToolCalls[0].Error == nil {
+			t.Errorf("%s: expected ToolCalls[0].Error set, got %+v", m.name, out.ToolCalls)
+		}
 	}
 }
 
@@ -1313,40 +1334,42 @@ func TestChat_ExtractContent_NonStringAndNilBranches(t *testing.T) {
 }
 
 func TestChat_WithTracer_RecordsSpansAndPropagatesTraceID(t *testing.T) {
-	var n int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if atomic.AddInt32(&n, 1) == 1 {
-			w.Write(chatRespJSON(t, llmclient.Message{ToolCalls: []llmclient.ToolCall{{
-				ID: "tc1", Type: "function",
-				Function: llmclient.ToolCallFunction{Name: "propose_price_change", Arguments: `{"filter":"x","action":"+5%"}`},
-			}}}))
-			return
+	for _, m := range chatModes {
+		var n int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if atomic.AddInt32(&n, 1) == 1 {
+				w.Write(chatRespJSON(t, llmclient.Message{ToolCalls: []llmclient.ToolCall{{
+					ID: "tc1", Type: "function",
+					Function: llmclient.ToolCallFunction{Name: "propose_price_change", Arguments: `{"filter":"x","action":"+5%"}`},
+				}}}))
+				return
+			}
+			w.Write(chatRespJSON(t, llmclient.Message{Content: "ok"}))
+		}))
+		defer srv.Close()
+
+		tracer := &cxTracer{traceID: "trace-abc123"}
+		store := newCxPlanStore()
+		registry := NewRegistry(&cxProductRepo{rows: manyProducts(1)}, &cxStockRepo{}, &cxSaleRepo{}, &cxExchangeRepo{})
+		o := NewOrchestrator(newCxLLMClient(t, srv), registry, store, "m").WithTracer(tracer)
+
+		out, err := m.run(o, context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"})
+		if err != nil {
+			t.Fatalf("%s: %v", m.name, err)
 		}
-		w.Write(chatRespJSON(t, llmclient.Message{Content: "ok"}))
-	}))
-	defer srv.Close()
-
-	tracer := &cxTracer{traceID: "trace-abc123"}
-	store := newCxPlanStore()
-	registry := NewRegistry(&cxProductRepo{rows: manyProducts(1)}, &cxStockRepo{}, &cxSaleRepo{}, &cxExchangeRepo{})
-	o := NewOrchestrator(newCxLLMClient(t, srv), registry, store, "m").WithTracer(tracer)
-
-	out, err := o.Chat(context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"})
-	if err != nil {
-		t.Fatalf("Chat: %v", err)
-	}
-	if len(tracer.spans) != 2 {
-		t.Fatalf("spans=%d, want 2 (one per tool round)", len(tracer.spans))
-	}
-	if len(tracer.spans[0].toolCalls) != 1 || tracer.spans[0].toolCalls[0].name != "propose_price_change" {
-		t.Errorf("span0 toolCalls=%+v", tracer.spans[0].toolCalls)
-	}
-	if !tracer.spans[1].ended || tracer.spans[1].endOutput != "ok" {
-		t.Errorf("span1=%+v, want ended with output 'ok'", tracer.spans[1])
-	}
-	if len(out.Plans) != 1 || out.Plans[0].TraceID != "trace-abc123" {
-		t.Fatalf("Plans=%+v, want TraceID propagated from the span", out.Plans)
+		if len(tracer.spans) != 2 {
+			t.Fatalf("%s: spans=%d, want 2 (one per tool round)", m.name, len(tracer.spans))
+		}
+		if len(tracer.spans[0].toolCalls) != 1 || tracer.spans[0].toolCalls[0].name != "propose_price_change" {
+			t.Errorf("%s: span0 toolCalls=%+v", m.name, tracer.spans[0].toolCalls)
+		}
+		if !tracer.spans[1].ended || tracer.spans[1].endOutput != "ok" {
+			t.Errorf("%s: span1=%+v, want ended with output 'ok'", m.name, tracer.spans[1])
+		}
+		if len(out.Plans) != 1 || out.Plans[0].TraceID != "trace-abc123" {
+			t.Errorf("%s: Plans=%+v, want TraceID propagated from the span", m.name, out.Plans)
+		}
 	}
 }
 
@@ -1431,37 +1454,6 @@ func TestStreamChat_HappyPath(t *testing.T) {
 	}
 }
 
-func TestStreamChat_PreToolChatError_Wrapped(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(llmclient.ChatResponse{Error: &llmclient.APIErr{Code: "invalid_request", Message: "bad"}})
-	}))
-	defer srv.Close()
-
-	registry := NewRegistry(&cxProductRepo{}, &cxStockRepo{}, &cxSaleRepo{}, &cxExchangeRepo{})
-	o := NewOrchestrator(newCxLLMClient(t, srv), registry, newCxPlanStore(), "m")
-	_, err := o.StreamChat(context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"}, func(string) {})
-	if err == nil || !strings.Contains(err.Error(), "stream pre-tool chat") {
-		t.Fatalf("err=%v, want 'stream pre-tool chat' wrap", err)
-	}
-}
-
-func TestStreamChat_NoChoices_Errors(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(llmclient.ChatResponse{Choices: []llmclient.Choice{}})
-	}))
-	defer srv.Close()
-
-	registry := NewRegistry(&cxProductRepo{}, &cxStockRepo{}, &cxSaleRepo{}, &cxExchangeRepo{})
-	o := NewOrchestrator(newCxLLMClient(t, srv), registry, newCxPlanStore(), "m")
-	_, err := o.StreamChat(context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"}, func(string) {})
-	if err == nil || !strings.Contains(err.Error(), "no choices") {
-		t.Fatalf("err=%v, want 'no choices'", err)
-	}
-}
-
 func TestStreamChat_NoTool_EmitsChatContentWithoutSecondInference(t *testing.T) {
 	// A question the model answers without any tool: the first Chat response is
 	// the final answer and is emitted directly. The former code re-requested
@@ -1497,23 +1489,6 @@ func TestStreamChat_NoTool_EmitsChatContentWithoutSecondInference(t *testing.T) 
 	}
 	if atomic.LoadInt32(&streamCalls) != 0 {
 		t.Errorf("second streaming inference issued %d time(s) — double-billing regression", streamCalls)
-	}
-}
-
-func TestStreamChat_ExceedsMaxToolRounds(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(chatRespJSON(t, llmclient.Message{ToolCalls: []llmclient.ToolCall{{
-			ID: "tc", Type: "function", Function: llmclient.ToolCallFunction{Name: "get_stock_summary", Arguments: `{}`},
-		}}}))
-	}))
-	defer srv.Close()
-
-	registry := NewRegistry(&cxProductRepo{}, &cxStockRepo{}, &cxSaleRepo{}, &cxExchangeRepo{})
-	o := NewOrchestrator(newCxLLMClient(t, srv), registry, newCxPlanStore(), "m")
-	_, err := o.StreamChat(context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "hi"}, func(string) {})
-	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("exceeded %d tool rounds", maxToolRounds)) {
-		t.Fatalf("err=%v, want exceeded-tool-rounds error", err)
 	}
 }
 

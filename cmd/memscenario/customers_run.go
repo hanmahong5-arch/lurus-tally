@@ -344,9 +344,9 @@ func memories(ctx context.Context, sales *repoai.SQLSaleRepo, tenant uuid.UUID, 
 
 	// What the orchestrator does after each chat turn.
 	turn := func(f fact) {
-		customer := ai.ResolveCustomer(ctx, resolver, tenant, f.text)
+		about := ai.AttributeCustomer(ctx, resolver, tenant, f.text)
 		summary := ai.BuildMemorySummary(tenant, f.text, "（助手回答略）")
-		ai.AsyncWriteMemory(c, user, summary, ai.MemoryWriteMeta(tenant, customer))
+		ai.AsyncWriteMemory(c, user, summary, ai.TurnWriteMeta(tenant, about))
 		time.Sleep(400 * time.Millisecond)
 	}
 	var s memoryScore

@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -37,6 +38,7 @@ type Orchestrator struct {
 	memory    MemoryClient     // nil when memorus disabled
 	customers CustomerResolver // nil → memories are not attributed to customers
 	tracer    llmobs.Tracer    // nil → spans silently skipped
+	log       *slog.Logger     // nil → slog.Default()
 	model     string
 }
 
@@ -150,21 +152,35 @@ type ChatOutput struct {
 // maxToolRounds prevents infinite tool-call loops.
 const maxToolRounds = 6
 
-// Chat executes one user turn (non-streaming). Builds the full message sequence,
-// runs tool-call rounds, and returns the final text + any plans.
+// Chat executes one user turn and returns the final text + any plans. It is
+// StreamChat without a chunk callback: the replay (cmd/memscenario), the live
+// tests and the product's drawer all run the same loop.
 func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, error) {
+	return o.StreamChat(ctx, in, nil)
+}
+
+// StreamChat executes one user turn: tool-call rounds first, then the final
+// answer, handed to onChunk (when not nil) as a single chunk. The model's last
+// non-streaming response already IS the final answer; re-requesting it with
+// stream=true ran the LLM twice and billed usage twice (the P1 double-billing
+// defect). The handler wraps each onChunk call in an SSE `chunk` event.
+func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk func(string)) (*ChatOutput, error) {
 	ctx = llmgateway.WithTenant(ctx, in.TenantID.String())
+	op := "stream"
+	if onChunk == nil {
+		op = "chat"
+	}
 	// Memory recall: augment user message with relevant past context.
 	userID := in.TenantID.String()
-	var customer *CustomerRef
+	var about Attribution
 	if o.memory != nil {
-		customer = ResolveCustomer(ctx, o.customers, in.TenantID, in.UserMessage)
+		about = AttributeCustomer(ctx, o.customers, in.TenantID, in.UserMessage)
 	}
-	augmented := AugmentWithCustomerMemory(o.memory, ctx, userID, in.UserMessage, customer)
+	augmented, recalled := recallMemories(o.memory, ctx, userID, in.UserMessage, about.Customer)
 	inAugmented := in
 	inAugmented.UserMessage = augmented
 
-	messages := o.withMemoryPolicy(buildMessages(inAugmented))
+	messages := withAliasNote(o.withMemoryPolicy(buildMessages(inAugmented)), in.UserMessage, about)
 	tools := o.toolDefs()
 	remembered := false
 
@@ -174,7 +190,7 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 	for round := 0; round < maxToolRounds; round++ {
 		// Open an LLM span for this inference call. span is nil when no tracer
 		// is attached; all span.* calls are guarded by the nil check below.
-		span, spanCtx := o.startSpan(ctx, "chat", o.model, in.UserMessage)
+		span, spanCtx := o.startSpan(ctx, op, o.model, in.UserMessage)
 		resp, err := o.llm.Chat(spanCtx, o.model, messages, tools)
 		if err != nil {
 			if span != nil {
@@ -188,20 +204,24 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 			}
 			return nil, fmt.Errorf("orchestrator: no choices in response")
 		}
-
+		usage := llmobs.TokenCount{
+			Prompt:     resp.Usage.PromptTokens,
+			Completion: resp.Usage.CompletionTokens,
+			Total:      resp.Usage.TotalTokens,
+		}
 		choice := resp.Choices[0]
 
-		// If no tool calls, we have the final answer.
+		// No tool calls: this is the final answer.
 		if len(choice.Message.ToolCalls) == 0 {
 			content, _ := extractContent(choice.Message.Content)
-			if span != nil {
-				span.End(content, llmobs.TokenCount{
-					Prompt:     resp.Usage.PromptTokens,
-					Completion: resp.Usage.CompletionTokens,
-					Total:      resp.Usage.TotalTokens,
-				}, nil)
+			if onChunk != nil && content != "" {
+				onChunk(content)
 			}
-			o.writeBackTurn(in, userID, content, customer, remembered)
+			if span != nil {
+				span.End(content, usage, nil)
+			}
+			queued := o.writeBackTurn(in, userID, content, about, remembered)
+			o.logTurn(in.TenantID, toolCalls, recalled, about, remembered, queued)
 			return &ChatOutput{
 				AssistantText: content,
 				Plans:         plans,
@@ -212,7 +232,6 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 		// Append the full assistant message verbatim (trap 4: reasoning_content must survive).
 		messages = append(messages, choice.Message)
 
-		// Dispatch each tool call.
 		for _, tc := range choice.Message.ToolCalls {
 			result := o.dispatch(ctx, in.TenantID, tc, &remembered)
 			if span != nil {
@@ -230,14 +249,13 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 					result.Plan.TraceID = span.TraceID()
 				}
 				if err := o.planStore.SavePlan(ctx, result.Plan); err != nil {
-					// Non-fatal: log and continue; plan won't be confirmable.
+					// Non-fatal: the plan just won't be confirmable.
 					toolCalls[len(toolCalls)-1].Error = err
 				} else {
 					plans = append(plans, result.Plan)
 				}
 			}
 
-			// Append the tool result message for the next LLM turn.
 			messages = append(messages, llmclient.Message{
 				Role:       "tool",
 				Content:    result.Content,
@@ -247,119 +265,11 @@ func (o *Orchestrator) Chat(ctx context.Context, in ChatInput) (*ChatOutput, err
 		}
 		// Close the span for this round before the next tool-call round starts.
 		if span != nil {
-			span.End("", llmobs.TokenCount{
-				Prompt:     resp.Usage.PromptTokens,
-				Completion: resp.Usage.CompletionTokens,
-				Total:      resp.Usage.TotalTokens,
-			}, nil)
+			span.End("", usage, nil)
 		}
 	}
 
 	return nil, fmt.Errorf("orchestrator: exceeded %d tool rounds without final answer", maxToolRounds)
-}
-
-// StreamChat executes one user turn and streams the response via onChunk.
-// Tool calls are executed synchronously before streaming begins.
-func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk func(string)) (*ChatOutput, error) {
-	ctx = llmgateway.WithTenant(ctx, in.TenantID.String())
-	// Memory recall: augment user message with relevant past context.
-	userID := in.TenantID.String()
-	var customer *CustomerRef
-	if o.memory != nil {
-		customer = ResolveCustomer(ctx, o.customers, in.TenantID, in.UserMessage)
-	}
-	augmented := AugmentWithCustomerMemory(o.memory, ctx, userID, in.UserMessage, customer)
-	inAugmented := in
-	inAugmented.UserMessage = augmented
-
-	messages := o.withMemoryPolicy(buildMessages(inAugmented))
-	tools := o.toolDefs()
-	remembered := false
-
-	var plans []*domainai.Plan
-	var toolCalls []domainai.ToolCallRecord
-
-	// First do any tool-call rounds (non-streaming).
-	for round := 0; round < maxToolRounds; round++ {
-		span, spanCtx := o.startSpan(ctx, "stream", o.model, in.UserMessage)
-		resp, err := o.llm.Chat(spanCtx, o.model, messages, tools)
-		if err != nil {
-			if span != nil {
-				span.End("", llmobs.TokenCount{}, err)
-			}
-			return nil, fmt.Errorf("orchestrator: stream pre-tool chat: %w", err)
-		}
-		if len(resp.Choices) == 0 {
-			if span != nil {
-				span.End("", llmobs.TokenCount{}, fmt.Errorf("no choices"))
-			}
-			return nil, fmt.Errorf("orchestrator: no choices")
-		}
-		choice := resp.Choices[0]
-
-		if len(choice.Message.ToolCalls) == 0 {
-			// No more tools — this Chat response already IS the final answer.
-			// Emit it directly instead of re-requesting with stream=true: a
-			// second inference on the same prompt would run the LLM twice and
-			// report usage twice (P1 double-billing defect — every simple Q&A
-			// cost 2x tokens + 2x usage_events). The streaming contract is still
-			// honoured: the handler wraps each onChunk call in an SSE `chunk`
-			// event, so the client receives the answer as a (single) chunk.
-			finalText, _ := extractContent(choice.Message.Content)
-			if finalText != "" {
-				onChunk(finalText)
-			}
-			if span != nil {
-				span.End(finalText, llmobs.TokenCount{
-					Prompt:     resp.Usage.PromptTokens,
-					Completion: resp.Usage.CompletionTokens,
-					Total:      resp.Usage.TotalTokens,
-				}, nil)
-			}
-			o.writeBackTurn(in, userID, finalText, customer, remembered)
-			return &ChatOutput{
-				AssistantText: finalText,
-				Plans:         plans,
-				ToolCalls:     toolCalls,
-			}, nil
-		}
-
-		// Has tool calls — execute them first (non-streaming).
-		messages = append(messages, choice.Message)
-		for _, tc := range choice.Message.ToolCalls {
-			result := o.dispatch(ctx, in.TenantID, tc, &remembered)
-			if span != nil {
-				span.AttachToolCall(tc.Function.Name, tc.Function.Arguments, result.Content)
-			}
-			toolCalls = append(toolCalls, domainai.ToolCallRecord{
-				ToolName:   tc.Function.Name,
-				ArgsJSON:   tc.Function.Arguments,
-				ResultJSON: result.Content,
-			})
-			if result.Plan != nil {
-				if err := o.planStore.SavePlan(ctx, result.Plan); err != nil {
-					toolCalls[len(toolCalls)-1].Error = err
-				} else {
-					plans = append(plans, result.Plan)
-				}
-			}
-			messages = append(messages, llmclient.Message{
-				Role:       "tool",
-				Content:    result.Content,
-				ToolCallID: tc.ID,
-				Name:       tc.Function.Name,
-			})
-		}
-		if span != nil {
-			span.End("", llmobs.TokenCount{
-				Prompt:     resp.Usage.PromptTokens,
-				Completion: resp.Usage.CompletionTokens,
-				Total:      resp.Usage.TotalTokens,
-			}, nil)
-		}
-	}
-
-	return nil, fmt.Errorf("orchestrator: exceeded %d tool rounds", maxToolRounds)
 }
 
 // ConfirmPlan executes a confirmed plan's real side effects (build PO draft,
@@ -524,12 +434,61 @@ A "--- 历史记忆 ---" block before the user's message holds notes the shop ow
 // turn whose facts the model already saved through remember_customer_fact is
 // not stored again as free text — that would be the same fact in two rows,
 // the untagged one never superseded.
-func (o *Orchestrator) writeBackTurn(in ChatInput, userID, reply string, customer *CustomerRef, remembered bool) {
+func (o *Orchestrator) writeBackTurn(in ChatInput, userID, reply string, about Attribution, remembered bool) bool {
 	if remembered {
-		return
+		return false
 	}
 	summary := BuildMemorySummary(in.TenantID, in.UserMessage, reply)
-	AsyncWriteMemory(o.memory, userID, summary, MemoryWriteMeta(in.TenantID, customer))
+	return AsyncWriteMemory(o.memory, userID, summary, TurnWriteMeta(in.TenantID, about))
+}
+
+// logTurn writes one line per finished turn: which tools ran, how many
+// memories went into the prompt, whom the turn was attributed to and how, and
+// what was saved. No message text — the line must be safe to keep. With
+// Langfuse unset (LANGFUSE_HOST ""), this is the only record of why a turn
+// answered from memory or failed to.
+func (o *Orchestrator) logTurn(tenantID uuid.UUID, calls []domainai.ToolCallRecord, recalled int, about Attribution, factTool, noteQueued bool) {
+	log := o.log
+	if log == nil {
+		log = slog.Default()
+	}
+	tools := make([]string, 0, len(calls))
+	for _, c := range calls {
+		tools = append(tools, c.ToolName)
+	}
+	attributed := "none"
+	switch {
+	case about.Customer != nil && about.Alias != "":
+		attributed = "alias"
+	case about.Customer != nil:
+		attributed = "name"
+	}
+	log.Info("ai turn",
+		"tenant", tenantID.String(),
+		"tools", tools,
+		"recalled", recalled,
+		"customer", attributed,
+		"fact_tool", factTool,
+		"note_queued", noteQueued,
+	)
+}
+
+// withAliasNote tells the model, when the message names a customer only by an
+// address form, whom tally took it to mean. What the user states is filed
+// under that customer; saying so ("已记在 顾建国 名下") lets the owner catch a
+// wrong guess, which was otherwise silent. A question states nothing to file
+// and gets no note. Inserted before the user message, so the static system
+// prompt stays cacheable.
+func withAliasNote(msgs []llmclient.Message, userMessage string, about Attribution) []llmclient.Message {
+	if about.Customer == nil || about.Alias == "" || len(msgs) == 0 || BuildMemorySummary(uuid.Nil, userMessage, "") == "" {
+		return msgs
+	}
+	note := llmclient.Message{Role: "system", Content: fmt.Sprintf(
+		"In the user's message, %s is taken to mean customer %s (the only customer with that surname); what the user states about them is recorded under %s. When you confirm remembering it, name the customer (e.g. 「已记在 %s 名下」) so the owner can correct you if that is the wrong person.",
+		about.Alias, about.Customer.Name, about.Customer.Name, about.Customer.Name)}
+	last := len(msgs) - 1
+	out := append(append(append([]llmclient.Message{}, msgs[:last]...), note), msgs[last])
+	return out
 }
 
 // withMemoryPolicy adds memoryPolicy to the system message when memory is on.

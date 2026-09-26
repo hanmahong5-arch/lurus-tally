@@ -116,13 +116,15 @@ func (o *Orchestrator) rememberCustomerFact(ctx context.Context, tenantID uuid.U
 	}
 	c := res.Customer
 
-	meta := MemoryWriteMeta(tenantID, c)
+	meta := markAliasAttribution(MemoryWriteMeta(tenantID, c), res.ResolvedFrom)
 	meta[MemorySlotKey] = slot.ID
 	meta[MemorySlotSingleKey] = slot.Single
 	meta[MemorySlotValueKey] = value
 	wctx, cancel := context.WithTimeout(ctx, asyncMemoryWriteTimeout)
 	defer cancel()
-	if _, err := o.memory.Add(wctx, tenantID.String(), text, meta); err != nil {
+	_, err = o.memory.Add(wctx, tenantID.String(), text, meta)
+	countMemoryOp(memOpFactWrite, err)
+	if err != nil {
 		return jsonMarshal(map[string]interface{}{
 			"saved": false, "customer": c.Name,
 			"note": "memory is unavailable; nothing was saved — tell the user",

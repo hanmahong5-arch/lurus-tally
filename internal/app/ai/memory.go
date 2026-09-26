@@ -87,28 +87,37 @@ const customerMemoryFetch = 30
 // memories skip the relative score floor (they are on topic by construction);
 // superseded values are still dropped.
 func AugmentWithCustomerMemory(mc MemoryClient, ctx context.Context, userID, userMessage string, customer *CustomerRef) string {
+	out, _ := recallMemories(mc, ctx, userID, userMessage, customer)
+	return out
+}
+
+// recallMemories is AugmentWithCustomerMemory that also returns how many
+// memories went into the prompt.
+func recallMemories(mc MemoryClient, ctx context.Context, userID, userMessage string, customer *CustomerRef) (string, int) {
 	if mc == nil {
-		return userMessage
+		return userMessage, 0
 	}
 	memories, err := mc.Search(ctx, userID, userMessage, memorySearchLimit)
+	countMemoryOp(memOpRecall, err)
 	if err != nil {
-		return userMessage
+		return userMessage, 0
 	}
 	if customer != nil {
 		subject := CustomerSubject(customer.ID)
 		var own []memorusclient.Memory
 		if fs, ok := mc.(FilteredSearcher); ok {
-			own, _ = fs.SearchWithFilter(ctx, userID, userMessage, customerMemoryFetch,
+			own, err = fs.SearchWithFilter(ctx, userID, userMessage, customerMemoryFetch,
 				map[string]string{MemorySubjectKey: subject})
+			countMemoryOp(memOpRecall, err)
 		}
 		memories = customerMemories(own, memories, subject, customer.Name)
 	} else {
 		memories = relevantMemories(memories)
 	}
 	if len(memories) == 0 {
-		return userMessage
+		return userMessage, 0
 	}
-	return AugmentMessagesWithMemory(memories, userMessage)
+	return AugmentMessagesWithMemory(memories, userMessage), len(memories)
 }
 
 // customerMemories merges the customer's own memories (first) with the
@@ -295,6 +304,39 @@ func MemoryWriteMeta(tenantID uuid.UUID, customer *CustomerRef) map[string]any {
 	return meta
 }
 
+// A memory filed under a customer because of an address form (老李 → 李四,
+// the only customer surnamed 李) rather than the full name carries
+// attribution=alias and the form itself, so a wrong guess can be found and
+// moved later.
+const (
+	MemoryAttributionKey = "attribution"
+	MemoryAliasKey       = "alias"
+	AttributionAlias     = "alias"
+)
+
+// TurnWriteMeta is the metadata of a chat turn written back to memorus:
+// MemoryWriteMeta plus the alias mark when the customer came from one.
+func TurnWriteMeta(tenantID uuid.UUID, about Attribution) map[string]any {
+	return markAliasAttribution(MemoryWriteMeta(tenantID, about.Customer), about.Alias)
+}
+
+// markAliasAttribution records in meta that the customer was inferred from
+// alias; a no-op for "" (named in full).
+func markAliasAttribution(meta map[string]any, alias string) map[string]any {
+	if alias != "" {
+		meta[MemoryAttributionKey] = AttributionAlias
+		meta[MemoryAliasKey] = alias
+	}
+	return meta
+}
+
+// Attribution is the one customer a message is about (nil: none, or not
+// exactly one) and, when the message only used an address form, that form.
+type Attribution struct {
+	Customer *CustomerRef
+	Alias    string
+}
+
 // CustomerResolver finds the customers whose names appear in a message.
 type CustomerResolver interface {
 	MatchCustomersInText(ctx context.Context, tenantID uuid.UUID, text string) ([]CustomerRef, error)
@@ -309,12 +351,18 @@ type CustomerResolver interface {
 // It runs inside the request (the RLS-scoped connection lives there), not in
 // the fire-and-forget write goroutine.
 func ResolveCustomer(ctx context.Context, cr CustomerResolver, tenantID uuid.UUID, text string) *CustomerRef {
+	return AttributeCustomer(ctx, cr, tenantID, text).Customer
+}
+
+// AttributeCustomer is ResolveCustomer that also says whether the customer
+// was found by an address form.
+func AttributeCustomer(ctx context.Context, cr CustomerResolver, tenantID uuid.UUID, text string) Attribution {
 	if cr == nil || strings.TrimSpace(text) == "" {
-		return nil
+		return Attribution{}
 	}
 	cands, err := cr.MatchCustomersInText(ctx, tenantID, text)
 	if err != nil {
-		return nil
+		return Attribution{}
 	}
 	byName := make(map[string][]CustomerRef)
 	for _, c := range cands {
@@ -336,31 +384,38 @@ func ResolveCustomer(ctx context.Context, cr CustomerResolver, tenantID uuid.UUI
 	if len(named) == 0 {
 		// Named only by an address form (老李 / 王老板)?
 		if sm, ok := cr.(SurnameMatcher); ok {
-			return resolveAliasInText(ctx, sm, tenantID, text)
+			c, form := resolveAliasInText(ctx, sm, tenantID, text)
+			return Attribution{Customer: c, Alias: form}
 		}
-		return nil
+		return Attribution{}
 	}
 	if len(named) != 1 || len(byName[named[0]]) != 1 {
-		return nil
+		return Attribution{}
 	}
 	c := byName[named[0]][0]
-	return &c
+	return Attribution{Customer: &c}
 }
 
 // AsyncWriteMemory fires a goroutine to write a memory summary to memorus.
-// It is a no-op when mc is nil or there is nothing to remember. Panics in the
-// goroutine are recovered silently so a memorus failure can never crash the
-// server.
-func AsyncWriteMemory(mc MemoryClient, userID string, summary string, meta map[string]any) {
+// It is a no-op when mc is nil or there is nothing to remember, and reports
+// whether a write was started. A failure (or a panic, recovered so memorus can
+// never crash the server) is counted and logged, never returned.
+func AsyncWriteMemory(mc MemoryClient, userID string, summary string, meta map[string]any) bool {
 	if mc == nil || summary == "" {
-		return
+		return false
 	}
 	go func() {
-		defer func() { _ = recover() }()
+		defer func() {
+			if r := recover(); r != nil {
+				countMemoryOp(memOpWrite, panicError(r))
+			}
+		}()
 		// Detach from the request lifecycle (which ends when the HTTP response is
 		// sent) but bound the write so a hung memorus cannot leak the goroutine.
 		ctx, cancel := context.WithTimeout(context.Background(), asyncMemoryWriteTimeout)
 		defer cancel()
-		_, _ = mc.Add(ctx, userID, summary, meta)
+		_, err := mc.Add(ctx, userID, summary, meta)
+		countMemoryOp(memOpWrite, err)
 	}()
+	return true
 }
