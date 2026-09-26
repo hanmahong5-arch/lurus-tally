@@ -72,7 +72,12 @@ patches:
         namespace: lurus-tally
       $patch: delete
 images:
-  # main-81d56b3 (2026-09-26): CI-green main; backend adds today's date to
+  # main-0b25ecf (2026-09-27): CI-green main; backend: address forms no longer
+  # misfile everyday words (老顾客/小时…) under a customer, alias-attributed
+  # notes are marked and announced, Chat/StreamChat share one loop, memory
+  # op counters + per-turn log (c6f135e4); tool schemas generated from the
+  # argument structs (0b25ecfd). No migrations, web tree identical.
+  # main-81d56b3 (2026-09-26): backend adds today's date to
   # the AI prompt (81d56b38). Before it, main-a3d1fcc replaced the hand-set
   # main-4ed56b0 (this file then said main-0d59b14): no migrations, web tree
   # identical, backend gained the AI drawer's memory fixes and 熟客记忆
@@ -80,6 +85,6 @@ images:
   # History: main-0d59b14 (2026-08-08) was the first image after a 37-day CI
   # outage and ran migrations 53→55; see git log of this file.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-81d56b3
+    newTag: main-0b25ecf
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-81d56b3
+    newTag: main-0b25ecf
