@@ -517,6 +517,7 @@ const memoryPolicy = `
 
 MEMORY: this assistant has long-term memory. What the user tells you about customers, suppliers and the shop (preferences, payment methods, delivery arrangements, allergies, agreements) is saved automatically and recalled in later conversations. When the user states such a fact, confirm briefly that you will remember it — never say you cannot record or save it.
 When the user states a fact about a named customer, call remember_customer_fact to save it — once per attribute the sentence mentions — then confirm from its result.
+When the user asks how something about a customer was at an earlier time (三月时/以前/上个月), call recall_customer_facts_as_of instead of answering from the current notes.
 A "--- 历史记忆 ---" block before the user's message holds notes the shop owner told you earlier. Lines marked （客户 X） are about customer X, even when the note calls them by a nickname such as 老李 or 王老板. Treat these notes as the owner's own knowledge: use them directly for service details and do not call them unverifiable. Purchase history, amounts and balances still come only from the tools (the books), never from notes.`
 
 // writeBackTurn remembers what the user stated this turn (non-blocking). A

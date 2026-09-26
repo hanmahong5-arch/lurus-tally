@@ -35,11 +35,15 @@ func rememberCustomerFactDef() llmclient.Tool {
 }
 
 // toolDefs is the tool list sent to the model: the Registry's tools, plus
-// remember_customer_fact when memory is on.
+// remember_customer_fact (and recall_customer_facts_as_of when the client can
+// search by time) when memory is on.
 func (o *Orchestrator) toolDefs() []llmclient.Tool {
 	defs := ToolDefs()
 	if o.memory != nil {
 		defs = append(defs, rememberCustomerFactDef())
+		if _, ok := o.memory.(AsOfSearcher); ok {
+			defs = append(defs, recallAsOfDef())
+		}
 	}
 	return defs
 }
@@ -47,6 +51,13 @@ func (o *Orchestrator) toolDefs() []llmclient.Tool {
 // dispatch runs one tool call. remember_customer_fact is handled here and
 // sets *remembered; every other tool goes to the Registry.
 func (o *Orchestrator) dispatch(ctx context.Context, tenantID uuid.UUID, tc llmclient.ToolCall, remembered *bool) DispatchResult {
+	if tc.Function.Name == recallAsOfTool && o.memory != nil {
+		content, err := o.recallCustomerFactsAsOf(ctx, tenantID, tc.Function.Arguments)
+		if err != nil {
+			content = jsonError(err.Error())
+		}
+		return DispatchResult{ToolCallID: tc.ID, Name: tc.Function.Name, Content: content}
+	}
 	if tc.Function.Name != rememberCustomerFactTool || o.memory == nil {
 		return o.registry.Dispatch(ctx, tenantID, tc)
 	}

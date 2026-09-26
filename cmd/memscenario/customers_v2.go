@@ -21,13 +21,17 @@ package main
 // also occurs in another fact's text would make the substring scoring lie).
 
 import (
+	"context"
 	"fmt"
+	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/memorusclient"
 )
 
 // v2fact is one owner turn. slot is the remember_customer_fact attribute
@@ -658,6 +662,8 @@ func printV2Scores(sc customerScenario, label string, noAttr bool, m memoryScore
 	fmt.Printf("SCORE-CHAINS scenario=%s noattr=%v | latest_only=%d/%d latest_found=%d/%d older_values_injected=%d\n",
 		label, noAttr, m.chainOK, m.chainTotal, m.chainLatest, m.chainTotal, m.chainOlder)
 
+	asOfProbe(sc, label, m.sessionEnds, partners, user)
+
 	rows := listMemories(user)
 	type tally struct{ ok, n int }
 	score := map[string]*tally{"customer": {}, "names_other": {}, "shop_rule": {}}
@@ -725,4 +731,43 @@ func (v v2scenario) counts() string {
 	return fmt.Sprintf("customers=%d statements=%d (s1=%d s2=%d s3=%d) change_chains=%d (3-value=%d) unclear_attribute=%d shop_rules=%d chit_chat=%d names_another_customer=%d memory_probes=%d (customers=%d)",
 		len(v.base.customers), facts, len(v.sessions[0]), len(v.sessions[1]), len(v.sessions[2]),
 		len(chains), chains3, unclear, rules, chat, traps, len(v.base.memoryProbes), len(about))
+}
+
+// asOfProbe asks memorus, for every three-step change chain, what held right
+// after session 1 and after session 2 (GET /memories/search?as_of=): the
+// value stated then must be there, the later ones must not. This is the
+// memorus side of 「三月时李四怎么付款」 on real replay data, without a model.
+func asOfProbe(sc customerScenario, label string, ends []time.Time, partners map[string]uuid.UUID, user string) {
+	if len(ends) < 2 {
+		return
+	}
+	c, err := memorusclient.New(memorusclient.Config{BaseURL: os.Getenv("MEMORUS_URL"), APIKey: "probekey"})
+	if err != nil {
+		panic(fmt.Sprint("memorus client: ", err))
+	}
+	ok, total := 0, 0
+	for _, ch := range sc.chains {
+		if len(ch.keys) != 3 {
+			continue
+		}
+		for r := 0; r < 2; r++ {
+			hits, err := c.SearchAsOf(context.Background(), user, ch.owner, 20,
+				map[string]string{ai.MemorySubjectKey: ai.CustomerSubject(partners[ch.owner])}, ends[r])
+			var got []string
+			for _, h := range hits {
+				got = append(got, h.Content)
+			}
+			joined := strings.Join(got, " | ")
+			good := err == nil && strings.Contains(joined, ch.keys[r])
+			for _, later := range ch.keys[r+1:] {
+				good = good && !strings.Contains(joined, later)
+			}
+			total++
+			if good {
+				ok++
+			}
+			fmt.Printf("ASOF ok=%v %s %s after_session=%d want=%s notes=%q\n", good, ch.owner, ch.slot, r+1, ch.keys[r], got)
+		}
+	}
+	fmt.Printf("SCORE-ASOF scenario=%s | held_then=%d/%d\n", label, ok, total)
 }

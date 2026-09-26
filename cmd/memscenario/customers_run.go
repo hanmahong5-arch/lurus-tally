@@ -327,6 +327,8 @@ type memoryScore struct {
 	found, want, foreign, stale, lines int
 	// v2 only: per (probe, change chain of the probed customer).
 	chainTotal, chainLatest, chainOK, chainOlder int
+	// v2 only: when each session's writes had landed (as-of probe).
+	sessionEnds []time.Time
 }
 
 func memories(ctx context.Context, sales *repoai.SQLSaleRepo, tenant uuid.UUID, sc customerScenario, noAttr bool) memoryScore {
@@ -347,18 +349,28 @@ func memories(ctx context.Context, sales *repoai.SQLSaleRepo, tenant uuid.UUID, 
 		ai.AsyncWriteMemory(c, user, summary, ai.MemoryWriteMeta(tenant, customer))
 		time.Sleep(400 * time.Millisecond)
 	}
+	var s memoryScore
+	// v2: note when each session's (async) writes have landed, for the as-of probe.
+	sessionEnd := func() {
+		if len(sc.chains) > 0 {
+			time.Sleep(1500 * time.Millisecond)
+			s.sessionEnds = append(s.sessionEnds, time.Now())
+			time.Sleep(1500 * time.Millisecond)
+		}
+	}
 	for _, f := range sc.session1 {
 		turn(f)
 	}
+	sessionEnd()
 	for _, f := range sc.session2 {
 		turn(f)
 	}
+	sessionEnd()
 	for _, f := range sc.session3 {
 		turn(f)
 	}
 
 	all := append(append(append([]fact{}, sc.session1...), sc.session2...), sc.session3...)
-	var s memoryScore
 	for _, p := range sc.memoryProbes {
 		customer := ai.ResolveCustomer(ctx, resolver, tenant, p.q)
 		block := ai.AugmentWithCustomerMemory(c, ctx, user, p.q, customer)
