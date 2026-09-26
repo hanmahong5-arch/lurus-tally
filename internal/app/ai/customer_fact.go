@@ -16,21 +16,11 @@ import (
 const rememberCustomerFactTool = "remember_customer_fact"
 
 func rememberCustomerFactDef() llmclient.Tool {
-	params, _ := json.Marshal(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"customer":  map[string]string{"type": "string", "description": "Customer as the user named them, including address forms like 老张/王老板/李总"},
-			"attribute": map[string]interface{}{"type": "string", "enum": customerSlotIDs(), "description": "Which attribute of the customer the statement is about"},
-			"value":     map[string]string{"type": "string", "description": "The attribute's value now, short (e.g. 微信, 城南路18号, 每周四, 他儿子)"},
-			"quote":     map[string]string{"type": "string", "description": "The part of the user's message that states it, verbatim"},
-		},
-		"required": []string{"customer", "attribute", "value", "quote"},
-	})
 	return llmclient.Tool{Type: "function", Function: llmclient.FunctionDef{
 		Name: rememberCustomerFactTool,
 		Description: "Save a fact the user states about a named customer to long-term memory. Call it whenever the user tells you how a customer pays, settles, where and when to deliver, how to pack, who to contact, invoice needs, agreed prices, allergies, tastes or regular items — including a change (改用/换成/搬到/以后). One call per attribute: a sentence that mentions two attributes needs two calls. A new value of the same attribute replaces the old one. If the result says the customer is ambiguous or unknown, nothing was saved — ask the user. Attributes:" +
 			customerSlotGuide(),
-		Parameters: params,
+		Parameters: toolParams(rememberCustomerFactArgs{}),
 	}}
 }
 
@@ -73,12 +63,7 @@ func (o *Orchestrator) dispatch(ctx context.Context, tenantID uuid.UUID, tc llmc
 // request: the model confirms "记住了" from this result, so it must be real.
 // An unknown or ambiguous customer is not written.
 func (o *Orchestrator) rememberCustomerFact(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args struct {
-		Customer  string `json:"customer"`
-		Attribute string `json:"attribute"`
-		Value     string `json:"value"`
-		Quote     string `json:"quote"`
-	}
+	var args rememberCustomerFactArgs
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("%s: invalid args: %w", rememberCustomerFactTool, err)
 	}

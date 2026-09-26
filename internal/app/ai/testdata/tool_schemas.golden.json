@@ -1,0 +1,224 @@
+{
+  "abc_classify": {
+    "properties": {},
+    "type": "object"
+  },
+  "customer_recent_purchases": {
+    "properties": {
+      "customer": {
+        "description": "Customer name as the user said it",
+        "type": "string"
+      },
+      "limit": {
+        "description": "Number of latest bills (default 5, max 20)",
+        "type": "integer"
+      }
+    },
+    "required": [
+      "customer"
+    ],
+    "type": "object"
+  },
+  "get_stock_summary": {
+    "properties": {},
+    "type": "object"
+  },
+  "gross_margin_summary": {
+    "properties": {
+      "days": {
+        "description": "Lookback days (default 30)",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "list_dead_stock": {
+    "properties": {
+      "days": {
+        "description": "Inactivity threshold in days (default 90)",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "list_low_stock": {
+    "properties": {
+      "threshold_days": {
+        "description": "Days of supply threshold (default 7)",
+        "type": "integer"
+      }
+    },
+    "type": "object"
+  },
+  "propose_bulk_stock_adjust": {
+    "properties": {
+      "delta": {
+        "description": "Quantity delta to apply (positive = in, negative = out)",
+        "type": "number"
+      },
+      "filter": {
+        "description": "Search filter to select products",
+        "type": "string"
+      }
+    },
+    "required": [
+      "filter",
+      "delta"
+    ],
+    "type": "object"
+  },
+  "propose_create_purchase_draft": {
+    "properties": {
+      "items": {
+        "items": {
+          "properties": {
+            "product_name": {
+              "type": "string"
+            },
+            "qty": {
+              "type": "number"
+            }
+          },
+          "type": "object"
+        },
+        "type": "array"
+      }
+    },
+    "required": [
+      "items"
+    ],
+    "type": "object"
+  },
+  "propose_price_change": {
+    "properties": {
+      "action": {
+        "description": "Price action: '+5%', '-10%', '=199.00'",
+        "type": "string"
+      },
+      "filter": {
+        "description": "Search filter to select products (e.g. brand name, category)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "filter",
+      "action"
+    ],
+    "type": "object"
+  },
+  "query_exchange_rate": {
+    "properties": {
+      "from": {
+        "description": "Source currency code (e.g. USD)",
+        "type": "string"
+      },
+      "to": {
+        "description": "Target currency code (default CNY)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "from"
+    ],
+    "type": "object"
+  },
+  "recall_customer_facts_as_of": {
+    "properties": {
+      "as_of": {
+        "description": "The moment the user asks about: YYYY-MM-DD, YYYY-MM, or just the month (\"03\") when the user names no year — the most recent such month is used. A period means its end. Convert relative times (上个月, 上周三, 前天) to a date from today's date; never pass the words themselves.",
+        "type": "string"
+      },
+      "customer": {
+        "description": "Customer as the user named them, including address forms like 老张/王老板/李总",
+        "type": "string"
+      },
+      "topic": {
+        "description": "What the user asks about, in their words (e.g. 付款方式, 送货地址); optional",
+        "type": "string"
+      }
+    },
+    "required": [
+      "customer",
+      "as_of"
+    ],
+    "type": "object"
+  },
+  "recent_sales_top": {
+    "properties": {
+      "days": {
+        "description": "Lookback days (default 7)",
+        "type": "integer"
+      },
+      "limit": {
+        "description": "Number of results (default 10)",
+        "type": "integer"
+      },
+      "metric": {
+        "enum": [
+          "revenue",
+          "margin",
+          "qty"
+        ],
+        "type": "string"
+      }
+    },
+    "required": [
+      "metric"
+    ],
+    "type": "object"
+  },
+  "remember_customer_fact": {
+    "properties": {
+      "attribute": {
+        "description": "Which attribute of the customer the statement is about",
+        "enum": [
+          "payment_method",
+          "settlement",
+          "delivery_address",
+          "delivery_time",
+          "delivery_method",
+          "packaging",
+          "contact",
+          "invoice",
+          "price_terms",
+          "allergy",
+          "taste",
+          "regular_items",
+          "other"
+        ],
+        "type": "string"
+      },
+      "customer": {
+        "description": "Customer as the user named them, including address forms like 老张/王老板/李总",
+        "type": "string"
+      },
+      "quote": {
+        "description": "The part of the user's message that states it, verbatim",
+        "type": "string"
+      },
+      "value": {
+        "description": "The attribute's value now, short (e.g. 微信, 城南路18号, 每周四, 他儿子)",
+        "type": "string"
+      }
+    },
+    "required": [
+      "customer",
+      "attribute",
+      "value",
+      "quote"
+    ],
+    "type": "object"
+  },
+  "search_products": {
+    "properties": {
+      "query": {
+        "description": "Search string",
+        "type": "string"
+      }
+    },
+    "required": [
+      "query"
+    ],
+    "type": "object"
+  }
+}

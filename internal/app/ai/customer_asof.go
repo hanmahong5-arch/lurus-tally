@@ -29,20 +29,11 @@ type AsOfSearcher interface {
 var shopZone = time.FixedZone("CST", 8*3600)
 
 func recallAsOfDef() llmclient.Tool {
-	params, _ := json.Marshal(map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"customer": map[string]string{"type": "string", "description": "Customer as the user named them, including address forms like 老张/王老板/李总"},
-			"as_of":    map[string]string{"type": "string", "description": "The moment the user asks about: YYYY-MM-DD, YYYY-MM, or just the month (\"03\") when the user names no year — the most recent such month is used. A period means its end. Convert relative times (上个月, 上周三, 前天) to a date from today's date; never pass the words themselves."},
-			"topic":    map[string]string{"type": "string", "description": "What the user asks about, in their words (e.g. 付款方式, 送货地址); optional"},
-		},
-		"required": []string{"customer", "as_of"},
-	})
 	return llmclient.Tool{Type: "function", Function: llmclient.FunctionDef{
 		Name: recallAsOfTool,
 		Description: "What the user had told you about a named customer as it stood at a past time — the values that held then, before later changes. " +
 			"Call it for questions about an earlier time: 三月时/以前/上个月/去年 李四怎么付款、原来送到哪. For how things are now, use the notes you already have instead.",
-		Parameters: params,
+		Parameters: toolParams(recallAsOfArgs{}),
 	}}
 }
 
@@ -81,11 +72,7 @@ func parseAsOf(raw string, now time.Time) (time.Time, error) {
 // recallCustomerFactsAsOf resolves the customer and reads the notes that
 // held at as_of. Unknown or ambiguous customers read nothing.
 func (o *Orchestrator) recallCustomerFactsAsOf(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args struct {
-		Customer string `json:"customer"`
-		AsOf     string `json:"as_of"`
-		Topic    string `json:"topic"`
-	}
+	var args recallAsOfArgs
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("%s: invalid args: %w", recallAsOfTool, err)
 	}

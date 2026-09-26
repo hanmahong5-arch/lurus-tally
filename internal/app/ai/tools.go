@@ -134,143 +134,67 @@ func NewRegistry(p ProductRepo, s StockRepo, sl SaleRepo, e ExchangeRateRepo) *R
 
 // ToolDefs returns the OpenAI-compatible tool definitions to include in every chat request.
 func ToolDefs() []llmclient.Tool {
-	mustJSON := func(v interface{}) json.RawMessage {
-		b, _ := json.Marshal(v)
-		return b
-	}
 	return []llmclient.Tool{
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "search_products",
 			Description: "Full-text search products by name, code, mnemonic, or brand.",
-			Parameters: mustJSON(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"query": map[string]string{"type": "string", "description": "Search string"},
-				},
-				"required": []string{"query"},
-			}),
+			Parameters:  toolParams(searchProductsArgs{}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "get_stock_summary",
 			Description: "Overall warehouse overview ONLY (库存总体情况 / 仓库概况): total SKUs and total inventory value (CNY). Do NOT use this as a preliminary survey for replenishment (补货 → list_low_stock), dead-stock (滞销 → list_dead_stock), or margin (毛利 → gross_margin_summary) questions — call the dedicated tool directly instead.",
-			Parameters:  mustJSON(map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}),
+			Parameters:  toolParams(noArgs{}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "list_low_stock",
 			Description: "Lists SKUs where current quantity is below the re-order point (ROP). Returns product name, qty, ROP, and days of supply. Call this for 补货/该进多少货/复库/缺货预警/库存不够 questions — it IS the replenishment calculation.",
-			Parameters: mustJSON(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"threshold_days": map[string]interface{}{"type": "integer", "description": "Days of supply threshold (default 7)"},
-				},
-			}),
+			Parameters:  toolParams(listLowStockArgs{}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "list_dead_stock",
 			Description: "Lists SKUs with no stock movement in the past N days (dead stock / slow-moving inventory). Call this for 滞销/呆滞/库存积压/卖不动 questions.",
-			Parameters: mustJSON(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"days": map[string]interface{}{"type": "integer", "description": "Inactivity threshold in days (default 90)"},
-				},
-			}),
+			Parameters:  toolParams(listDeadStockArgs{}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "abc_classify",
 			Description: "ABC classification of products by sales revenue: A=top 80%, B=next 15%, C=bottom 5%. Returns SKU count and cumulative revenue share per tier. Call this for ABC分类/帕累托 questions.",
-			Parameters:  mustJSON(map[string]interface{}{"type": "object", "properties": map[string]interface{}{}}),
+			Parameters:  toolParams(noArgs{}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "recent_sales_top",
 			Description: "Top-N products by revenue, margin, or quantity over recent N days. Call this for 畅销/爆款/排行/卖得最好 questions.",
-			Parameters: mustJSON(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"metric": map[string]interface{}{"type": "string", "enum": []string{"revenue", "margin", "qty"}},
-					"days":   map[string]interface{}{"type": "integer", "description": "Lookback days (default 7)"},
-					"limit":  map[string]interface{}{"type": "integer", "description": "Number of results (default 10)"},
-				},
-				"required": []string{"metric"},
-			}),
+			Parameters:  toolParams(recentSalesTopArgs{}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "gross_margin_summary",
 			Description: "Overall gross margin over the past N days, plus top-10 highest margin and bottom-10 lowest margin products. Call this for 毛利/利润率最低/最高 questions.",
-			Parameters: mustJSON(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"days": map[string]interface{}{"type": "integer", "description": "Lookback days (default 30)"},
-				},
-			}),
+			Parameters:  toolParams(grossMarginSummaryArgs{}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "customer_recent_purchases",
 			Description: "A customer's latest sale bills with every line (date, product, qty, unit price, amount), read from the books. Call this for 上次买了什么/买过什么/最近买了什么/老客户 又来了 questions about a named customer. Pass the customer as the user said it, including address forms like 老张/王老板/李总 — they are resolved by surname. If several customers match the name it returns the candidates instead of guessing — ask the user which one.",
-			Parameters: mustJSON(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"customer": map[string]string{"type": "string", "description": "Customer name as the user said it"},
-					"limit":    map[string]interface{}{"type": "integer", "description": "Number of latest bills (default 5, max 20)"},
-				},
-				"required": []string{"customer"},
-			}),
+			Parameters:  toolParams(customerRecentPurchasesArgs{}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "query_exchange_rate",
 			Description: "Returns the current exchange rate from one currency to CNY (or another target).",
-			Parameters: mustJSON(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"from": map[string]string{"type": "string", "description": "Source currency code (e.g. USD)"},
-					"to":   map[string]string{"type": "string", "description": "Target currency code (default CNY)"},
-				},
-				"required": []string{"from"},
-			}),
+			Parameters:  toolParams(queryExchangeRateArgs{}),
 		}},
 		// Destructive — return plan only
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "propose_price_change",
 			Description: "DESTRUCTIVE: Propose a bulk price change for matching products. Returns a plan_id for user confirmation. Does NOT execute immediately.",
-			Parameters: mustJSON(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filter": map[string]string{"type": "string", "description": "Search filter to select products (e.g. brand name, category)"},
-					"action": map[string]string{"type": "string", "description": "Price action: '+5%', '-10%', '=199.00'"},
-				},
-				"required": []string{"filter", "action"},
-			}),
+			Parameters:  toolParams(proposePriceChangeArgs{}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "propose_create_purchase_draft",
 			Description: "DESTRUCTIVE: Propose creation of a purchase order draft. Returns a plan_id for user confirmation. Does NOT execute immediately.",
-			Parameters: mustJSON(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"items": map[string]interface{}{
-						"type": "array",
-						"items": map[string]interface{}{
-							"type": "object",
-							"properties": map[string]interface{}{
-								"product_name": map[string]string{"type": "string"},
-								"qty":          map[string]string{"type": "number"},
-							},
-						},
-					},
-				},
-				"required": []string{"items"},
-			}),
+			Parameters:  toolParams(proposeCreatePurchaseDraftArgs{}),
 		}},
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "propose_bulk_stock_adjust",
 			Description: "DESTRUCTIVE: Propose a bulk stock quantity adjustment for matching products. Returns a plan_id for user confirmation. Does NOT execute immediately.",
-			Parameters: mustJSON(map[string]interface{}{
-				"type": "object",
-				"properties": map[string]interface{}{
-					"filter": map[string]string{"type": "string", "description": "Search filter to select products"},
-					"delta":  map[string]string{"type": "number", "description": "Quantity delta to apply (positive = in, negative = out)"},
-				},
-				"required": []string{"filter", "delta"},
-			}),
+			Parameters:  toolParams(proposeBulkStockAdjustArgs{}),
 		}},
 	}
 }
@@ -332,9 +256,7 @@ func (r *Registry) Dispatch(ctx context.Context, tenantID uuid.UUID, call llmcli
 // --- Safe tool implementations ---
 
 func (r *Registry) searchProducts(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args struct {
-		Query string `json:"query"`
-	}
+	var args searchProductsArgs
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("search_products: invalid args: %w", err)
 	}
@@ -380,9 +302,7 @@ func (r *Registry) getStockSummary(ctx context.Context, tenantID uuid.UUID) (str
 }
 
 func (r *Registry) listLowStock(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args struct {
-		ThresholdDays *int `json:"threshold_days"`
-	}
+	var args listLowStockArgs
 	_ = json.Unmarshal([]byte(argsJSON), &args)
 	threshDays := 7
 	if args.ThresholdDays != nil {
@@ -435,9 +355,7 @@ func (r *Registry) listLowStock(ctx context.Context, tenantID uuid.UUID, argsJSO
 }
 
 func (r *Registry) listDeadStock(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args struct {
-		Days *int `json:"days"`
-	}
+	var args listDeadStockArgs
 	_ = json.Unmarshal([]byte(argsJSON), &args)
 	days := 90
 	if args.Days != nil {
@@ -540,11 +458,7 @@ func (r *Registry) abcClassify(ctx context.Context, tenantID uuid.UUID) (string,
 }
 
 func (r *Registry) recentSalesTop(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args struct {
-		Metric string `json:"metric"`
-		Days   *int   `json:"days"`
-		Limit  *int   `json:"limit"`
-	}
+	var args recentSalesTopArgs
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("recent_sales_top: invalid args: %w", err)
 	}
@@ -624,9 +538,7 @@ func (r *Registry) recentSalesTop(ctx context.Context, tenantID uuid.UUID, argsJ
 }
 
 func (r *Registry) grossMarginSummary(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args struct {
-		Days *int `json:"days"`
-	}
+	var args grossMarginSummaryArgs
 	_ = json.Unmarshal([]byte(argsJSON), &args)
 	days := 30
 	if args.Days != nil {
@@ -710,10 +622,7 @@ func (r *Registry) grossMarginSummary(ctx context.Context, tenantID uuid.UUID, a
 }
 
 func (r *Registry) queryExchangeRate(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args struct {
-		From string `json:"from"`
-		To   string `json:"to"`
-	}
+	var args queryExchangeRateArgs
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("query_exchange_rate: invalid args: %w", err)
 	}
@@ -734,10 +643,7 @@ func (r *Registry) queryExchangeRate(ctx context.Context, tenantID uuid.UUID, ar
 // --- Destructive tool implementations (return Plan, no side effects) ---
 
 func (r *Registry) proposePriceChange(ctx context.Context, tenantID uuid.UUID, argsJSON string) (*domainai.Plan, string, error) {
-	var args struct {
-		Filter string `json:"filter"`
-		Action string `json:"action"`
-	}
+	var args proposePriceChangeArgs
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return nil, "", fmt.Errorf("propose_price_change: invalid args: %w", err)
 	}
@@ -788,12 +694,7 @@ func (r *Registry) proposePriceChange(ctx context.Context, tenantID uuid.UUID, a
 }
 
 func (r *Registry) proposeCreatePurchaseDraft(ctx context.Context, tenantID uuid.UUID, argsJSON string) (*domainai.Plan, string, error) {
-	var args struct {
-		Items []struct {
-			ProductName string  `json:"product_name"`
-			Qty         float64 `json:"qty"`
-		} `json:"items"`
-	}
+	var args proposeCreatePurchaseDraftArgs
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return nil, "", fmt.Errorf("propose_create_purchase_draft: invalid args: %w", err)
 	}
@@ -833,10 +734,7 @@ func (r *Registry) proposeCreatePurchaseDraft(ctx context.Context, tenantID uuid
 }
 
 func (r *Registry) proposeBulkStockAdjust(ctx context.Context, tenantID uuid.UUID, argsJSON string) (*domainai.Plan, string, error) {
-	var args struct {
-		Filter string  `json:"filter"`
-		Delta  float64 `json:"delta"`
-	}
+	var args proposeBulkStockAdjustArgs
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return nil, "", fmt.Errorf("propose_bulk_stock_adjust: invalid args: %w", err)
 	}
@@ -906,10 +804,7 @@ func computeROP(s StockRow) decimal.Decimal {
 }
 
 func (r *Registry) customerRecentPurchases(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args struct {
-		Customer string `json:"customer"`
-		Limit    *int   `json:"limit"`
-	}
+	var args customerRecentPurchasesArgs
 	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
 		return "", fmt.Errorf("customer_recent_purchases: invalid args: %w", err)
 	}
