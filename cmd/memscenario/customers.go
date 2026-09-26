@@ -44,6 +44,9 @@ type customerScenario struct {
 	decoyCustomer, decoyProduct string
 
 	session1, session2 []fact
+	// session3 and chains are used by the v2 scenarios only (empty in v1).
+	session3 []fact
+	chains   []customerChain
 	// purchaseProbes: names asked about "上次买了什么"; ambiguousProbe must
 	// come back as candidates ambiguousWant.
 	purchaseProbes []string

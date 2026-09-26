@@ -3,7 +3,7 @@ package main
 // Customer-memory replay ("熟客记忆") against a real Postgres and memorus.
 //
 //	CUSTOMERS=1 DATABASE_URL=postgres://tally:tallysecret@127.0.0.1:5432/lurus?sslmode=disable \
-//	  MEMORUS_URL=http://127.0.0.1:18767/api/v1 [SCENARIO=holdout] [NOATTR=1] go run ./cmd/memscenario
+//	  MEMORUS_URL=http://127.0.0.1:18767/api/v1 [SCENARIO=holdout|v2-dev|v2-holdout] [NOATTR=1] go run ./cmd/memscenario
 //
 // DATABASE_URL must be a superuser (migrations + seeding). Reads run as a
 // NOSUPERUSER role on a connection pinned with app.tenant_id, the way the
@@ -41,8 +41,16 @@ const appRole, appPassword = "memscenario_app", "memscenario"
 func runCustomers() {
 	ctx := context.Background()
 	sc, label := devCustomers(), "dev"
-	if os.Getenv("SCENARIO") == "holdout" {
+	v2, isV2 := v2ByLabel(os.Getenv("SCENARIO"))
+	switch {
+	case os.Getenv("SCENARIO") == "holdout":
 		sc, label = holdoutCustomers(), "holdout"
+	case isV2:
+		if os.Getenv("ALIASES") == "1" || (os.Getenv("LLM") == "1" && os.Getenv("SLOTS") != "1") {
+			panic("v2 scenarios run in the default replay or with LLM=1 SLOTS=1 only")
+		}
+		sc, label = v2.customers(), os.Getenv("SCENARIO")
+		fmt.Printf("== %s: %s\n", label, v2.counts())
 	}
 	noAttr := os.Getenv("NOATTR") == "1"
 
@@ -94,6 +102,9 @@ func runCustomers() {
 	m := memories(ctx, sales, tenant, sc, noAttr)
 	fmt.Printf("SCORE scenario=%s noattr=%v | purchases: exact=%d/%d ambiguous_ok=%v | memory: own_facts=%d/%d foreign_lines=%d stale_lines=%d injected_lines=%d\n",
 		label, noAttr, p1.exact, p1.total, p1.ambiguousOK, m.found, m.want, m.foreign, m.stale, m.lines)
+	if isV2 {
+		printV2Scores(sc, label, noAttr, m, partners, tenant.String())
+	}
 }
 
 func must(err error, what string) {
@@ -314,6 +325,8 @@ func purchases(ctx context.Context, sales *repoai.SQLSaleRepo, tenant uuid.UUID,
 
 type memoryScore struct {
 	found, want, foreign, stale, lines int
+	// v2 only: per (probe, change chain of the probed customer).
+	chainTotal, chainLatest, chainOK, chainOlder int
 }
 
 func memories(ctx context.Context, sales *repoai.SQLSaleRepo, tenant uuid.UUID, sc customerScenario, noAttr bool) memoryScore {
@@ -340,8 +353,11 @@ func memories(ctx context.Context, sales *repoai.SQLSaleRepo, tenant uuid.UUID, 
 	for _, f := range sc.session2 {
 		turn(f)
 	}
+	for _, f := range sc.session3 {
+		turn(f)
+	}
 
-	all := append(append([]fact{}, sc.session1...), sc.session2...)
+	all := append(append(append([]fact{}, sc.session1...), sc.session2...), sc.session3...)
 	var s memoryScore
 	for _, p := range sc.memoryProbes {
 		customer := ai.ResolveCustomer(ctx, resolver, tenant, p.q)
@@ -391,6 +407,30 @@ func memories(ctx context.Context, sales *repoai.SQLSaleRepo, tenant uuid.UUID, 
 		}
 		fmt.Printf("MEMORY q=%q resolved=%s own=%d/%d foreign=%d stale=%d\n%s\n",
 			p.q, resolved, found, len(wantKeys), foreign, stale, indent(injected))
+		// Change chains (v2): the newest value is injected and no older one.
+		for _, ch := range sc.chains {
+			if ch.owner != p.about {
+				continue
+			}
+			n := len(ch.keys)
+			latest := strings.Contains(injected, ch.keys[n-1])
+			older := 0
+			for _, k := range ch.keys[:n-1] {
+				if strings.Contains(injected, k) {
+					older++
+				}
+			}
+			s.chainTotal++
+			if latest {
+				s.chainLatest++
+			}
+			if latest && older == 0 {
+				s.chainOK++
+			}
+			s.chainOlder += older
+			fmt.Printf("CHAIN ok=%v q=%q %s %s %s latest=%v older_injected=%d\n",
+				latest && older == 0, p.q, ch.owner, ch.slot, strings.Join(ch.keys, "→"), latest, older)
+		}
 	}
 	return s
 }

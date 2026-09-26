@@ -49,10 +49,19 @@ type slotKeep struct {
 	customer, key, why string
 }
 
+// slotChain (v2): a customer's values of one attribute, oldest → newest. Rows
+// with the newest value must be current; every row with an older value must
+// be superseded by a row with a later value of the chain.
+type slotChain struct {
+	customer, slot string
+	keys           []string
+}
+
 type slotScenario struct {
 	before, after []slotStatement
 	pairs         []slotPair
 	keep          []slotKeep
+	chains        []slotChain // v2 only
 }
 
 func devSlots() slotScenario {
@@ -153,8 +162,13 @@ type judgeItem struct {
 
 func runSlots(ctx context.Context, appDB dbHandle, sales *repoai.SQLSaleRepo, tenant uuid.UUID, label string, partners map[string]uuid.UUID) {
 	sc := devSlots()
-	if label == "holdout" {
+	switch label {
+	case "holdout":
 		sc = holdoutSlots()
+	case "v2-dev":
+		sc = devSlotsV2()
+	case "v2-holdout":
+		sc = holdoutSlotsV2()
 	}
 	llm, err := llmclient.New(llmclient.Config{
 		BaseURL: os.Getenv("NEWAPI_BASE_URL"), APIKey: os.Getenv("NEWAPI_API_KEY"),
@@ -193,7 +207,10 @@ func runSlots(ctx context.Context, appDB dbHandle, sales *repoai.SQLSaleRepo, te
 		}
 		right := false
 		for _, a := range attrs {
-			right = right || a == s.slot
+			// "a|b" (v2): the attribute is genuinely unclear, either is right.
+			for _, want := range strings.Split(s.slot, "|") {
+				right = right || a == want
+			}
 		}
 		if len(attrs) > 0 {
 			called++
@@ -248,6 +265,40 @@ func runSlots(ctx context.Context, appDB dbHandle, sales *repoai.SQLSaleRepo, te
 			replaced++
 		}
 		fmt.Printf("PAIR ok=%v %s %s: %s → %s (old rows %d, new rows %d)\n", ok, p.customer, p.slot, p.oldKey, p.newKey, len(olds), len(news))
+	}
+	chainsOK := 0
+	for _, ch := range sc.chains {
+		// Each row belongs to the newest value it mentions.
+		byValue := make([][]storedMemory, len(ch.keys))
+		for _, r := range bySubject[subjectOf(ch.customer)] {
+			for i := len(ch.keys) - 1; i >= 0; i-- {
+				if r.mentions(ch.keys[i]) {
+					byValue[i] = append(byValue[i], r)
+					break
+				}
+			}
+		}
+		ok, counts := true, make([]int, len(ch.keys))
+		later := map[string]bool{} // ids of rows holding a later value
+		for i := len(ch.keys) - 1; i >= 0; i-- {
+			counts[i] = len(byValue[i])
+			ok = ok && len(byValue[i]) > 0
+			for _, r := range byValue[i] {
+				if i == len(ch.keys)-1 {
+					ok = ok && r.current()
+					continue
+				}
+				expectedOld[r.ID] = true
+				ok = ok && !r.current() && later[*r.SupersededBy]
+			}
+			for _, r := range byValue[i] {
+				later[r.ID] = true
+			}
+		}
+		if ok {
+			chainsOK++
+		}
+		fmt.Printf("CHAIN ok=%v %s %s: %s (rows per value %v)\n", ok, ch.customer, ch.slot, strings.Join(ch.keys, " → "), counts)
 	}
 	wrong := 0
 	for _, r := range rows {
@@ -304,6 +355,30 @@ func runSlots(ctx context.Context, appDB dbHandle, sales *repoai.SQLSaleRepo, te
 		items = append(items, it)
 		fmt.Printf("QUESTION q=%q\n  a=%q\n", it.Q, oneLine(it.A))
 	}
+	for _, ch := range sc.chains {
+		if seen[ch.customer] {
+			continue
+		}
+		seen[ch.customer] = true
+		it := judgeItem{Run: label, Q: "接待" + ch.customer + "要注意什么？"}
+		for _, s := range append(append([]slotStatement{}, sc.before...), sc.after...) {
+			switch {
+			case s.customer != ch.customer:
+			case chainStale(sc.chains, s):
+				it.Stale = append(it.Stale, s.text)
+			default:
+				it.Current = append(it.Current, s.text)
+			}
+		}
+		out, err := o.Chat(ctx, ai.ChatInput{TenantID: tenant, UserMessage: it.Q})
+		if err != nil {
+			fmt.Printf("QUESTION err=%v q=%q\n", err, it.Q)
+			continue
+		}
+		it.A = out.AssistantText
+		items = append(items, it)
+		fmt.Printf("QUESTION q=%q\n  a=%q\n", it.Q, oneLine(it.A))
+	}
 	if path := os.Getenv("SLOTS_JUDGE"); path != "" {
 		b, _ := json.MarshalIndent(items, "", " ")
 		must(os.WriteFile(path, b, 0o644), "write judge items")
@@ -311,6 +386,25 @@ func runSlots(ctx context.Context, appDB dbHandle, sales *repoai.SQLSaleRepo, te
 
 	fmt.Printf("SCORE slots scenario=%s model=%s | replaced %d/%d | wrong_supersedes %d | keep %d/%d | tool_called %d/%d slot_right %d/%d | rows %d\n",
 		label, modelName(model), replaced, len(sc.pairs), wrong, keepOK, len(sc.keep), called, total, slotRight, total, len(rows))
+	if len(sc.chains) > 0 {
+		fmt.Printf("SCORE slot-chains scenario=%s model=%s | chains_replaced %d/%d\n", label, modelName(model), chainsOK, len(sc.chains))
+	}
+}
+
+// chainStale: s states an older value of one of the chains.
+func chainStale(chains []slotChain, s slotStatement) bool {
+	for _, c := range chains {
+		if c.customer != s.customer || c.slot != s.slot {
+			continue
+		}
+		n := len(c.keys)
+		for _, k := range c.keys[:n-1] {
+			if strings.Contains(s.text, k) && !strings.Contains(s.text, c.keys[n-1]) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // pairedSlot: s is the old value of one of the pairs.
