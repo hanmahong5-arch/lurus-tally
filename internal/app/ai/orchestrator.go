@@ -544,11 +544,23 @@ func (o *Orchestrator) withMemoryPolicy(msgs []llmclient.Message) []llmclient.Me
 }
 
 func buildMessages(in ChatInput) []llmclient.Message {
-	msgs := make([]llmclient.Message, 0, 1+len(in.History)+1)
+	msgs := make([]llmclient.Message, 0, 2+len(in.History)+1)
 	msgs = append(msgs, llmclient.Message{Role: "system", Content: systemPrompt})
+	msgs = append(msgs, llmclient.Message{Role: "system", Content: todayNote(time.Now())})
 	msgs = append(msgs, in.History...)
 	msgs = append(msgs, llmclient.Message{Role: "user", Content: in.UserMessage})
 	return msgs
+}
+
+// todayNote gives the model today's date in the shop's clock. Without it
+// 上个月/前天/去年这个时候 had no anchor: asked what held then, the model passed
+// the words through verbatim or guessed a year from its training data
+// (TestLive_AsOfDates: 5/18). A separate system message, so systemPrompt stays
+// byte-identical and cacheable.
+func todayNote(now time.Time) string {
+	d := now.In(shopZone)
+	return fmt.Sprintf("Today is %s (%s), China Standard Time. Resolve relative dates the user mentions (上个月, 上周三, 前天, 去年这个时候) against it.",
+		d.Format("2006-01-02"), d.Weekday())
 }
 
 // extractContent handles both string and []interface{} content formats.

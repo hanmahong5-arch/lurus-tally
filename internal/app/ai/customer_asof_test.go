@@ -93,3 +93,26 @@ func TestRecallAsOf_NotOfferedWithoutTimeSearch(t *testing.T) {
 		}
 	}
 }
+
+// Relative times (上个月/前天/去年这个时候) need today's date; without it the
+// model passed them through verbatim or guessed a year (live oracle
+// TestLive_AsOfDates: 5/18 before). The date sits in its own system message
+// so systemPrompt stays byte-identical for the prompt cache.
+func TestBuildMessages_TellsTheModelTodayInShopTime(t *testing.T) {
+	msgs := buildMessages(ChatInput{UserMessage: "上个月李四怎么付款"})
+	if msgs[0].Content != systemPrompt {
+		t.Fatal("the static system prompt must come first, unchanged")
+	}
+	today := time.Now().In(shopZone).Format("2006-01-02")
+	var dated bool
+	for _, m := range msgs {
+		s, _ := m.Content.(string)
+		dated = dated || (m.Role == "system" && strings.Contains(s, today))
+	}
+	if !dated {
+		t.Fatalf("no system message carries today's date %s: %+v", today, msgs)
+	}
+	if last := msgs[len(msgs)-1]; last.Role != "user" || last.Content != "上个月李四怎么付款" {
+		t.Fatalf("the user turn must stay last and unchanged: %+v", last)
+	}
+}

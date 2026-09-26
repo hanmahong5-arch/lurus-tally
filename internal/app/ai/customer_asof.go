@@ -33,7 +33,7 @@ func recallAsOfDef() llmclient.Tool {
 		"type": "object",
 		"properties": map[string]interface{}{
 			"customer": map[string]string{"type": "string", "description": "Customer as the user named them, including address forms like 老张/王老板/李总"},
-			"as_of":    map[string]string{"type": "string", "description": "The moment the user asks about: YYYY-MM-DD, YYYY-MM, or just the month (\"03\") when the user names no year — the most recent such month is used. A period means its end."},
+			"as_of":    map[string]string{"type": "string", "description": "The moment the user asks about: YYYY-MM-DD, YYYY-MM, or just the month (\"03\") when the user names no year — the most recent such month is used. A period means its end. Convert relative times (上个月, 上周三, 前天) to a date from today's date; never pass the words themselves."},
 			"topic":    map[string]string{"type": "string", "description": "What the user asks about, in their words (e.g. 付款方式, 送货地址); optional"},
 		},
 		"required": []string{"customer", "as_of"},
