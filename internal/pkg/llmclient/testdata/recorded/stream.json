@@ -1,0 +1,29 @@
+[
+  {
+    "path": "/v1/chat/completions",
+    "request": {
+      "model": "deepseek-v4-flash",
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是店铺助手，回答尽量简短。"
+        },
+        {
+          "role": "user",
+          "content": "一箱矿泉水 24 瓶，3 箱一共多少瓶？只回答数字。"
+        }
+      ],
+      "max_tokens": 1024,
+      "stream": true,
+      "thinking": {
+        "type": "disabled"
+      },
+      "stream_options": {
+        "include_usage": true
+      }
+    },
+    "status": 200,
+    "content_type": "text/event-stream",
+    "body": "data: {\"id\":\"21867af1-fef9-4f24-846a-a61f4f8d66b6\",\"object\":\"chat.completion.chunk\",\"created\":1790474662,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"aeb56401ca74e127821c4f9126dcb669\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"id\":\"21867af1-fef9-4f24-846a-a61f4f8d66b6\",\"object\":\"chat.completion.chunk\",\"created\":1790474662,\"model\":\"deepseek-flash\",\"system_fingerprint\":\"aeb56401ca74e127821c4f9126dcb669\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"72\"},\"logprobs\":null,\"finish_reason\":null}],\"usage\":null}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"\"},\"finish_reason\":\"stop\",\"index\":0,\"logprobs\":null}],\"created\":1790474662,\"id\":\"21867af1-fef9-4f24-846a-a61f4f8d66b6\",\"model\":\"deepseek-flash\",\"object\":\"chat.completion.chunk\",\"system_fingerprint\":\"aeb56401ca74e127821c4f9126dcb669\",\"usage\":{\"completion_tokens\":1,\"prompt_cache_hit_tokens\":0,\"prompt_cache_miss_tokens\":32,\"prompt_tokens\":32,\"prompt_tokens_details\":{\"cached_tokens\":0},\"total_tokens\":33,\"x_lurus\":{\"cost_lb\":0.000073,\"model_ratio\":0.15,\"group_ratio\":1,\"balance_remaining\":0,\"billing_mode\":\"legacy\"}}}\n\ndata: [DONE]\n\n"
+  }
+]

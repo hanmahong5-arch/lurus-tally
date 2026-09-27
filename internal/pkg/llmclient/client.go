@@ -404,7 +404,8 @@ func (e *LLMError) Error() string {
 }
 
 // classifyAPIError maps newapi error codes to LLMError with correct Retryable flag.
-// trap 2: newapi returns model_not_found as 503, invalid_request as 500 — branch on code.
+// trap 2: the HTTP status for a given code is not stable (model_not_found has come back as
+// 503; recorded 2026-09-27 as 404 — testdata/recorded/), so branch on code.
 func classifyAPIError(httpStatus int, apiErr *APIErr) *LLMError {
 	e := &LLMError{
 		Code:       apiErr.Code,

@@ -1,0 +1,26 @@
+[
+  {
+    "path": "/v1/chat/completions",
+    "request": {
+      "model": "no-such-model-recorded",
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是店铺助手，回答尽量简短。"
+        },
+        {
+          "role": "user",
+          "content": "一箱矿泉水 24 瓶，3 箱一共多少瓶？只回答数字。"
+        }
+      ],
+      "max_tokens": 1024,
+      "stream": false,
+      "thinking": {
+        "type": "disabled"
+      }
+    },
+    "status": 404,
+    "content_type": "application/json; charset=utf-8",
+    "body": "{\"error\":{\"message\":\"no available channel for model no-such-model-recorded in group default (distributor) (request id: 20260927100423124723027MkReW37U)\",\"type\":\"not_found_error\",\"param\":\"\",\"code\":\"model_not_found\"}}"
+  }
+]

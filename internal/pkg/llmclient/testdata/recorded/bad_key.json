@@ -1,0 +1,26 @@
+[
+  {
+    "path": "/v1/chat/completions",
+    "request": {
+      "model": "deepseek-v4-flash",
+      "messages": [
+        {
+          "role": "system",
+          "content": "你是店铺助手，回答尽量简短。"
+        },
+        {
+          "role": "user",
+          "content": "一箱矿泉水 24 瓶，3 箱一共多少瓶？只回答数字。"
+        }
+      ],
+      "max_tokens": 1024,
+      "stream": false,
+      "thinking": {
+        "type": "disabled"
+      }
+    },
+    "status": 401,
+    "content_type": "application/json; charset=utf-8",
+    "body": "{\"error\":{\"code\":\"\",\"message\":\"Invalid token (request id: 202609270204232426279568268d9d69wFT0znr)\",\"type\":\"new_api_error\"}}"
+  }
+]
