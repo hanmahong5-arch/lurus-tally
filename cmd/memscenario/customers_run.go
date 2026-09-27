@@ -38,6 +38,9 @@ import (
 
 const appRole, appPassword = "memscenario_app", "memscenario"
 
+// shopClock is the zone the purchase tool dates bills in (ai.shopZone, UTC+8).
+var shopClock = time.FixedZone("CST", 8*3600)
+
 func runCustomers() {
 	ctx := context.Background()
 	sc, label := devCustomers(), "dev"
@@ -267,7 +270,7 @@ func expectedBills(sc customerScenario, name string) []string {
 			total = total.Add(q.Mul(p))
 			items = append(items, fmt.Sprintf("%s×%s@%s=%s", l.product, q.String(), p.StringFixed(2), q.Mul(p).StringFixed(2)))
 		}
-		bs = append(bs, eb{b.daysAgo, fmt.Sprintf("%s %s %s [%s]", b.no, now.AddDate(0, 0, -b.daysAgo).Format("2006-01-02"),
+		bs = append(bs, eb{b.daysAgo, fmt.Sprintf("%s %s %s [%s]", b.no, now.AddDate(0, 0, -b.daysAgo).In(shopClock).Format("2006-01-02"),
 			total.StringFixed(2), strings.Join(items, " "))})
 	}
 	sort.SliceStable(bs, func(i, j int) bool { return bs[i].daysAgo < bs[j].daysAgo })

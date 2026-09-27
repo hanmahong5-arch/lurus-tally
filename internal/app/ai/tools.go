@@ -848,7 +848,7 @@ func (r *Registry) customerRecentPurchases(ctx context.Context, tenantID uuid.UU
 	}
 	outBills := make([]bill, 0, len(bills))
 	for _, b := range bills {
-		ob := bill{BillNo: b.BillNo, Date: b.BillDate.Format("2006-01-02"), Total: b.Total.StringFixed(2)}
+		ob := bill{BillNo: b.BillNo, Date: b.BillDate.In(shopZone).Format("2006-01-02"), Total: b.Total.StringFixed(2)}
 		for _, l := range b.Lines {
 			ob.Items = append(ob.Items, line{
 				Product:   l.ProductName,

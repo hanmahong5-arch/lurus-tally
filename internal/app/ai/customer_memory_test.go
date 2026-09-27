@@ -93,6 +93,24 @@ func TestCustomerRecentPurchases_ReturnsBillsOfTheResolvedCustomer(t *testing.T)
 	}
 }
 
+// A sale at 07:30 in the shop (23:30 UTC the day before) is dated by the
+// shop's clock — the same clock todayNote gives the model — not by the
+// server's zone (UTC in the pod), which put it on the previous day.
+func TestCustomerRecentPurchases_DatesBillsInShopTime(t *testing.T) {
+	sales := &custSaleRepo{
+		cands: []CustomerRef{{ID: zhangID, Name: "张三", Code: "C001"}},
+		bills: []CustomerBill{{
+			BillNo: "SL-0003", BillDate: time.Date(2026, 9, 20, 23, 30, 0, 0, time.UTC),
+			Total: decimal.RequireFromString("32"),
+		}},
+	}
+	r := NewRegistry(&cxProductRepo{}, &cxStockRepo{}, sales, &cxExchangeRepo{})
+	res := callTool(r, uuid.New(), "customer_recent_purchases", `{"customer":"张三"}`)
+	if !strings.Contains(res.Content, `"date":"2026-09-21"`) {
+		t.Errorf("want the shop date 2026-09-21: %s", res.Content)
+	}
+}
+
 func TestCustomerRecentPurchases_AmbiguousNameListsCandidates(t *testing.T) {
 	sales := &custSaleRepo{cands: []CustomerRef{{ID: zhangID, Name: "张三"}, {ID: zhangfeng, Name: "张三丰"}}}
 	r := NewRegistry(&cxProductRepo{}, &cxStockRepo{}, sales, &cxExchangeRepo{})
