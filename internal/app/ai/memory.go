@@ -10,6 +10,7 @@ package ai
 
 import (
 	"context"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -17,6 +18,59 @@ import (
 	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/memorusclient"
 )
+
+// ObjectReader is implemented by memory clients that serve memorus' object
+// view (memorusclient.Client does): a customer's typed facts by slot, the
+// value in force per single-valued slot, and what disagrees.
+type ObjectReader interface {
+	GetObject(ctx context.Context, subjectID string, asOf *time.Time) (*memorusclient.ObjectView, error)
+}
+
+// typedMemories turns a customer's object view into recall lines: one per
+// value in force, tagged with the subject and slot so the usual labelling
+// applies, plus one line per conflict that lists both values — the model is
+// to ask the owner which holds, never to pick one.
+func typedMemories(view *memorusclient.ObjectView, subject string) []memorusclient.Memory {
+	if view == nil {
+		return nil
+	}
+	tag := func(slot string) map[string]any {
+		return map[string]any{"metadata": map[string]any{MemorySubjectKey: subject, MemorySlotKey: slot}}
+	}
+	var out []memorusclient.Memory
+	for _, s := range view.Slots {
+		if s.Single {
+			if s.Current != nil {
+				out = append(out, memorusclient.Memory{ID: s.Current.ID, Content: s.Current.Content, Metadata: tag(s.Slot)})
+			}
+			continue
+		}
+		for _, v := range s.Values {
+			out = append(out, memorusclient.Memory{ID: v.ID, Content: v.Content, Metadata: tag(s.Slot)})
+		}
+	}
+	for _, c := range view.Conflicts {
+		var values []string
+		if s := view.Slot(c.Slot); s != nil {
+			for _, id := range c.IDs {
+				for _, v := range s.Values {
+					if v.ID == id {
+						values = append(values, v.Content)
+					}
+				}
+			}
+		}
+		if len(values) < 2 {
+			continue
+		}
+		out = append(out, memorusclient.Memory{
+			ID:       "conflict:" + c.Slot,
+			Content:  "记录不一致，请向店主确认，不要自行选一个：" + strings.Join(values, " ／ "),
+			Metadata: tag(c.Slot),
+		})
+	}
+	return out
+}
 
 // asyncMemoryWriteTimeout bounds a fire-and-forget memory write. It is detached
 // from the request context (which ends when the HTTP response is sent) but must
@@ -104,11 +158,25 @@ func recallMemories(mc MemoryClient, ctx context.Context, userID, userMessage st
 	}
 	if customer != nil {
 		subject := CustomerSubject(customer.ID)
+		// The typed facts come from the object view (the value in force per
+		// slot, conflicts listed); a server without it, or a failed read,
+		// falls back to the filtered search alone, as before.
 		var own []memorusclient.Memory
+		if or, ok := mc.(ObjectReader); ok {
+			view, verr := or.GetObject(ctx, subject, nil)
+			if verr != nil && !errors.Is(verr, memorusclient.ErrUnsupported) {
+				countMemoryOp(memOpRecall, verr)
+			}
+			if verr == nil {
+				own = typedMemories(view, subject)
+			}
+		}
 		if fs, ok := mc.(FilteredSearcher); ok {
-			own, err = fs.SearchWithFilter(ctx, userID, userMessage, customerMemoryFetch,
+			var rows []memorusclient.Memory
+			rows, err = fs.SearchWithFilter(ctx, userID, userMessage, customerMemoryFetch,
 				map[string]string{MemorySubjectKey: subject})
 			countMemoryOp(memOpRecall, err)
+			own = append(own, rows...)
 		}
 		memories = customerMemories(own, memories, subject, customer.Name)
 	} else {

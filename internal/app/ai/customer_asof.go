@@ -105,13 +105,40 @@ func (o *Orchestrator) recallCustomerFactsAsOf(ctx context.Context, tenantID uui
 	}
 	rctx, cancel := context.WithTimeout(ctx, asyncMemoryWriteTimeout)
 	defer cancel()
+	subject := CustomerSubject(c.ID)
+	// Typed values as they stood at `at` come from the object view (a
+	// backdated 「从三月起月结」 is placed where it held, not where it was
+	// recorded); the untyped notes from the time search. Without the view
+	// everything comes from the search, as before.
+	var facts []string
+	typed := map[string]bool{}
+	if or, ok := o.memory.(ObjectReader); ok {
+		if view, verr := or.GetObject(rctx, subject, &at); verr == nil {
+			for _, s := range view.Slots {
+				label := s.Slot
+				if cs, ok := customerSlot(s.Slot); ok {
+					label = cs.Label
+				}
+				values := s.Values
+				if s.Single && s.Current != nil {
+					values = []memorusclient.Fact{*s.Current}
+				}
+				for _, v := range values {
+					typed[v.ID] = true
+					facts = append(facts, label+"："+v.Content)
+				}
+			}
+		}
+	}
 	hits, err := searcher.SearchAsOf(rctx, tenantID.String(), query, customerMemoryLimit,
-		map[string]string{MemorySubjectKey: CustomerSubject(c.ID)}, at)
+		map[string]string{MemorySubjectKey: subject}, at)
 	if err != nil {
 		return jsonMarshal(map[string]interface{}{"customer": c.Name, "note": "memory is unavailable — tell the user"})
 	}
-	facts := make([]string, 0, len(hits))
 	for _, h := range hits {
+		if typed[h.ID] || (len(typed) > 0 && memoryMetaString(h, MemorySlotKey) != "") {
+			continue // already listed from the view, or a typed row the view did not hold then
+		}
 		facts = append(facts, h.Content)
 	}
 	out := map[string]interface{}{

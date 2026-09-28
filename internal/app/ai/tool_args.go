@@ -70,6 +70,10 @@ type rememberCustomerFactArgs struct {
 	Attribute string `json:"attribute" jsonschema:"required" jsonschema_description:"Which attribute of the customer the statement is about"`
 	Value     string `json:"value" jsonschema:"required" jsonschema_description:"The attribute's value now, short (e.g. 微信, 城南路18号, 每周四, 他儿子)"`
 	Quote     string `json:"quote" jsonschema:"required" jsonschema_description:"The part of the user's message that states it, verbatim"`
+	// Since and Replaces are optional (the schema's required list is
+	// unchanged): a backdated statement and a multi-valued swap.
+	Since    string `json:"since,omitempty" jsonschema_description:"Only when the user says since when the value applies (从三月起, 上个月开始, 去年起): YYYY-MM-DD or YYYY-MM, converted from today's date. Omit when the user does not say."`
+	Replaces string `json:"replaces,omitempty" jsonschema_description:"Only for a multi-valued attribute (allergy, taste, regular_items, other) when the user says the new value takes the place of an old one (改喝澳白，不喝冰美式了 → 冰美式): the old value, short. Omit otherwise."`
 }
 
 // JSONSchemaExtend lists the attribute slots, which come from the customer

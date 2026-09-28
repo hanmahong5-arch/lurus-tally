@@ -196,6 +196,14 @@
         "description": "The part of the user's message that states it, verbatim",
         "type": "string"
       },
+      "replaces": {
+        "description": "Only for a multi-valued attribute (allergy, taste, regular_items, other) when the user says the new value takes the place of an old one (改喝澳白，不喝冰美式了 → 冰美式): the old value, short. Omit otherwise.",
+        "type": "string"
+      },
+      "since": {
+        "description": "Only when the user says since when the value applies (从三月起, 上个月开始, 去年起): YYYY-MM-DD or YYYY-MM, converted from today's date. Omit when the user does not say.",
+        "type": "string"
+      },
       "value": {
         "description": "The attribute's value now, short (e.g. 微信, 城南路18号, 每周四, 他儿子)",
         "type": "string"

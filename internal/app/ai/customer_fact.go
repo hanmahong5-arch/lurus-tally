@@ -5,10 +5,57 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/memorusclient"
 )
+
+// FactWriter is implemented by memory clients that take the contract-v2
+// write extras (memorusclient.Client does): when the fact started to hold,
+// and which old value of a multi-valued slot it replaces.
+type FactWriter interface {
+	AddWithOptions(ctx context.Context, userID, content string, meta map[string]any, opts memorusclient.AddOptions) (*memorusclient.AddResult, error)
+}
+
+// parseSince turns the model's `since` into the start of the named period in
+// the shop's clock: a day, a month, or a month number (the most recent one
+// that has started, as parseAsOf does). A moment after now is refused —
+// memorus does not take future facts, and a typo'd year must not backdate
+// nothing silently.
+func parseSince(raw string, now time.Time) (time.Time, error) {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return time.Time{}, fmt.Errorf("since is empty")
+	}
+	var start time.Time
+	switch {
+	case isRFC3339(s):
+		start, _ = time.Parse(time.RFC3339, s)
+	default:
+		if d, err := time.ParseInLocation("2006-01-02", s, shopZone); err == nil {
+			start = d
+		} else if m, err := time.ParseInLocation("2006-01", s, shopZone); err == nil {
+			start = m
+		} else if end, err := parseAsOf(s, now); err == nil {
+			// A bare month: parseAsOf gives its end; its start is the first.
+			e := end.In(shopZone)
+			start = time.Date(e.Year(), e.Month(), 1, 0, 0, 0, 0, shopZone)
+		} else {
+			return time.Time{}, fmt.Errorf("since %q: use YYYY-MM-DD or YYYY-MM", raw)
+		}
+	}
+	if start.After(now) {
+		return time.Time{}, fmt.Errorf("since %s is in the future", start.In(shopZone).Format("2006-01-02"))
+	}
+	return start, nil
+}
+
+func isRFC3339(s string) bool {
+	_, err := time.Parse(time.RFC3339, s)
+	return err == nil
+}
 
 // rememberCustomerFactTool saves one attribute of one customer to memorus.
 // It is not a Registry tool: it exists only when memory is on, and it writes
@@ -105,9 +152,36 @@ func (o *Orchestrator) rememberCustomerFact(ctx context.Context, tenantID uuid.U
 	meta[MemorySlotKey] = slot.ID
 	meta[MemorySlotSingleKey] = slot.Single
 	meta[MemorySlotValueKey] = value
+
+	// Contract-v2 extras, only through a client that speaks them.
+	var opts memorusclient.AddOptions
+	var notes []string
+	if s := strings.TrimSpace(args.Since); s != "" {
+		if since, err := parseSince(s, time.Now()); err == nil {
+			opts.ValidFrom = &since
+		} else {
+			notes = append(notes, "the start date was not usable ("+err.Error()+"); the fact was saved as holding from now")
+		}
+	}
+	if r := strings.TrimSpace(args.Replaces); r != "" {
+		if slot.Single {
+			notes = append(notes, "a single-valued attribute replaces its old value by itself; `replaces` was ignored")
+		} else {
+			opts.ReplacesValue = r
+		}
+	}
 	wctx, cancel := context.WithTimeout(ctx, asyncMemoryWriteTimeout)
 	defer cancel()
-	_, err = o.memory.Add(wctx, tenantID.String(), text, meta)
+	var unmatched bool
+	if fw, ok := o.memory.(FactWriter); ok && (opts.ValidFrom != nil || opts.ReplacesValue != "") {
+		var r *memorusclient.AddResult
+		r, err = fw.AddWithOptions(wctx, tenantID.String(), text, meta, opts)
+		if err == nil && r != nil {
+			unmatched = r.UnmatchedReplacesValue
+		}
+	} else {
+		_, err = o.memory.Add(wctx, tenantID.String(), text, meta)
+	}
 	countMemoryOp(memOpFactWrite, err)
 	if err != nil {
 		return jsonMarshal(map[string]interface{}{
@@ -121,8 +195,20 @@ func (o *Orchestrator) rememberCustomerFact(ctx context.Context, tenantID uuid.U
 		"attribute": slot.Label,
 		"value":     value,
 	}
+	if opts.ValidFrom != nil {
+		out["since"] = opts.ValidFrom.In(shopZone).Format("2006-01-02")
+	}
+	if opts.ReplacesValue != "" {
+		out["replaced"] = !unmatched
+		if unmatched {
+			notes = append(notes, fmt.Sprintf("no note of %q was on record, so nothing was replaced; the new value was saved alongside — say so", opts.ReplacesValue))
+		}
+	}
 	if res.ResolvedFrom != "" {
-		out["note"] = fmt.Sprintf("%s was taken to mean customer %s (the only customer with that surname); say so", res.ResolvedFrom, c.Name)
+		notes = append(notes, fmt.Sprintf("%s was taken to mean customer %s (the only customer with that surname); say so", res.ResolvedFrom, c.Name))
+	}
+	if len(notes) > 0 {
+		out["note"] = strings.Join(notes, "; ")
 	}
 	return jsonMarshal(out)
 }
