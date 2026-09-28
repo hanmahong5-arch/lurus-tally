@@ -77,6 +77,8 @@ images:
   # notes are marked and announced, Chat/StreamChat share one loop, memory
   # op counters + per-turn log (c6f135e4); tool schemas generated from the
   # argument structs (0b25ecfd). No migrations, web tree identical.
+  # main-bd6a2b9 (2026-09-28): 熟客记忆读 memorus 对象视图(bd6a2b99;memorus R6 a4f8e15-emb
+  # 契约 v2)。web 同 tag 重建,内容无变化。
   # main-81d56b3 (2026-09-26): backend adds today's date to
   # the AI prompt (81d56b38). Before it, main-a3d1fcc replaced the hand-set
   # main-4ed56b0 (this file then said main-0d59b14): no migrations, web tree
@@ -85,6 +87,6 @@ images:
   # History: main-0d59b14 (2026-08-08) was the first image after a 37-day CI
   # outage and ran migrations 53→55; see git log of this file.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-0b25ecf
+    newTag: main-bd6a2b9
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-0b25ecf
+    newTag: main-bd6a2b9
