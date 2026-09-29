@@ -72,6 +72,8 @@ patches:
         namespace: lurus-tally
       $patch: delete
 images:
+  # main-30f5056 (2026-09-29): 熟客召回按优先级注入对象视图(冲突 → 单值现值 →
+  # 多值每槽最新 3 条,30f5056e);无 migration,web 树无变化。
   # main-d144431 (2026-09-29): platform-client 余额不足判定改按 body 错误码
   # (insufficient_balance),同时接受 400/402/409 三种 HTTP 状态码,为 platform
   # 侧统一成 402 的改动(#73)预铺客户端兼容;无 migration,web 树无变化。
@@ -90,6 +92,6 @@ images:
   # History: main-0d59b14 (2026-08-08) was the first image after a 37-day CI
   # outage and ran migrations 53→55; see git log of this file.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-d144431
+    newTag: main-30f5056
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-d144431
+    newTag: main-30f5056
