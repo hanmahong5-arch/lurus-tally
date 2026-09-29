@@ -26,10 +26,22 @@ type ObjectReader interface {
 	GetObject(ctx context.Context, subjectID string, asOf *time.Time) (*memorusclient.ObjectView, error)
 }
 
-// typedMemories turns a customer's object view into recall lines: one per
-// value in force, tagged with the subject and slot so the usual labelling
-// applies, plus one line per conflict that lists both values — the model is
-// to ask the owner which holds, never to pick one.
+// multiValuesPerSlot bounds how many rows of one multi-valued slot (allergy,
+// taste, regular_items, other, …) typedMemories emits. The object view lists
+// a slot's values newest-first (memorus sorts each slot's rows by effective
+// time descending before building the view), so capping here keeps the
+// latest ones. Without a cap, a customer with many notes on one slot could
+// fill the whole customerMemoryLimit and push out the single-valued current
+// facts and the conflict warning below — the ones a question about the
+// customer needs most.
+const multiValuesPerSlot = 3
+
+// typedMemories turns a customer's object view into recall lines, ordered by
+// what a question about the customer needs most: conflicts first (the model
+// must ask, never guess), then every single-valued slot's current value, then
+// each multi-valued slot's newest values (capped at multiValuesPerSlot).
+// customerMemories later truncates this list at customerMemoryLimit, so the
+// order here is what survives a customer with many notes.
 func typedMemories(view *memorusclient.ObjectView, subject string) []memorusclient.Memory {
 	if view == nil {
 		return nil
@@ -37,18 +49,7 @@ func typedMemories(view *memorusclient.ObjectView, subject string) []memorusclie
 	tag := func(slot string) map[string]any {
 		return map[string]any{"metadata": map[string]any{MemorySubjectKey: subject, MemorySlotKey: slot}}
 	}
-	var out []memorusclient.Memory
-	for _, s := range view.Slots {
-		if s.Single {
-			if s.Current != nil {
-				out = append(out, memorusclient.Memory{ID: s.Current.ID, Content: s.Current.Content, Metadata: tag(s.Slot)})
-			}
-			continue
-		}
-		for _, v := range s.Values {
-			out = append(out, memorusclient.Memory{ID: v.ID, Content: v.Content, Metadata: tag(s.Slot)})
-		}
-	}
+	var conflicts, singles, multis []memorusclient.Memory
 	for _, c := range view.Conflicts {
 		var values []string
 		if s := view.Slot(c.Slot); s != nil {
@@ -63,12 +64,31 @@ func typedMemories(view *memorusclient.ObjectView, subject string) []memorusclie
 		if len(values) < 2 {
 			continue
 		}
-		out = append(out, memorusclient.Memory{
+		conflicts = append(conflicts, memorusclient.Memory{
 			ID:       "conflict:" + c.Slot,
 			Content:  "记录不一致，请向店主确认，不要自行选一个：" + strings.Join(values, " ／ "),
 			Metadata: tag(c.Slot),
 		})
 	}
+	for _, s := range view.Slots {
+		if s.Single {
+			if s.Current != nil {
+				singles = append(singles, memorusclient.Memory{ID: s.Current.ID, Content: s.Current.Content, Metadata: tag(s.Slot)})
+			}
+			continue
+		}
+		values := s.Values
+		if len(values) > multiValuesPerSlot {
+			values = values[:multiValuesPerSlot]
+		}
+		for _, v := range values {
+			multis = append(multis, memorusclient.Memory{ID: v.ID, Content: v.Content, Metadata: tag(s.Slot)})
+		}
+	}
+	out := make([]memorusclient.Memory, 0, len(conflicts)+len(singles)+len(multis))
+	out = append(out, conflicts...)
+	out = append(out, singles...)
+	out = append(out, multis...)
 	return out
 }
 

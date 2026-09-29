@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -117,6 +118,65 @@ func TestRecall_ConflictIsShownNotChosen(t *testing.T) {
 	}
 	if !strings.Contains(line, "（客户 张三·付款方式）") || !strings.Contains(line, "张三只收现金") || !strings.Contains(line, "张三改月结") || !strings.Contains(line, "不要自行选一个") {
 		t.Errorf("the conflict line must name both values and say to ask:\n%s", line)
+	}
+}
+
+// A customer with many multi-valued notes (allergy/other) must not push the
+// single-valued current fact and the conflict warning out of the recall cap:
+// typedMemories must emit conflicts and single-valued slots before capping
+// each multi-valued slot to its newest few.
+func TestRecall_SingleSlotAndConflictSurviveManyMultiValues(t *testing.T) {
+	monthly, cash := fact("pm-monthly", "张三改月结", "月结"), fact("pm-cash", "张三只收现金", "现金")
+	allergy := make([]memorusclient.Fact, 3)
+	for i := range allergy {
+		allergy[i] = fact(fmt.Sprintf("al%d", i), fmt.Sprintf("张三对花生过敏-%d", i), "花生")
+	}
+	other := make([]memorusclient.Fact, 8)
+	for i := range other {
+		other[i] = fact(fmt.Sprintf("ot%d", i), fmt.Sprintf("张三备注-%d", i), "")
+	}
+	view := &memorusclient.ObjectView{
+		SubjectID: CustomerSubject(zhangID),
+		Slots: []memorusclient.SlotView{
+			{Slot: "allergy", Single: false, Values: allergy},
+			{Slot: "other", Single: false, Values: other},
+			{Slot: "payment_method", Single: true, Current: &monthly, Values: []memorusclient.Fact{monthly, cash}},
+		},
+		Conflicts: []memorusclient.Conflict{{Slot: "payment_method", IDs: []string{"pm-cash", "pm-monthly"}, Reason: "multiple_current"}},
+	}
+	mc := &objectMemory{view: view}
+	out := AugmentWithCustomerMemory(mc, context.Background(), "u", "接待张三要注意什么", &CustomerRef{ID: zhangID, Name: "张三"})
+	if !strings.Contains(out, "（客户 张三·付款方式）张三改月结") {
+		t.Errorf("single-valued current slot must survive many multi-valued notes:\n%s", out)
+	}
+	if !strings.Contains(out, "记录不一致") {
+		t.Errorf("conflict warning must survive many multi-valued notes:\n%s", out)
+	}
+	if n := strings.Count(out, "张三备注-"); n > 3 {
+		t.Errorf("a multi-valued slot must contribute at most 3 lines, got %d:\n%s", n, out)
+	}
+}
+
+// Without a conflict, a single-valued slot's current value must still make
+// it into the prompt even when a multi-valued slot alone has enough rows to
+// fill the recall cap.
+func TestRecall_SingleSlotSurvivesManyMultiValuesWithoutConflict(t *testing.T) {
+	monthly := fact("pm-monthly", "张三改月结", "月结")
+	other := make([]memorusclient.Fact, 12)
+	for i := range other {
+		other[i] = fact(fmt.Sprintf("ot%d", i), fmt.Sprintf("张三备注-%d", i), "")
+	}
+	view := &memorusclient.ObjectView{
+		SubjectID: CustomerSubject(zhangID),
+		Slots: []memorusclient.SlotView{
+			{Slot: "other", Single: false, Values: other},
+			{Slot: "payment_method", Single: true, Current: &monthly, Values: []memorusclient.Fact{monthly}},
+		},
+	}
+	mc := &objectMemory{view: view}
+	out := AugmentWithCustomerMemory(mc, context.Background(), "u", "接待张三要注意什么", &CustomerRef{ID: zhangID, Name: "张三"})
+	if !strings.Contains(out, "（客户 张三·付款方式）张三改月结") {
+		t.Errorf("single-valued current must survive a multi-valued slot with many rows:\n%s", out)
 	}
 }
 
