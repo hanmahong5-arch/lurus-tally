@@ -143,7 +143,18 @@ func (c *Client) doWithIdem(ctx context.Context, method, path string, payload an
 }
 
 // mapStatus translates an HTTP status (and best-effort body inspection) into ErrCode.
+//
+// The platform's body error code is authoritative over the status code for
+// insufficient_balance: platform currently emits that code with 400, 402 or
+// 409 depending on the endpoint (converging on 402), but the body is always
+// {"error":"insufficient_balance","message":...}. So a 4xx whose body carries
+// that code maps to ErrCodeInsufficientBalance regardless of status. Without a
+// body code the status-based mapping below applies unchanged. 5xx is left to
+// the status mapping so outage semantics (ErrCodeUnavailable) never flip.
 func mapStatus(status int, body []byte) ErrCode {
+	if status >= 400 && status < 500 && bodyErrorCode(body) == string(ErrCodeInsufficientBalance) {
+		return ErrCodeInsufficientBalance
+	}
 	switch status {
 	case http.StatusUnauthorized, http.StatusForbidden:
 		return ErrCodeUnauthorized
@@ -161,6 +172,21 @@ func mapStatus(status int, body []byte) ErrCode {
 		return ErrCodeInsufficientBalance
 	}
 	return ErrCodeUnknown
+}
+
+// bodyErrorCode returns the platform's machine-readable `error` field, or ""
+// when the body is empty, not JSON, or the field is absent / not a string.
+func bodyErrorCode(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var envelope struct {
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return ""
+	}
+	return envelope.Error
 }
 
 // extractMessage pulls the platform's `message` or `error` field if present.

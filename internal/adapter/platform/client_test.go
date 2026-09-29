@@ -193,3 +193,67 @@ func TestGetAccountOverview_HappyPath(t *testing.T) {
 		t.Errorf("subscription: %+v", ov.Subscription)
 	}
 }
+
+// Platform emits insufficient_balance with 400, 402 or 409 depending on the
+// endpoint (converging on 402); the body code is the stable contract, so every
+// status must surface as ErrCodeInsufficientBalance through the real client.
+func TestSubscriptionCheckout_InsufficientBalanceBodyCode_AnyStatus(t *testing.T) {
+	for _, status := range []int{http.StatusBadRequest, http.StatusPaymentRequired, http.StatusConflict} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(`{"error":"insufficient_balance","message":"Insufficient wallet balance"}`))
+			}))
+			defer srv.Close()
+
+			_, err := newClient(t, srv).SubscriptionCheckout(context.Background(), platform.SubscriptionCheckoutRequest{
+				AccountID:     42,
+				ProductID:     "tally",
+				PlanCode:      "pro",
+				BillingCycle:  "monthly",
+				PaymentMethod: "wallet",
+			}, "idem-local-test")
+			if !platform.IsCode(err, platform.ErrCodeInsufficientBalance) {
+				t.Errorf("status %d: expected ErrCodeInsufficientBalance, got %v", status, err)
+			}
+		})
+	}
+}
+
+func TestSubscriptionCheckout_400OtherBodyCode_StaysInvalidParameter(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid_request","message":"unknown plan"}`))
+	}))
+	defer srv.Close()
+
+	_, err := newClient(t, srv).SubscriptionCheckout(context.Background(), platform.SubscriptionCheckoutRequest{
+		AccountID:     42,
+		ProductID:     "tally",
+		PlanCode:      "nope",
+		BillingCycle:  "monthly",
+		PaymentMethod: "wallet",
+	}, "idem-local-test")
+	if !platform.IsCode(err, platform.ErrCodeInvalidParameter) {
+		t.Errorf("expected ErrCodeInvalidParameter, got %v", err)
+	}
+}
+
+func TestSubscriptionCheckout_402NoBody_MapsToInsufficientBalance(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusPaymentRequired)
+	}))
+	defer srv.Close()
+
+	_, err := newClient(t, srv).SubscriptionCheckout(context.Background(), platform.SubscriptionCheckoutRequest{
+		AccountID:     42,
+		ProductID:     "tally",
+		PlanCode:      "pro",
+		BillingCycle:  "monthly",
+		PaymentMethod: "wallet",
+	}, "idem-local-test")
+	if !platform.IsCode(err, platform.ErrCodeInsufficientBalance) {
+		t.Errorf("expected ErrCodeInsufficientBalance, got %v", err)
+	}
+}
