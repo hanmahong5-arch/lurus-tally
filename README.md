@@ -40,6 +40,8 @@ bun install
 bun run dev                      # http://localhost:3000
 ```
 
+Running two worktrees in parallel: `docker-compose.dev.yml` has no fixed `container_name`, and its host ports are overridable (`TALLY_PG_PORT` / `TALLY_REDIS_PORT` / `TALLY_NATS_PORT` / `TALLY_NATS_MONITOR_PORT`, defaults unchanged) — set a distinct `COMPOSE_PROJECT_NAME` plus those port variables per worktree to run `make dev` in both at once.
+
 ```bash
 # Tests
 go test -count=1 ./...                                 # backend unit tests

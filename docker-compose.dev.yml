@@ -1,8 +1,13 @@
+# Local development infra (Postgres + Redis + NATS). Running two worktrees at
+# once: set a distinct COMPOSE_PROJECT_NAME per worktree plus TALLY_PG_PORT /
+# TALLY_REDIS_PORT / TALLY_NATS_PORT / TALLY_NATS_MONITOR_PORT to avoid
+# host-port clashes (no container_name is set, so compose already namespaces
+# containers per project).
 services:
   postgres:
     image: pgvector/pgvector:pg16
     ports:
-      - "5432:5432"
+      - "${TALLY_PG_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: tally
       POSTGRES_PASSWORD: tallysecret
@@ -20,7 +25,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${TALLY_REDIS_PORT:-6379}:6379"
     networks:
       - tally_dev
     healthcheck:
@@ -32,8 +37,8 @@ services:
   nats:
     image: nats:2.10-alpine
     ports:
-      - "4222:4222"
-      - "8222:8222"
+      - "${TALLY_NATS_PORT:-4222}:4222"
+      - "${TALLY_NATS_MONITOR_PORT:-8222}:8222"
     command: ["--jetstream", "-m", "8222"]
     networks:
       - tally_dev
