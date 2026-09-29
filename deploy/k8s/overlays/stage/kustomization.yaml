@@ -72,6 +72,9 @@ patches:
         namespace: lurus-tally
       $patch: delete
 images:
+  # main-d144431 (2026-09-29): platform-client 余额不足判定改按 body 错误码
+  # (insufficient_balance),同时接受 400/402/409 三种 HTTP 状态码,为 platform
+  # 侧统一成 402 的改动(#73)预铺客户端兼容;无 migration,web 树无变化。
   # main-0b25ecf (2026-09-27): CI-green main; backend: address forms no longer
   # misfile everyday words (老顾客/小时…) under a customer, alias-attributed
   # notes are marked and announced, Chat/StreamChat share one loop, memory
@@ -87,6 +90,6 @@ images:
   # History: main-0d59b14 (2026-08-08) was the first image after a 37-day CI
   # outage and ran migrations 53→55; see git log of this file.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-bd6a2b9
+    newTag: main-d144431
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-bd6a2b9
+    newTag: main-d144431
