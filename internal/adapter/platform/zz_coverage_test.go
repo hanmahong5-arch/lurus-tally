@@ -27,9 +27,17 @@ func TestMapStatus_Table(t *testing.T) {
 		{"404 not found", http.StatusNotFound, nil, ErrCodeNotFound},
 		{"402 payment required", http.StatusPaymentRequired, nil, ErrCodeInsufficientBalance},
 		{"400 bad request", http.StatusBadRequest, nil, ErrCodeInvalidParameter},
-		// 400 is matched by the switch before the body is ever inspected, so an
-		// insufficient_balance body on a 400 must NOT flip the code.
-		{"400 with insufficient_balance body stays invalid_parameter", http.StatusBadRequest, []byte(`{"error":"insufficient_balance"}`), ErrCodeInvalidParameter},
+		// Body error code insufficient_balance wins over the status code for any
+		// 4xx: platform emits it with 400/402/409 while converging on 402.
+		{"400 with insufficient_balance body code", http.StatusBadRequest, []byte(`{"error":"insufficient_balance","message":"wallet empty"}`), ErrCodeInsufficientBalance},
+		{"402 with insufficient_balance body code", http.StatusPaymentRequired, []byte(`{"error":"insufficient_balance","message":"wallet empty"}`), ErrCodeInsufficientBalance},
+		{"409 with insufficient_balance body code", http.StatusConflict, []byte(`{"error":"insufficient_balance","message":"wallet empty"}`), ErrCodeInsufficientBalance},
+		// A different body code on 400 keeps the status mapping.
+		{"400 with other body code stays invalid_parameter", http.StatusBadRequest, []byte(`{"error":"invalid_request","message":"bad plan"}`), ErrCodeInvalidParameter},
+		{"402 with empty body", http.StatusPaymentRequired, []byte{}, ErrCodeInsufficientBalance},
+		{"402 with non-json body", http.StatusPaymentRequired, []byte(`payment required`), ErrCodeInsufficientBalance},
+		// 5xx outage semantics are never flipped by a body code.
+		{"503 with insufficient_balance body stays unavailable", http.StatusServiceUnavailable, []byte(`{"error":"insufficient_balance"}`), ErrCodeUnavailable},
 		{"500 internal error", http.StatusInternalServerError, nil, ErrCodeUnavailable},
 		{"502 bad gateway", http.StatusBadGateway, nil, ErrCodeUnavailable},
 		{"503 unavailable", http.StatusServiceUnavailable, nil, ErrCodeUnavailable},
