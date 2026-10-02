@@ -91,7 +91,6 @@ last_updated: null
 
 | 日期 | H1 status | H1 current_value | H2 status | H2 current_value | H3 status | H3 current_value | KS1 status | KS1 value | KS2 status | KS2 value |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 2026-07-03 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-07-04 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-07-05 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-07-06 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
@@ -181,3 +180,4 @@ last_updated: null
 | 2026-09-29 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-09-30 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-10-01 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-02 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
