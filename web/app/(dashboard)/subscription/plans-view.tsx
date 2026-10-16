@@ -29,6 +29,7 @@ import {
   formatPriceCNY,
 } from "@/lib/billing/plans"
 import { cn } from "@/lib/utils"
+import { topupLink } from "@/lib/billing/topup"
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "wallet", label: "钱包余额" },
@@ -347,19 +348,6 @@ function PaymentMethodPicker({
   )
 }
 
-// withReturnTo: lurus-platform 充值页读 return_to(只认 *.lurus.cn 等白名单),
-// 付完款给出「返回 Tally」按钮,用户不用自己找回来。
-export function withReturnTo(topupUrl: string): string {
-  if (typeof window === "undefined") return topupUrl
-  try {
-    const u = new URL(topupUrl)
-    u.searchParams.set("return_to", window.location.href)
-    return u.toString()
-  } catch {
-    return topupUrl
-  }
-}
-
 function OverviewBar({
   overview,
   error,
@@ -393,7 +381,9 @@ function OverviewBar({
       <span className="font-mono tabular-nums">{formatCNY(overview.wallet.available)}</span>
       {overview.can_manage && overview.topup_url && (
         <a
-          href={withReturnTo(overview.topup_url)}
+          href={topupLink(overview.topup_url, {
+            returnTo: typeof window === "undefined" ? undefined : window.location.href,
+          })}
           target="_blank"
           rel="noreferrer"
           className="text-xs text-primary underline-offset-2 hover:underline"

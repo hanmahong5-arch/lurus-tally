@@ -33,7 +33,7 @@ vi.mock("qrcode.react", () => ({
 }))
 
 import { getBillingOverview, getOrderStatus, subscribe } from "@/lib/api/billing"
-import { SubscriptionPlansView, withReturnTo } from "./plans-view"
+import { SubscriptionPlansView } from "./plans-view"
 
 const baseOverview = {
   account_id: 1,
@@ -138,14 +138,3 @@ describe("SubscriptionPlansView — checkout redirect hand-off", () => {
   })
 })
 
-describe("withReturnTo", () => {
-  it("appends the current page so the platform top-up can send the user back", () => {
-    const out = new URL(withReturnTo("https://identity.lurus.cn/topup"))
-    expect(out.origin + out.pathname).toBe("https://identity.lurus.cn/topup")
-    expect(out.searchParams.get("return_to")).toBe(window.location.href)
-  })
-
-  it("leaves an unparsable link untouched", () => {
-    expect(withReturnTo("not a url")).toBe("not a url")
-  })
-})
