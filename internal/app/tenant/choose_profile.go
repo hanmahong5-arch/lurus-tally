@@ -102,7 +102,14 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 			// local tenant but no platform account. Upsert is idempotent. This
 			// also back-fills platform_account_id for tenants onboarded before
 			// Wave 2 (the column was added in migration 000051).
-			uc.upsertPlatformAccount(ctx, mapping.TenantID, in)
+			//
+			// Owner only: upsertPlatformAccount pins the CALLER's account as the
+			// tenant's plan holder. A member re-running onboarding would otherwise
+			// move the tenant's subscription, entitlements and usage attribution
+			// onto their personal account, silently dropping the owner's paid plan.
+			if mapping.IsOwner {
+				uc.upsertPlatformAccount(ctx, mapping.TenantID, in)
+			}
 			return existing, nil
 		}
 		// Different choice → conflict (caller decides whether to ignore or surface).

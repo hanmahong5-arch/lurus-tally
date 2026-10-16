@@ -68,7 +68,7 @@ func buildFullyWiredRouter() *gin.Engine {
 	ch := handlercurrency.New(nil, nil, nil, nil)
 	saleh := handlerbill.NewSaleHandler(nil, nil, nil, nil, nil, nil, nil)
 	payh := handlerpayment.New(nil, nil)
-	bilh := handlerbilling.New(nil, nil)
+	bilh := handlerbilling.New(nil, nil, nil)
 	aih := handlerai.New(nil)
 	dh := handlerhorticulture.NewDictHandler(nil, nil, nil, nil, nil, nil)
 	projh := handlerproject.NewProjectHandler(nil, nil, nil, nil, nil, nil)

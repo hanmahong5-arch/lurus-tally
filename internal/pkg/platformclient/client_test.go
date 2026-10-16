@@ -172,8 +172,8 @@ func TestGetAccountOverview_HappyPath(t *testing.T) {
 			t.Errorf("missing product_id query: %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"account": map[string]any{"id": 42, "username": "u", "email": "u@x", "vip_tier": "Standard"},
-			"wallet":  map[string]any{"available": 100.5, "frozen": 0, "total": 100.5},
+			"account": map[string]any{"id": 42, "lurus_id": "LU42", "display_name": "u"},
+			"wallet":  map[string]any{"balance": 100.5, "frozen": 0, "credits_cents": 0},
 			"subscription": map[string]any{
 				"plan_code": "free",
 				"status":    "active",
@@ -186,7 +186,7 @@ func TestGetAccountOverview_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("overview err: %v", err)
 	}
-	if ov.Wallet == nil || ov.Wallet.Available != 100.5 {
+	if ov.Wallet.Balance != 100.5 {
 		t.Errorf("wallet: %+v", ov.Wallet)
 	}
 	if ov.Subscription == nil || ov.Subscription.PlanCode != "free" {

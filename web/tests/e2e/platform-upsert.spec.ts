@@ -28,6 +28,5 @@ test("upsert heals returning user → /billing/overview 200", async ({ request }
   const overviewRes = await request.get("/api/v1/billing/overview", { headers: auth })
   expect(overviewRes.ok(), `GET /billing/overview status=${overviewRes.status()}`).toBe(true)
   const overview = await overviewRes.json()
-  expect(overview.account, "overview.account").toBeTruthy()
-  expect(overview.account.id, "platform account_id assigned").toBeGreaterThan(0)
+  expect(overview.account_id, "workspace pinned to a platform account").toBeGreaterThan(0)
 })

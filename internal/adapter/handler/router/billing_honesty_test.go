@@ -1,6 +1,6 @@
 // Honesty lock test (TALLY-04) — converts the verified claim
 //
-//	"Billing /api/v1/billing/{overview,subscribe}; env
+//	"Billing /api/v1/billing/{overview,subscribe,orders}; env
 //	 PLATFORM_INTERNAL_KEY+PLATFORM_BASE_URL 默认 svc:18104; 空→501"
 //
 // into a behavioural contract on the router's nil-handler degradation: when the
@@ -31,7 +31,6 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 
 	"github.com/gin-gonic/gin"
 )
@@ -46,8 +45,14 @@ func (stubSubscribeExec) Execute(_ context.Context, _ appbilling.SubscribeInput)
 
 type stubOverviewExec struct{}
 
-func (stubOverviewExec) Execute(_ context.Context, _ string) (*platformclient.AccountOverview, error) {
-	return &platformclient.AccountOverview{}, nil
+func (stubOverviewExec) Execute(_ context.Context, _ appbilling.Caller) (*appbilling.Overview, error) {
+	return &appbilling.Overview{}, nil
+}
+
+type stubOrderExec struct{}
+
+func (stubOrderExec) Execute(_ context.Context, _ appbilling.Caller, _ string) (*appbilling.OrderStatus, error) {
+	return &appbilling.OrderStatus{}, nil
 }
 
 // routerWithBilling builds the engine with every handler nil EXCEPT the billing
@@ -105,7 +110,7 @@ func TestBillingRoutes_NilHandler_Returns501(t *testing.T) {
 // is that the status is NOT 501, proving RegisterRoutes ran instead of the
 // notImplemented placeholder.
 func TestBillingRoutes_RealHandler_NotImplementedReplaced(t *testing.T) {
-	bilh := handlerbilling.New(stubSubscribeExec{}, stubOverviewExec{})
+	bilh := handlerbilling.New(stubSubscribeExec{}, stubOverviewExec{}, stubOrderExec{})
 	r := routerWithBilling(bilh)
 
 	cases := []struct {

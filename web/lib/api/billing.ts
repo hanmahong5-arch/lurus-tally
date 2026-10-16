@@ -32,27 +32,44 @@ export interface SubscriptionSnapshot {
 export interface SubscribeResponse {
   /** Set when payment_method=wallet and activation succeeded immediately. */
   subscription?: SubscriptionSnapshot
-  /** Set for external payment methods — caller should redirect to it. */
+  /** Set for redirect payments (支付宝, 手机微信) — send the browser there. */
   pay_url?: string
-  /** Order tracking number — present whenever pay_url is. */
+  /** Set for scan-to-pay (微信 on desktop) — render as a QR code. */
+  qr_code?: string
+  /** Order tracking number — present whenever pay_url or qr_code is. */
   order_no?: string
 }
 
+/**
+ * Billing snapshot of the CURRENT WORKSPACE (tenant). The plan belongs to the
+ * workspace, not to the signed-in user: every member sees the same plan and
+ * wallet, and only the owner (`can_manage`) may change it.
+ */
 export interface BillingOverview {
-  account: {
-    id: number
-    username: string
-    email: string
-    vip_tier: string
-    vip_expires_at?: string
-  }
-  wallet?: {
+  /** Platform account holding the workspace plan; 0 before billing is set up. */
+  account_id: number
+  wallet: {
     available: number
     frozen: number
     total: number
   }
+  vip: {
+    level: number
+    level_name: string
+  }
   subscription?: SubscriptionSnapshot | null
-  entitlements?: Record<string, string>
+  entitlements: Record<string, string>
+  /** Where to top up the plan holder's wallet on identity.lurus.cn. */
+  topup_url?: string
+  can_manage: boolean
+}
+
+export interface OrderStatus {
+  order_no: string
+  status: string
+  paid: boolean
+  /** True once the order can no longer change — stop polling. */
+  final: boolean
 }
 
 /**
@@ -103,5 +120,16 @@ export async function subscribe(req: SubscribeRequest): Promise<SubscribeRespons
     })
   } catch (err) {
     toBillingError(err, "subscribe")
+  }
+}
+
+export async function getOrderStatus(orderNo: string): Promise<OrderStatus> {
+  try {
+    return await apiFetch<OrderStatus>(`/billing/orders/${encodeURIComponent(orderNo)}`, {
+      cache: "no-store",
+      silent: true,
+    })
+  } catch (err) {
+    toBillingError(err, "getOrderStatus")
   }
 }

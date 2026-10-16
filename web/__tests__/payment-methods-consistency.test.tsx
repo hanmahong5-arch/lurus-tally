@@ -23,6 +23,7 @@ import { render, screen } from "@testing-library/react"
 vi.mock("@/lib/api/billing", () => ({
   BillingError: class BillingError extends Error {},
   getBillingOverview: vi.fn().mockResolvedValue(null),
+  getOrderStatus: vi.fn(),
   subscribe: vi.fn(),
 }))
 

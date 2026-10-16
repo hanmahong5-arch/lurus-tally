@@ -22,6 +22,8 @@ type SubscriptionCheckoutRequest = platform.SubscriptionCheckoutRequest
 type SubscriptionCheckoutResponse = platform.SubscriptionCheckoutResponse
 type UpsertAccountRequest = platform.UpsertAccountRequest
 type Wallet = platform.Wallet
+type VIP = platform.VIP
+type CheckoutStatus = platform.CheckoutStatus
 
 // ErrCode constants re-exported for callers that reference platformclient.ErrCode*.
 const (

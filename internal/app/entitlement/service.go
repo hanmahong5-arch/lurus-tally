@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 )
 
 // productID is tally's identifier in the platform product registry. Canonical
@@ -62,8 +64,10 @@ func NewService(tenants TenantResolver, platform EntitlementsPort, log *slog.Log
 //   - nil tenant                   → ErrUnauthenticated (no tenant in context)
 //   - tenant has no pinned account → (false, nil): no resolvable plan, so deny
 //     — fail-CLOSED on a definitive "no"
-//   - resolver / platform error    → (true, nil): a blip must not lock paying
-//     tenants out, so fail-OPEN and log a warning
+//   - platform rejects tally's key → (false, nil): a misconfigured key is not a
+//     blip, so fail-CLOSED and log an error (otherwise paid == free)
+//   - resolver / other platform error → (true, nil): a blip must not lock
+//     paying tenants out, so fail-OPEN and log a warning
 //   - entitlements fetched         → (truthy(value), nil)
 func (s *Service) Has(ctx context.Context, tenantID uuid.UUID, key string) (bool, error) {
 	if tenantID == uuid.Nil {
@@ -81,6 +85,15 @@ func (s *Service) Has(ctx context.Context, tenantID uuid.UUID, key string) (bool
 	}
 	ents, err := s.platform.GetEntitlements(ctx, accountID, productID)
 	if err != nil {
+		if platformclient.IsCode(err, platformclient.ErrCodeUnauthorized) {
+			// Platform rejected tally's service key (placeholder secret,
+			// rotated or under-scoped key). That is a standing misconfiguration,
+			// not a blip: failing open here would hand every tenant the paid
+			// tier for as long as it lasts. Deny and log loudly instead.
+			s.log.Error("entitlement: platform rejected tally's service key — failing CLOSED (check PLATFORM_INTERNAL_KEY and its entitlement scope)",
+				"key", key, "account_id", accountID, "err", err)
+			return false, nil
+		}
 		s.log.Warn("entitlement: fetch failed — failing open",
 			"key", key, "account_id", accountID, "err", err)
 		return true, nil

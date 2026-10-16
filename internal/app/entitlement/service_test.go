@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/app/entitlement"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 )
 
 type stubResolver struct {
@@ -84,5 +85,17 @@ func TestHas_FalsyValue_Denies(t *testing.T) {
 	s := svc(stubResolver{id: 4, ok: true}, stubEnts{ents: map[string]string{"ai_assistant": "false"}})
 	if ok, _ := s.Has(context.Background(), uuid.New(), "ai_assistant"); ok {
 		t.Fatal("falsy entitlement value must deny")
+	}
+}
+
+// A rejected service key (placeholder secret, rotated or under-scoped key) is a
+// standing misconfiguration, not a blip. Failing open on it would make every
+// tenant's plan behave like the paid tier until someone read the logs.
+func TestHas_PlatformRejectsKey_FailsClosed(t *testing.T) {
+	rejected := &platformclient.Error{Code: platformclient.ErrCodeUnauthorized, HTTPStatus: 401}
+	s := svc(stubResolver{id: 3, ok: true}, stubEnts{err: rejected})
+	ok, err := s.Has(context.Background(), uuid.New(), "ai_assistant")
+	if err != nil || ok {
+		t.Fatalf("rejected service key must fail CLOSED: ok=%v err=%v", ok, err)
 	}
 }

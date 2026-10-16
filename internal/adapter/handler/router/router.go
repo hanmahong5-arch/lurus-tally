@@ -219,6 +219,7 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 		} else {
 			api.GET("/billing/overview", notImplemented)
 			api.POST("/billing/subscribe", notImplemented)
+			api.GET("/billing/orders/:order_no", notImplemented)
 		}
 
 		// AI assistant routes (Story 11.1: AI Drawer + ⌘K palette).
