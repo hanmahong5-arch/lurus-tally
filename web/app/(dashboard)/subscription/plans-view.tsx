@@ -1,6 +1,7 @@
 "use client"
 
-import { useEffect, useState, useTransition } from "react"
+import { useCallback, useEffect, useRef, useState, useTransition } from "react"
+import { QRCodeSVG } from "qrcode.react"
 
 import {
   Card,
@@ -11,11 +12,13 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
+import { Modal } from "@/components/ui/modal"
 import {
   BillingError,
   type BillingOverview,
   type PaymentMethod,
   getBillingOverview,
+  getOrderStatus,
   subscribe,
 } from "@/lib/api/billing"
 import { formatCNY } from "@/lib/format"
@@ -26,6 +29,7 @@ import {
   formatPriceCNY,
 } from "@/lib/billing/plans"
 import { cn } from "@/lib/utils"
+import { topupLink } from "@/lib/billing/topup"
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "wallet", label: "钱包余额" },
@@ -38,6 +42,38 @@ interface FlashMessage {
   text: string
 }
 
+// The order the buyer is paying for survives the round trip to Alipay/WeChat
+// here, so the page can confirm it even if the provider drops our query string.
+const PENDING_ORDER_KEY = "tally.pending_order"
+const POLL_INTERVAL_MS = 2000
+const POLL_RETURN_MS = 60_000
+const POLL_QR_MS = 5 * 60_000
+
+interface QRPayment {
+  orderNo: string
+  code: string
+  planName: string
+}
+
+function readPendingOrder(): string | null {
+  if (typeof window === "undefined") return null
+  try {
+    const fromURL = new URLSearchParams(window.location.search).get("order_no")
+    return fromURL || window.sessionStorage.getItem(PENDING_ORDER_KEY)
+  } catch {
+    return null
+  }
+}
+
+function rememberPendingOrder(orderNo: string | null) {
+  try {
+    if (orderNo) window.sessionStorage.setItem(PENDING_ORDER_KEY, orderNo)
+    else window.sessionStorage.removeItem(PENDING_ORDER_KEY)
+  } catch {
+    // Storage blocked (private mode): the order_no query param still works.
+  }
+}
+
 export function SubscriptionPlansView() {
   const [overview, setOverview] = useState<BillingOverview | null>(null)
   const [overviewError, setOverviewError] = useState<string | null>(null)
@@ -45,39 +81,69 @@ export function SubscriptionPlansView() {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>("wallet")
   const [pendingPlan, setPendingPlan] = useState<string | null>(null)
   const [flash, setFlash] = useState<FlashMessage | null>(null)
+  const [qr, setQR] = useState<QRPayment | null>(null)
   const [isPending, startTransition] = useTransition()
+  const pollRef = useRef(0)
 
-  useEffect(() => {
-    let cancelled = false
-    getBillingOverview()
-      .then((ov) => {
-        if (cancelled) return
-        setOverview(ov)
-        setOverviewSettled(true)
-      })
-      .catch((err: Error) => {
-        if (cancelled) return
-        // not_found = platform has no account record yet for this OIDC
-        // user. Treat as a fresh free-tier account so the plan grid still
-        // renders without a scary error banner. Subscribe will lazy-create
-        // the account on platform side via /billing/subscribe.
-        if (err instanceof BillingError && err.code === "not_found") {
-          setOverview(null)
-          setOverviewError(null)
-          setOverviewSettled(true)
-          return
-        }
-        const detail =
-          err instanceof BillingError
-            ? `${err.code}: ${err.message}`
-            : err.message
-        setOverviewError(detail)
-        setOverviewSettled(true)
-      })
-    return () => {
-      cancelled = true
+  const refreshOverview = useCallback(async () => {
+    try {
+      setOverview(await getBillingOverview())
+      setOverviewError(null)
+    } catch (err) {
+      setOverviewError(
+        err instanceof BillingError ? `${err.code}: ${err.message}` : (err as Error).message,
+      )
+    } finally {
+      setOverviewSettled(true)
     }
   }, [])
+
+  // Poll an order until it settles or the window closes. Any newer poll
+  // supersedes an older one (e.g. closing the QR dialog, starting another).
+  const watchOrder = useCallback(
+    async (orderNo: string, windowMs: number, onPaid: () => void) => {
+      const ticket = ++pollRef.current
+      const deadline = Date.now() + windowMs
+      while (pollRef.current === ticket && Date.now() < deadline) {
+        try {
+          const st = await getOrderStatus(orderNo)
+          if (pollRef.current !== ticket) return
+          if (st.paid) {
+            rememberPendingOrder(null)
+            onPaid()
+            await refreshOverview()
+            return
+          }
+          if (st.final) {
+            rememberPendingOrder(null)
+            setFlash({ kind: "error", text: `订单未完成支付（${st.status}），可以重新下单。` })
+            return
+          }
+        } catch {
+          // Transient: keep polling until the window closes.
+        }
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS))
+      }
+    },
+    [refreshOverview],
+  )
+
+  useEffect(() => {
+    const polls = pollRef
+    void refreshOverview()
+    // Back from Alipay / WeChat H5: confirm the order the buyer just paid.
+    const returning = readPendingOrder()
+    if (returning) {
+      setFlash({ kind: "ok", text: "正在确认支付结果..." })
+      void watchOrder(returning, POLL_RETURN_MS, () =>
+        setFlash({ kind: "ok", text: "支付成功，套餐已开通。" }),
+      )
+    }
+    // Unmount cancels any poll still running.
+    return () => {
+      polls.current++
+    }
+  }, [refreshOverview, watchOrder])
 
   function handleSubscribe(plan: TallyPlan) {
     setFlash(null)
@@ -91,7 +157,17 @@ export function SubscriptionPlansView() {
           return_url: "/subscription",
         })
         if (res.pay_url) {
+          rememberPendingOrder(res.order_no ?? null)
           window.location.assign(res.pay_url)
+          return
+        }
+        if (res.qr_code && res.order_no) {
+          const orderNo = res.order_no
+          setQR({ orderNo, code: res.qr_code, planName: plan.name })
+          void watchOrder(orderNo, POLL_QR_MS, () => {
+            setQR(null)
+            setFlash({ kind: "ok", text: `已开通 ${plan.name}` })
+          })
           return
         }
         if (res.subscription) {
@@ -100,12 +176,11 @@ export function SubscriptionPlansView() {
             text: `已开通 ${plan.name}（${res.subscription.status}）`,
           })
           // Refresh the overview so the active plan badge updates immediately.
-          const ov = await getBillingOverview()
-          setOverview(ov)
+          await refreshOverview()
         } else {
           setFlash({
             kind: "ok",
-            text: "已提交订阅请求，等待支付平台回调。",
+            text: "订单已创建，支付完成后套餐自动开通。",
           })
         }
       } catch (err) {
@@ -122,11 +197,26 @@ export function SubscriptionPlansView() {
     })
   }
 
+  function closeQR() {
+    pollRef.current++
+    setQR(null)
+  }
+
+  // Only the workspace owner may change the plan. Before the overview loads
+  // (or when it failed) we leave the buttons enabled: the backend enforces it.
+  const canManage = overview?.can_manage ?? true
+
   const activePlanCode = overview?.subscription?.plan_code ?? "free"
 
   return (
     <div className="space-y-6">
       <OverviewBar overview={overview} error={overviewError} settled={overviewSettled} />
+
+      {!canManage && (
+        <div className="rounded-md border border-border bg-muted/30 px-4 py-2 text-sm text-muted-foreground">
+          套餐属于整个企业，只有企业所有者可以变更。如需升级，请联系所有者。
+        </div>
+      )}
 
       <PaymentMethodPicker value={paymentMethod} onChange={setPaymentMethod} />
 
@@ -172,7 +262,7 @@ export function SubscriptionPlansView() {
                 <Button
                   className="w-full"
                   variant={isActive ? "outline" : plan.highlight ? "default" : "secondary"}
-                  disabled={isActive || isPending}
+                  disabled={isActive || isPending || !canManage}
                   onClick={() => handleSubscribe(plan)}
                   data-testid={`subscribe-${plan.code}`}
                 >
@@ -187,6 +277,27 @@ export function SubscriptionPlansView() {
           )
         })}
       </div>
+
+      <Modal
+        open={qr !== null}
+        onOpenChange={(open) => {
+          if (!open) closeQR()
+        }}
+        title="微信扫码支付"
+        description={qr ? `开通 ${qr.planName}：请用微信扫描二维码，支付完成后自动开通。` : undefined}
+        footer={
+          <Button variant="outline" onClick={closeQR}>
+            取消
+          </Button>
+        }
+      >
+        {qr && (
+          <div className="mt-4 flex flex-col items-center gap-2">
+            <QRCodeSVG value={qr.code} size={200} data-testid="pay-qr" />
+            <span className="text-xs text-muted-foreground">订单号 {qr.orderNo}</span>
+          </div>
+        )}
+      </Modal>
 
       {flash && (
         <div
@@ -261,27 +372,28 @@ function OverviewBar({
     )
   }
   if (!overview) {
-    // Settled but no overview = brand-new account (platform returned not_found).
-    return (
-      <div className="flex flex-wrap items-center gap-4 rounded-md border border-border bg-card px-4 py-3 text-sm">
-        <span className="text-muted-foreground">钱包余额：</span>
-        <span className="font-mono tabular-nums">{formatCNY(0)}</span>
-        <span className="text-muted-foreground">当前套餐：</span>
-        <span className="font-medium">free（免费版）</span>
-      </div>
-    )
+    return null
   }
-  const wallet = overview.wallet?.available ?? 0
   const sub = overview.subscription
   return (
     <div className="flex flex-wrap items-center gap-4 rounded-md border border-border bg-card px-4 py-3 text-sm">
-      <span className="text-muted-foreground">账户：</span>
-      <span className="font-medium">{overview.account.email}</span>
-      <span className="text-muted-foreground">钱包余额：</span>
-      <span className="font-mono tabular-nums">{formatCNY(wallet)}</span>
+      <span className="text-muted-foreground">企业钱包余额：</span>
+      <span className="font-mono tabular-nums">{formatCNY(overview.wallet.available)}</span>
+      {overview.can_manage && overview.topup_url && (
+        <a
+          href={topupLink(overview.topup_url, {
+            returnTo: typeof window === "undefined" ? undefined : window.location.href,
+          })}
+          target="_blank"
+          rel="noreferrer"
+          className="text-xs text-primary underline-offset-2 hover:underline"
+        >
+          充值
+        </a>
+      )}
       <span className="text-muted-foreground">当前套餐：</span>
       <span className="font-medium">
-        {sub?.plan_code ?? "free"} ({sub?.status ?? "未激活"})
+        {sub?.plan_code ?? "free"} ({sub?.status ?? "免费版"})
       </span>
     </div>
   )
@@ -299,6 +411,12 @@ function mapErrorMessage(err: BillingError): string {
       return "请先登录后再尝试订阅。"
     case "not_found":
       return "未找到对应的套餐，请刷新页面。"
+    case "owner_only":
+      return "只有企业所有者可以变更套餐。"
+    case "not_linked":
+      return "企业计费账户尚未开通，请企业所有者打开本页面完成开通。"
+    case "method_not_available":
+      return "该支付方式暂未开通，请选择其他支付方式。"
     default:
       return err.message || "订阅失败，请稍后再试。"
   }

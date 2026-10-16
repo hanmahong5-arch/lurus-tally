@@ -359,6 +359,38 @@ func TestChooseProfile_ReturningUser_HealsByReUpserting(t *testing.T) {
 	}
 }
 
+// TestChooseProfile_ReturningMember_DoesNotRepinTenant verifies that a
+// non-owner member re-running onboarding cannot move the tenant's plan holder
+// onto their own platform account (which would drop the owner's paid plan).
+func TestChooseProfile_ReturningMember_DoesNotRepinTenant(t *testing.T) {
+	store := newStubBootstrapStore()
+	tenantID := uuid.New()
+	store.mappings["sub-member-004"] = &domain.UserIdentityMapping{
+		ID: uuid.New(), TenantID: tenantID, IDPSubject: "sub-member-004",
+		Email: "erin@example.com", Role: "member", IsOwner: false,
+	}
+	prof, _ := domain.NewTenantProfile(tenantID, domain.ProfileTypeCrossBorder)
+	store.profiles[tenantID] = prof
+	store.accountIDs[tenantID] = 7 // the owner's account
+
+	upserter := &stubUpserter{}
+	uc := appTenant.NewChooseProfileUseCase(store, upserter, nil)
+
+	if _, err := uc.Execute(context.Background(), appTenant.ChooseProfileInput{
+		IDPSubject:  "sub-member-004",
+		Email:       "erin@example.com",
+		ProfileType: "cross_border",
+	}); err != nil {
+		t.Fatalf("member re-call must succeed: %v", err)
+	}
+	if upserter.callCount() != 0 {
+		t.Errorf("member must not trigger a platform upsert, got %d calls", upserter.callCount())
+	}
+	if store.accountIDs[tenantID] != 7 {
+		t.Errorf("tenant plan holder must stay the owner's account 7, got %d", store.accountIDs[tenantID])
+	}
+}
+
 // TestChooseProfile_NilUpserter_NoOp verifies the use case still works in
 // dev clusters where PLATFORM_INTERNAL_KEY is unset (upserter is nil).
 func TestChooseProfile_NilUpserter_NoOp(t *testing.T) {

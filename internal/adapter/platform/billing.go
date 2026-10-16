@@ -24,25 +24,43 @@ type SubscriptionSnapshot struct {
 	ExpiresAt string `json:"expires_at,omitempty"`
 }
 
-// Wallet mirrors the wallet block in /internal/v1/accounts/:id/overview.
+// Wallet mirrors the wallet block in /internal/v1/accounts/:id/overview
+// (platform internal/app/overview_service.go WalletSummary). Balance is the
+// spendable CNY amount; Frozen is held by open pre-authorisations.
 type Wallet struct {
-	Available float64 `json:"available"`
-	Frozen    float64 `json:"frozen"`
-	Total     float64 `json:"total"`
+	Balance      float64 `json:"balance"`
+	Frozen       float64 `json:"frozen"`
+	CreditsCents int64   `json:"credits_cents"`
+	DiscountRate float64 `json:"discount_rate"`
+	DiscountTier string  `json:"discount_tier"`
 }
 
-// AccountOverview is what /internal/v1/accounts/:id/overview returns.
+// VIP mirrors the vip block of the overview (platform VIPSummary).
+type VIP struct {
+	Level     int    `json:"level"`
+	LevelName string `json:"level_name"`
+}
+
+// AccountOverview is what /internal/v1/accounts/:id/overview returns
+// (platform internal/app/overview_service.go AccountOverview). It carries no
+// entitlements — read those from GetEntitlements.
 type AccountOverview struct {
 	Account struct {
-		ID         int64  `json:"id"`
-		Username   string `json:"username"`
-		Email      string `json:"email"`
-		VipTier    string `json:"vip_tier"`
-		VipExpires string `json:"vip_expires_at,omitempty"`
+		ID          int64  `json:"id"`
+		LurusID     string `json:"lurus_id"`
+		DisplayName string `json:"display_name"`
 	} `json:"account"`
-	Wallet       *Wallet               `json:"wallet,omitempty"`
+	VIP          VIP                   `json:"vip"`
+	Wallet       Wallet                `json:"wallet"`
 	Subscription *SubscriptionSnapshot `json:"subscription,omitempty"`
-	Entitlements map[string]string     `json:"entitlements,omitempty"`
+	TopupURL     string                `json:"topup_url,omitempty"`
+}
+
+// CheckoutStatus mirrors GET /internal/v1/checkout/:order_no/status.
+type CheckoutStatus struct {
+	OrderNo   string  `json:"order_no"`
+	Status    string  `json:"status"` // pending | paid | failed | cancelled | expired | refunded
+	AmountCNY float64 `json:"amount_cny"`
 }
 
 // SubscriptionCheckoutRequest mirrors POST /internal/v1/subscriptions/checkout body.
@@ -51,7 +69,7 @@ type SubscriptionCheckoutRequest struct {
 	ProductID     string `json:"product_id"`
 	PlanCode      string `json:"plan_code"`
 	BillingCycle  string `json:"billing_cycle"`
-	PaymentMethod string `json:"payment_method"` // "wallet" | "alipay" | "wechat" | "stripe"
+	PaymentMethod string `json:"payment_method"` // "wallet" or a concrete platform method id (alipay, alipay_wap, wechat_native, wechat_h5, ...)
 	ReturnURL     string `json:"return_url,omitempty"`
 }
 
@@ -157,6 +175,20 @@ func (c *Client) SubscriptionCheckout(ctx context.Context, req SubscriptionCheck
 	}
 	var out SubscriptionCheckoutResponse
 	if err := c.doWithIdem(ctx, http.MethodPost, "/internal/v1/subscriptions/checkout", req, idempotencyKey, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// GetCheckoutStatus reads a checkout order's payment status.
+func (c *Client) GetCheckoutStatus(ctx context.Context, orderNo string) (*CheckoutStatus, error) {
+	if orderNo == "" {
+		return nil, &Error{Code: ErrCodeInvalidParameter, Message: "order_no is required"}
+	}
+	var out CheckoutStatus
+	if err := c.do(ctx, http.MethodGet,
+		"/internal/v1/checkout/"+url.PathEscape(orderNo)+"/status",
+		nil, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

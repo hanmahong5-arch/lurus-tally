@@ -7,8 +7,10 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
@@ -22,30 +24,38 @@ type SubscribeExecutor interface {
 
 // OverviewExecutor is the surface satisfied by OverviewUseCase.
 type OverviewExecutor interface {
-	Execute(ctx context.Context, idpSubject string) (*platformclient.AccountOverview, error)
+	Execute(ctx context.Context, c appbilling.Caller) (*appbilling.Overview, error)
+}
+
+// OrderStatusExecutor is the surface satisfied by OrderStatusUseCase.
+type OrderStatusExecutor interface {
+	Execute(ctx context.Context, c appbilling.Caller, orderNo string) (*appbilling.OrderStatus, error)
 }
 
 // Handler groups Tally's billing-facing HTTP routes.
 type Handler struct {
-	subscribe SubscribeExecutor
-	overview  OverviewExecutor
+	subscribe   SubscribeExecutor
+	overview    OverviewExecutor
+	orderStatus OrderStatusExecutor
 }
 
 // New constructs a Handler.
-func New(subscribe SubscribeExecutor, overview OverviewExecutor) *Handler {
-	return &Handler{subscribe: subscribe, overview: overview}
+func New(subscribe SubscribeExecutor, overview OverviewExecutor, orderStatus OrderStatusExecutor) *Handler {
+	return &Handler{subscribe: subscribe, overview: overview, orderStatus: orderStatus}
 }
 
 // RegisterRoutes mounts billing endpoints onto the given router group.
 // The group is expected to already be guarded by AuthMiddleware so the
-// IdP subject is present in the gin context.
+// IdP subject and tenant are present in the gin context.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/billing/overview", h.Overview)
 	rg.POST("/billing/subscribe", h.Subscribe)
+	rg.GET("/billing/orders/:order_no", h.OrderStatus)
 }
 
 // subscribeRequest is the body of POST /api/v1/billing/subscribe.
-// payment_method must be one of: wallet, alipay, wechat, stripe.
+// payment_method is "wallet", a provider family ("alipay", "wechat") or a
+// concrete platform method id. return_url is a same-site path ("/subscription").
 type subscribeRequest struct {
 	PlanCode      string `json:"plan_code"      binding:"required"`
 	BillingCycle  string `json:"billing_cycle"  binding:"required"`
@@ -58,13 +68,14 @@ type subscribeRequest struct {
 type subscribeResponse struct {
 	OrderNo      string                               `json:"order_no,omitempty"`
 	PayURL       string                               `json:"pay_url,omitempty"`
+	QRCode       string                               `json:"qr_code,omitempty"`
 	Subscription *platformclient.SubscriptionSnapshot `json:"subscription,omitempty"`
 }
 
 // Subscribe handles POST /api/v1/billing/subscribe.
 func (h *Handler) Subscribe(c *gin.Context) {
-	sub := callerSub(c)
-	if sub == "" {
+	caller, ok := callerOf(c)
+	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "sign-in required"})
 		return
 	}
@@ -74,13 +85,19 @@ func (h *Handler) Subscribe(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": err.Error()})
 		return
 	}
+	returnURL, err := absoluteReturnURL(c.Request, req.ReturnURL)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": err.Error()})
+		return
+	}
 
 	out, err := h.subscribe.Execute(c.Request.Context(), appbilling.SubscribeInput{
-		IDPSubject:     sub,
+		Caller:         caller,
 		PlanCode:       req.PlanCode,
 		BillingCycle:   req.BillingCycle,
 		PaymentMethod:  req.PaymentMethod,
-		ReturnURL:      req.ReturnURL,
+		UserAgent:      c.Request.UserAgent(),
+		ReturnURL:      returnURL,
 		IdempotencyKey: c.GetHeader(middleware.HeaderIdempotencyKey),
 	})
 	if err != nil {
@@ -91,23 +108,85 @@ func (h *Handler) Subscribe(c *gin.Context) {
 	c.JSON(http.StatusOK, subscribeResponse{
 		OrderNo:      out.OrderNo,
 		PayURL:       out.PayURL,
+		QRCode:       out.QRCode,
 		Subscription: out.Subscription,
 	})
 }
 
 // Overview handles GET /api/v1/billing/overview.
 func (h *Handler) Overview(c *gin.Context) {
-	sub := callerSub(c)
-	if sub == "" {
+	caller, ok := callerOf(c)
+	if !ok {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "sign-in required"})
 		return
 	}
-	ov, err := h.overview.Execute(c.Request.Context(), sub)
+	ov, err := h.overview.Execute(c.Request.Context(), caller)
 	if err != nil {
 		writePlatformError(c, err)
 		return
 	}
 	c.JSON(http.StatusOK, ov)
+}
+
+// OrderStatus handles GET /api/v1/billing/orders/:order_no.
+func (h *Handler) OrderStatus(c *gin.Context) {
+	caller, ok := callerOf(c)
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "sign-in required"})
+		return
+	}
+	st, err := h.orderStatus.Execute(c.Request.Context(), caller, c.Param("order_no"))
+	if err != nil {
+		writePlatformError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, st)
+}
+
+// callerOf builds the billing caller from the verified auth context.
+func callerOf(c *gin.Context) (appbilling.Caller, bool) {
+	sub := callerSub(c)
+	tenantID := middleware.GetTenantID(c)
+	if sub == "" || tenantID == uuid.Nil {
+		return appbilling.Caller{}, false
+	}
+	return appbilling.Caller{
+		IDPSubject:  sub,
+		TenantID:    tenantID,
+		Email:       middleware.GetEmail(c),
+		DisplayName: middleware.GetDisplayName(c),
+	}, true
+}
+
+// absoluteReturnURL turns the same-site path the UI sends into the absolute
+// URL payment providers require: Alipay/WeChat send the buyer's browser back
+// to it, and a bare "/subscription" left them stranded on the provider page.
+// Only a path is accepted — never a full URL — so the field cannot be used to
+// bounce buyers to another site after paying. The origin is the one the buyer
+// reached tally on (ingress forwards Host and X-Forwarded-Proto).
+func absoluteReturnURL(r *http.Request, path string) (string, error) {
+	if path == "" {
+		path = "/subscription"
+	}
+	if !strings.HasPrefix(path, "/") || strings.HasPrefix(path, "//") || strings.ContainsAny(path, "\\\r\n") {
+		return "", errors.New("return_url must be a same-site path such as /subscription")
+	}
+	scheme := r.Header.Get("X-Forwarded-Proto")
+	if scheme != "http" && scheme != "https" {
+		scheme = "https"
+		if r.TLS == nil && isLocalHost(r.Host) {
+			scheme = "http"
+		}
+	}
+	return scheme + "://" + r.Host + path, nil
+}
+
+func isLocalHost(host string) bool {
+	h := host
+	if i := strings.LastIndex(h, ":"); i >= 0 && !strings.Contains(h[i:], "]") {
+		h = h[:i]
+	}
+	return h == "localhost" || h == "127.0.0.1" || h == "[::1]"
 }
 
 // callerSub returns the IdP subject that AuthMiddleware injected into the
@@ -135,6 +214,14 @@ func writePlatformError(c *gin.Context, err error) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": err.Error()})
 		return
 	}
+	if errors.Is(err, appbilling.ErrOwnerOnly) {
+		c.JSON(http.StatusForbidden, gin.H{"error": "owner_only", "detail": "only the workspace owner can change the plan"})
+		return
+	}
+	if errors.Is(err, appbilling.ErrNotLinked) {
+		c.JSON(http.StatusConflict, gin.H{"error": "not_linked", "detail": "the workspace owner needs to open the plans page once to set up billing"})
+		return
+	}
 	var pe *platformclient.Error
 	if errors.As(err, &pe) {
 		switch pe.Code {
@@ -149,7 +236,13 @@ func writePlatformError(c *gin.Context, err error) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": pe.Message})
 			return
 		case platformclient.ErrCodeInvalidParameter:
-			c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": pe.Message})
+			code := "bad_request"
+			if strings.Contains(pe.Body, "method_not_available") {
+				// Provider not configured on platform — the buyer should pick
+				// another method, not retry.
+				code = "method_not_available"
+			}
+			c.JSON(http.StatusBadRequest, gin.H{"error": code, "detail": pe.Message})
 			return
 		case platformclient.ErrCodeUnauthorized:
 			c.JSON(http.StatusBadGateway, gin.H{
