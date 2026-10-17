@@ -2,7 +2,9 @@
  * Tally subscription plan catalog.
  *
  * Source of truth for pricing lives in lurus-platform's identity.product_plans
- * table (seeded by migration 025_seed_tally_product). This file mirrors that
+ * table (seeded by migration 025_seed_tally_product, product id `tally` —
+ * lurus-platform api/ontology.yaml; the seed's `lurus-tally` was renamed by
+ * migration 100). This file mirrors that
  * data so the marketing copy + feature comparison can render server-side
  * without an extra round-trip.
  *
@@ -25,8 +27,6 @@ export interface TallyPlan {
   /** Human-readable summary of the included caps. */
   caps: { skus: number; users: number; warehouses: number }
 }
-
-export const TALLY_PRODUCT_ID = "lurus-tally"
 
 export const TALLY_PLANS: readonly TallyPlan[] = [
   {
