@@ -20,7 +20,8 @@
  * remembering to check both files by hand.
  *
  * The fixture below mirrors 2l-svc-platform/migrations/025_seed_tally_product.sql
- * (identity.product_plans rows for product_id='lurus-tally') as read at the
+ * (identity.product_plans rows for product_id='tally', seeded as 'lurus-tally'
+ * and renamed by platform migration 100) as read at the
  * time this test was written. If backend seeds a NEW plan or cycle, this test
  * SHOULD fail until both this fixture and lib/billing/plans.ts are updated
  * together — that's the point.
