@@ -38,11 +38,13 @@ export const initialCartState: CartState = {
 
 /**
  * Compute the subtotal of all cart items using Decimal.js to avoid floating-point errors.
+ * Each line is kept to the cent before summing, the same figure the server books.
  * Does NOT apply discount — call cartNetTotal for the final amount.
  */
 export function cartTotal(items: CartItem[]): Decimal {
   return items.reduce(
-    (acc, item) => acc.plus(item.unitPrice.times(item.quantity)),
+    (acc, item) =>
+      acc.plus(item.unitPrice.times(item.quantity).toDecimalPlaces(2, Decimal.ROUND_HALF_UP)),
     new Decimal(0)
   )
 }

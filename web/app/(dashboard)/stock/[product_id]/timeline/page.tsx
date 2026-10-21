@@ -10,6 +10,7 @@
 
 import Link from "next/link"
 import { auth } from "@/auth"
+import { normalizeRole, roleCan } from "@/lib/roles"
 import { type StockMovement, type Direction, type ReferenceType } from "@/lib/api/stock"
 import { ErrorBanner } from "@/components/ui/error-banner"
 
@@ -36,9 +37,10 @@ const REFERENCE_LABEL: Record<ReferenceType, string> = {
   init: "初始化",
 }
 
-function referenceHref(refType: ReferenceType, refId: string | null | undefined): string | null {
+// A purchase bill is readable only with cost.view; everyone else gets plain text, not a dead link.
+function referenceHref(refType: ReferenceType, refId: string | null | undefined, canCost: boolean): string | null {
   if (!refId) return null
-  if (refType === "purchase") return `/purchases/${refId}`
+  if (refType === "purchase") return !canCost ? null :  `/purchases/${refId}`
   if (refType === "sale") return `/sales/${refId}`
   return null
 }
@@ -75,6 +77,9 @@ interface Props {
 export default async function StockTimelinePage({ params }: Props) {
   const { product_id: productId } = await params
   const session = await auth()
+  const role = normalizeRole(session?.user?.role, session?.user?.isOwner === true)
+  const showCost = role !== null && roleCan(role, "cost.view")
+  const mayDraft = role !== null && roleCan(role, "bill.draft")
 
   let movements: StockMovement[] = []
   let fetchError = false
@@ -135,12 +140,14 @@ export default async function StockTimelinePage({ params }: Props) {
           <p className="max-w-sm text-xs text-muted-foreground">
             该商品尚未产生任何出入库。创建采购单并审核后将在此记录。
           </p>
-          <Link
-            href="/purchases/new"
-            className="mt-2 text-xs text-primary hover:underline"
-          >
-            新建采购单 →
-          </Link>
+          {mayDraft && (
+            <Link
+              href="/purchases/new"
+              className="mt-2 text-xs text-primary hover:underline"
+            >
+              新建采购单 →
+            </Link>
+          )}
         </div>
       )}
 
@@ -151,7 +158,7 @@ export default async function StockTimelinePage({ params }: Props) {
             const dirClass = DIRECTION_BADGE[m.direction] ?? "bg-muted text-muted-foreground"
             const sign = m.direction === "out" ? "−" : "+"
             const refLabel = REFERENCE_LABEL[m.reference_type] ?? m.reference_type
-            const href = referenceHref(m.reference_type, m.reference_id)
+            const href = referenceHref(m.reference_type, m.reference_id, showCost)
 
             return (
               <li
@@ -174,10 +181,14 @@ export default async function StockTimelinePage({ params }: Props) {
                 {/* Details */}
                 <div className="flex-1 min-w-0 text-xs text-muted-foreground space-y-0.5">
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                    <span>
-                      单价 <span className="font-mono">{formatDecimal(m.unit_cost, 4)}</span>
-                    </span>
-                    <span aria-hidden="true">·</span>
+                    {showCost && (
+                      <>
+                        <span>
+                          单价 <span className="font-mono">{formatDecimal(m.unit_cost, 4)}</span>
+                        </span>
+                        <span aria-hidden="true">·</span>
+                      </>
+                    )}
                     <span>仓库 <span className="font-mono">{shortId(m.warehouse_id)}</span></span>
                     <span aria-hidden="true">·</span>
                     <span>
@@ -190,11 +201,9 @@ export default async function StockTimelinePage({ params }: Props) {
                               href={href}
                               className="text-primary hover:underline font-mono"
                             >
-                              {shortId(m.reference_id)}
+                              查看单据
                             </Link>
-                          ) : (
-                            <span className="font-mono">{shortId(m.reference_id)}</span>
-                          )}
+                          ) : null}
                         </>
                       )}
                     </span>

@@ -6,13 +6,13 @@ import type { ColumnDef } from "@tanstack/react-table"
 import {
   listNurseryDict,
   deleteNurseryDict,
-  restoreNurseryDict,
   type NurseryDictItem,
   type NurseryType,
 } from "@/lib/api/nursery-dict"
 import NurseryDictForm from "@/components/horticulture/NurseryDictForm"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useConfirm } from "@/hooks/useConfirm"
+import { useRole } from "@/hooks/use-role"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable } from "@/components/ui/data-table"
@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/empty-state"
+import { extractApiError } from "@/lib/api/errors"
 
 const TYPE_LABELS: Record<NurseryType, string> = {
   tree: "乔木",
@@ -46,6 +47,9 @@ const SELECT_CLASS =
  * type filter, pagination, and a detail/create drawer (Story 28.1).
  */
 export default function DictionaryPage() {
+  // 增删改需要 catalog.write；角色未知时不遮挡，后端兜底。
+  const { known, can } = useRole()
+  const canEdit = !known || can("catalog.write")
   const [items, setItems] = useState<NurseryDictItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -86,7 +90,7 @@ export default function DictionaryPage() {
         })
         .catch((e) => {
           if (isCancelled?.() || signal?.aborted) return
-          setError(String(e))
+          setError(extractApiError(e).message)
         })
         .finally(() => {
           if (isCancelled?.()) return
@@ -143,8 +147,8 @@ export default function DictionaryPage() {
 
   async function handleDelete(item: NurseryDictItem) {
     const ok = await confirm({
-      title: "软删除苗木",
-      body: `确认软删除「${item.name}」？删除后可在筛选中恢复。`,
+      title: "删除苗木",
+      body: `确认删除「${item.name}」？删除后列表里不再显示，如需找回请联系客服。`,
       confirmText: "删除",
       danger: true,
     })
@@ -153,23 +157,14 @@ export default function DictionaryPage() {
       await deleteNurseryDict(item.id)
       load(q, typeFilter, offset)
     } catch (e) {
-      toast.error("删除失败：" + String(e))
-    }
-  }
-
-  async function handleRestoreById(id: string) {
-    try {
-      await restoreNurseryDict(id)
-      load(q, typeFilter, offset)
-    } catch (e) {
-      toast.error("恢复失败：" + String(e))
+      toast.error("删除失败：" + extractApiError(e).message)
     }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
 
-  const columns: ColumnDef<NurseryDictItem>[] = [
+  const allColumns: ColumnDef<NurseryDictItem>[] = [
     {
       id: "name",
       header: "名称",
@@ -202,13 +197,6 @@ export default function DictionaryPage() {
       ),
     },
     {
-      id: "unit",
-      header: "默认单位",
-      cell: ({ row }) => (
-        <span className="text-xs text-muted-foreground">{row.original.default_unit_id ?? "—"}</span>
-      ),
-    },
-    {
       id: "actions",
       header: "操作",
       meta: { align: "right" },
@@ -236,13 +224,14 @@ export default function DictionaryPage() {
       ),
     },
   ]
+  const columns = allColumns.filter((c) => c.id !== "actions" || canEdit)
 
   return (
     <PageContainer width="wide">
       <PageHeader
         title="苗木字典"
         subtitle={<span data-testid="total-count">共 {total} 种苗木</span>}
-        actions={<Button onClick={openCreate}>+ 新增苗木</Button>}
+        actions={canEdit ? <Button onClick={openCreate}>+ 新增苗木</Button> : undefined}
       />
 
       <div className="mb-4 flex gap-2">
@@ -279,8 +268,8 @@ export default function DictionaryPage() {
         empty={
           <EmptyState
             title="暂无苗木"
-            description="开始建立你的苗木字典，方便后续采购和销售选品"
-            action={<Button variant="outline" onClick={openCreate}>新增第一个苗木</Button>}
+            description={canEdit ? "开始建立你的苗木字典，方便后续采购和销售选品" : "由老板、店长或店员录入"}
+            action={canEdit ? <Button variant="outline" onClick={openCreate}>新增第一个苗木</Button> : undefined}
           />
         }
       />
@@ -300,11 +289,8 @@ export default function DictionaryPage() {
           drawerMode === "create" ? "新增苗木" : drawerMode === "edit" ? "编辑苗木" : drawerItem?.name
         }
         footer={
-          drawerMode === "view" && drawerItem ? (
+          drawerMode === "view" && drawerItem && canEdit ? (
             <>
-              <Button variant="outline" size="sm" onClick={() => void handleRestoreById(drawerItem.id)}>
-                恢复
-              </Button>
               <Button
                 variant="destructive"
                 size="sm"
@@ -313,7 +299,7 @@ export default function DictionaryPage() {
                   closeDrawer()
                 }}
               >
-                软删除
+                删除
               </Button>
               <Button size="sm" onClick={() => setDrawerMode("edit")}>
                 编辑

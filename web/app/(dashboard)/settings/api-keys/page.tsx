@@ -8,12 +8,12 @@ import { useTenantId } from "@/hooks/use-tenant-id"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable } from "@/components/ui/data-table"
-import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
+import { extractApiError } from "@/lib/api/errors"
 import { type PAT, type CreatedPAT, createPAT, listPATs, revokePAT } from "@/lib/api/pats"
 
 function formatDateTime(iso: string | null | undefined): string {
@@ -54,7 +54,7 @@ export default function ApiKeysPage() {
         })
         .catch((e) => {
           if (isCancelled?.() || signal?.aborted) return
-          setError(String(e))
+          setError(extractApiError(e).message)
         })
         .finally(() => {
           if (isCancelled?.()) return
@@ -91,7 +91,7 @@ export default function ApiKeysPage() {
       setExpiresAt("")
       load()
     } catch (err) {
-      setCreateError(String(err))
+      setCreateError(extractApiError(err).message)
     } finally {
       setCreating(false)
     }
@@ -110,7 +110,7 @@ export default function ApiKeysPage() {
       await revokePAT(p.id, tenantId)
       load()
     } catch (err) {
-      setError(String(err))
+      setError(extractApiError(err).message)
     }
   }
 
@@ -136,19 +136,6 @@ export default function ApiKeysPage() {
       header: "前缀",
       cell: ({ row }) => (
         <span className="font-mono text-xs text-muted-foreground">tally_pat_{row.original.prefix}…</span>
-      ),
-    },
-    {
-      id: "scopes",
-      header: "权限",
-      cell: ({ row }) => (
-        <div className="flex flex-wrap gap-1">
-          {row.original.scopes.map((s) => (
-            <Badge key={s} tone="neutral">
-              {s}
-            </Badge>
-          ))}
-        </div>
       ),
     },
     {
@@ -191,8 +178,8 @@ export default function ApiKeysPage() {
   return (
     <PageContainer width="default">
       <PageHeader
-        title="API 密钥"
-        subtitle="Personal Access Token —— 给 tally-mcp、Claude Desktop、OpenHuman、CI 脚本等外部客户端使用"
+        title="接口密钥"
+        subtitle="本店接口工具：给外部程序、自动化脚本连接本店数据用的密钥"
         actions={
           <Button
             onClick={() => {
@@ -214,7 +201,7 @@ export default function ApiKeysPage() {
             <span className="font-medium">请立即复制并妥善保存</span>
           </div>
           <p className="mb-3 text-xs text-muted-foreground">
-            「{newToken.name}」已创建。此令牌仅显示一次，关闭后无法再次查看 —— 服务器只保存哈希值。
+            「{newToken.name}」已创建。此密钥只显示这一次，关闭后无法再次查看 —— 系统不保存原文。
           </p>
           <div className="flex gap-2">
             <Input
@@ -236,7 +223,7 @@ export default function ApiKeysPage() {
       {/* Create form */}
       {showCreate && (
         <form onSubmit={handleCreate} className="mb-6 space-y-3 rounded-xl border border-border bg-card p-4">
-          <h2 className="text-sm font-medium">新建 Personal Access Token</h2>
+          <h2 className="text-sm font-medium">新建接口密钥</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="pat-name">
@@ -249,7 +236,7 @@ export default function ApiKeysPage() {
                 maxLength={64}
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="例如：tally-mcp-laptop"
+                placeholder="例如：仓库电脑上的对账脚本"
               />
             </div>
             <div className="space-y-1.5">
@@ -283,8 +270,8 @@ export default function ApiKeysPage() {
         animateRows
         empty={
           <EmptyState
-            title="暂无 API 密钥"
-            description="为外部客户端创建第一把密钥 —— 例如本地运行 tally-mcp 接 Claude Desktop"
+            title="暂无接口密钥"
+            description="为外部程序创建第一把密钥，用来连接本店数据"
             action={
               <Button
                 variant="outline"

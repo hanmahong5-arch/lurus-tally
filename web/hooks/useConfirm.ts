@@ -3,7 +3,11 @@
 import { createContext, createElement, useCallback, useContext, useMemo, useRef, useState } from "react"
 import { ConfirmDialog, type ConfirmDialogOptions } from "@/components/ui/confirm-dialog"
 
-type ConfirmFn = (options: ConfirmDialogOptions) => Promise<boolean>
+type ConfirmFn = {
+  /** With distinguishDismiss: true = confirmed, false = cancel button, null = Esc / backdrop. */
+  (options: ConfirmDialogOptions & { distinguishDismiss: true }): Promise<boolean | null>
+  (options: ConfirmDialogOptions): Promise<boolean>
+}
 
 const ConfirmContext = createContext<ConfirmFn | null>(null)
 
@@ -17,21 +21,22 @@ interface DialogState extends ConfirmDialogOptions {
  */
 export function ConfirmProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<DialogState>({ open: false })
-  const resolverRef = useRef<((value: boolean) => void) | null>(null)
+  const resolverRef = useRef<((value: boolean | null) => void) | null>(null)
 
-  const confirm = useCallback<ConfirmFn>((options) => {
-    return new Promise<boolean>((resolve) => {
+  const confirm = useCallback((options: ConfirmDialogOptions) => {
+    return new Promise<boolean | null>((resolve) => {
       resolverRef.current = resolve
       setState({ ...options, open: true })
     })
-  }, [])
+  }, []) as ConfirmFn
 
-  const resolve = useCallback((value: boolean) => {
+  const resolve = useCallback((value: boolean | null) => {
     setState((s) => ({ ...s, open: false }))
     const r = resolverRef.current
     resolverRef.current = null
     r?.(value)
   }, [])
+  const dismiss = useCallback(() => resolve(state.distinguishDismiss ? null : false), [resolve, state.distinguishDismiss])
 
   const value = useMemo(() => confirm, [confirm])
 
@@ -48,12 +53,15 @@ export function ConfirmProvider({ children }: { children: React.ReactNode }) {
       danger: state.danger,
       onConfirm: () => resolve(true),
       onCancel: () => resolve(false),
+      onDismiss: dismiss,
     }),
   )
 }
 
 /**
  * useConfirm returns a Promise-based confirm() — replaces window.confirm.
+ * It resolves true on confirm and false otherwise; with `distinguishDismiss`
+ * a close by Esc / backdrop resolves null, so false means the cancel button.
  *
  *   const confirm = useConfirm()
  *   if (await confirm({ title: "确认删除", danger: true })) { ... }

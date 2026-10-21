@@ -16,16 +16,19 @@ import {
   type BillingOverview,
   type PaymentMethod,
   getBillingOverview,
+  getSubscriptionState,
   subscribe,
 } from "@/lib/api/billing"
 import { formatCNY } from "@/lib/format"
 import {
+  SEED_TRIAL,
   TALLY_PLANS,
   type TallyPlan,
   formatCycle,
   formatPriceCNY,
 } from "@/lib/billing/plans"
 import { cn } from "@/lib/utils"
+import { planLabel, subscriptionStatusLabel } from "@/lib/plan-labels"
 
 const PAYMENT_METHODS: { value: PaymentMethod; label: string }[] = [
   { value: "wallet", label: "钱包余额" },
@@ -67,16 +70,24 @@ export function SubscriptionPlansView() {
           setOverviewSettled(true)
           return
         }
-        const detail =
-          err instanceof BillingError
-            ? `${err.code}: ${err.message}`
-            : err.message
-        setOverviewError(detail)
+        setOverviewError(isNetworkError(err) ? NETWORK_MESSAGE : OVERVIEW_FAILED_MESSAGE)
         setOverviewSettled(true)
       })
     return () => {
       cancelled = true
     }
+  }, [])
+
+  // Coming back from the payment page: ask the platform once right away so a
+  // lapsed-plan lock lifts without waiting for the cache.
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    if (new URLSearchParams(window.location.search).get("paid") !== "1") return
+    getSubscriptionState({ refresh: true })
+      .then((st) => {
+        if (!st.locked) window.dispatchEvent(new Event("tally:subscription-refreshed"))
+      })
+      .catch(() => undefined)
   }, [])
 
   function handleSubscribe(plan: TallyPlan) {
@@ -88,7 +99,7 @@ export function SubscriptionPlansView() {
           plan_code: plan.code,
           billing_cycle: plan.cycle,
           payment_method: paymentMethod,
-          return_url: "/subscription",
+          return_url: "/subscription?paid=1",
         })
         if (res.pay_url) {
           window.location.assign(res.pay_url)
@@ -97,7 +108,7 @@ export function SubscriptionPlansView() {
         if (res.subscription) {
           setFlash({
             kind: "ok",
-            text: `已开通 ${plan.name}（${res.subscription.status}）`,
+            text: `已开通 ${plan.name}（${subscriptionStatusLabel(res.subscription.status)}）`,
           })
           // Refresh the overview so the active plan badge updates immediately.
           const ov = await getBillingOverview()
@@ -105,16 +116,15 @@ export function SubscriptionPlansView() {
         } else {
           setFlash({
             kind: "ok",
-            text: "已提交订阅请求，等待支付平台回调。",
+            text: "已提交，付款完成后套餐会自动生效。",
           })
         }
       } catch (err) {
-        const text =
-          err instanceof BillingError
+        const text = isNetworkError(err)
+          ? NETWORK_MESSAGE
+          : err instanceof BillingError
             ? mapErrorMessage(err)
-            : err instanceof Error
-              ? err.message
-              : "订阅失败，请稍后再试。"
+            : "订阅失败，请稍后再试。"
         setFlash({ kind: "error", text })
       } finally {
         setPendingPlan(null)
@@ -128,7 +138,17 @@ export function SubscriptionPlansView() {
     <div className="space-y-6">
       <OverviewBar overview={overview} error={overviewError} settled={overviewSettled} />
 
-      <PaymentMethodPicker value={paymentMethod} onChange={setPaymentMethod} />
+      {!SEED_TRIAL && (
+        <PaymentMethodPicker value={paymentMethod} onChange={setPaymentMethod} />
+      )}
+
+      {SEED_TRIAL && (
+        <div className="rounded-md bg-primary/10 px-4 py-3 text-sm text-primary">
+          {overview?.locked
+            ? "套餐已到期，当前只能查看和导出。请联系客服为您续费，续费后立即恢复开单。"
+            : "试用期全部功能免费，正式收费前会提前通知"}
+        </div>
+      )}
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         {TALLY_PLANS.map((plan) => {
@@ -141,6 +161,14 @@ export function SubscriptionPlansView() {
                 plan.highlight && "ring-2 ring-primary/40",
               )}
             >
+              {SEED_TRIAL && isActive && (
+                <span
+                  data-testid={`current-plan-${plan.code}`}
+                  className="absolute -top-2 left-4 rounded-full bg-emerald-600 px-2 py-0.5 text-xs font-medium text-white"
+                >
+                  当前套餐
+                </span>
+              )}
               {plan.highlight && (
                 <span className="absolute -top-2 right-4 rounded-full bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground">
                   推荐
@@ -168,6 +196,7 @@ export function SubscriptionPlansView() {
                   ))}
                 </ul>
               </CardContent>
+              {!SEED_TRIAL && (
               <CardFooter>
                 <Button
                   className="w-full"
@@ -183,6 +212,7 @@ export function SubscriptionPlansView() {
                       : "一键订阅"}
                 </Button>
               </CardFooter>
+              )}
             </Card>
           )
         })}
@@ -249,7 +279,7 @@ function OverviewBar({
   if (error) {
     return (
       <div className="rounded-md border border-warning/30 bg-warning/10 px-4 py-2 text-sm text-warning">
-        无法读取账户概览：{error}
+        {error}
       </div>
     )
   }
@@ -267,7 +297,7 @@ function OverviewBar({
         <span className="text-muted-foreground">钱包余额：</span>
         <span className="font-mono tabular-nums">{formatCNY(0)}</span>
         <span className="text-muted-foreground">当前套餐：</span>
-        <span className="font-medium">free（免费版）</span>
+        <span className="font-medium">免费版</span>
       </div>
     )
   }
@@ -281,7 +311,8 @@ function OverviewBar({
       <span className="font-mono tabular-nums">{formatCNY(wallet)}</span>
       <span className="text-muted-foreground">当前套餐：</span>
       <span className="font-medium">
-        {sub?.plan_code ?? "free"} ({sub?.status ?? "未激活"})
+        {planLabel(sub?.plan_code)}
+        {sub && `（${subscriptionStatusLabel(sub.status)}）`}
       </span>
     </div>
   )
@@ -294,12 +325,21 @@ function mapErrorMessage(err: BillingError): string {
     case "platform_unavailable":
       return "计费服务暂时不可用，请稍后再试。"
     case "platform_auth_failed":
-      return "Tally 与计费平台之间的鉴权失败，请联系管理员。"
+      return "暂时无法连接计费服务，请联系客服。"
     case "unauthorized":
       return "请先登录后再尝试订阅。"
     case "not_found":
       return "未找到对应的套餐，请刷新页面。"
     default:
-      return err.message || "订阅失败，请稍后再试。"
+      return "订阅失败，请稍后再试。"
   }
+}
+
+const NETWORK_MESSAGE = "网络不通，请检查网络后再试"
+const OVERVIEW_FAILED_MESSAGE = "暂时无法读取账户概览，请稍后再试"
+
+function isNetworkError(err: unknown): boolean {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) return true
+  if (err instanceof BillingError) return err.code === "network" || err.code === "offline"
+  return err instanceof TypeError || /network|fetch|offline/i.test(String((err as Error)?.message ?? ""))
 }

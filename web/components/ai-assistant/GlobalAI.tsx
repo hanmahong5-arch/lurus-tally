@@ -1,7 +1,9 @@
 "use client"
 
-import { useCallback } from "react"
+import { useCallback, useEffect, useState } from "react"
 import dynamic from "next/dynamic"
+import { getTodoSummary } from "@/lib/api/todo"
+import { useRole } from "@/hooks/use-role"
 
 // Lazy-load palette + drawer: both are client-only modals that don't need to
 // block first paint. Pulling them out of the dashboard-layout chunk shaves
@@ -27,21 +29,39 @@ const ShortcutHelp = dynamic(
  * a custom DOM event "tally:ai-query" that the AIDrawer listens for, which
  * causes the drawer to open and auto-submit the query.
  *
+ * The assistant (drawer and the palette's "ask" row) is only mounted once the
+ * todo summary says `ai_enabled`; until then, and on any failed read, it stays
+ * hidden so a switched-off shop never sees an entry that answers 503.
+ *
  * Using a DOM event avoids prop-drilling and keeps each component self-contained.
  * Mount this once in the dashboard layout.
  */
 export function GlobalAI() {
+  const { can } = useRole()
+  const [aiEnabled, setAiEnabled] = useState(false)
+  useEffect(() => {
+    const ctrl = new AbortController()
+    getTodoSummary({ signal: ctrl.signal })
+      .then((s) => {
+        if (!ctrl.signal.aborted) setAiEnabled(s?.ai_enabled === true)
+      })
+      .catch(() => {})
+    return () => ctrl.abort()
+  }, [])
+
   const handleAIQuery = useCallback((query: string) => {
     window.dispatchEvent(
       new CustomEvent("tally:ai-query", { detail: { query } })
     )
   }, [])
 
+  const aiOn = aiEnabled && can("ai.use")
+
   return (
     <>
-      <CommandPalette onAIQuery={handleAIQuery} />
-      <AIDrawer />
-      <ShortcutHelp />
+      <CommandPalette onAIQuery={handleAIQuery} aiEnabled={aiOn} />
+      {aiOn && <AIDrawer />}
+      <ShortcutHelp aiEnabled={aiOn} />
     </>
   )
 }

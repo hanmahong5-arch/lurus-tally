@@ -2,12 +2,12 @@
 
 import { useCallback, useRef, useState } from "react"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useRole } from "@/hooks/use-role"
 import { toast } from "sonner"
 import type { ColumnDef } from "@tanstack/react-table"
 import {
   listWarehouses,
   deleteWarehouse,
-  restoreWarehouse,
   createWarehouse,
   updateWarehouse,
   type WarehouseItem,
@@ -25,6 +25,7 @@ import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Badge } from "@/components/ui/badge"
 import { EmptyState } from "@/components/ui/empty-state"
+import { extractApiError } from "@/lib/api/errors"
 
 const PAGE_SIZE = 20
 
@@ -38,7 +39,7 @@ interface WarehouseForm {
 
 const TEXT_FIELDS: { key: keyof WarehouseForm; label: string; required?: boolean; placeholder: string }[] = [
   { key: "name", label: "名称", required: true, placeholder: "仓库名称" },
-  { key: "code", label: "编号", placeholder: "可选" },
+  { key: "code", label: "编号", placeholder: "留空自动生成" },
   { key: "manager", label: "负责人", placeholder: "可选" },
   { key: "address", label: "地址", placeholder: "可选" },
   { key: "remark", label: "备注", placeholder: "可选" },
@@ -57,6 +58,9 @@ const EMPTY_FORM: WarehouseForm = {
  * a create/edit/view drawer (W3.D1).
  */
 export default function WarehousesPage() {
+  // 增删改仓库需要 catalog.write；角色未知时不遮挡，后端兜底。
+  const { known, can } = useRole()
+  const canEdit = !known || can("catalog.write")
   const [items, setItems] = useState<WarehouseItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -86,7 +90,7 @@ export default function WarehousesPage() {
         })
         .catch((e) => {
           if (isCancelled?.() || signal?.aborted) return
-          setError(String(e))
+          setError(extractApiError(e).message)
         })
         .finally(() => {
           if (isCancelled?.()) return
@@ -168,7 +172,7 @@ export default function WarehousesPage() {
       closeDrawer()
       load(q, offset)
     } catch (e) {
-      toast.error("保存失败：" + String(e))
+      toast.error("保存失败：" + extractApiError(e).message)
     } finally {
       setSaving(false)
     }
@@ -176,8 +180,8 @@ export default function WarehousesPage() {
 
   async function handleDelete(item: WarehouseItem) {
     const ok = await confirm({
-      title: "软删除仓库",
-      body: `确认软删除「${item.name}」？删除后可在列表中恢复。`,
+      title: "删除仓库",
+      body: `确认删除「${item.name}」？删除后列表里不再显示，如需找回请联系客服。`,
       confirmText: "删除",
       danger: true,
     })
@@ -186,23 +190,14 @@ export default function WarehousesPage() {
       await deleteWarehouse(item.id)
       load(q, offset)
     } catch (e) {
-      toast.error("删除失败：" + String(e))
-    }
-  }
-
-  async function handleRestore(id: string) {
-    try {
-      await restoreWarehouse(id)
-      load(q, offset)
-    } catch (e) {
-      toast.error("恢复失败：" + String(e))
+      toast.error("删除失败：" + extractApiError(e).message)
     }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
 
-  const columns: ColumnDef<WarehouseItem>[] = [
+  const allColumns: ColumnDef<WarehouseItem>[] = [
     {
       id: "name",
       header: "名称",
@@ -249,13 +244,14 @@ export default function WarehousesPage() {
   ]
 
   const isForm = drawerMode === "create" || drawerMode === "edit"
+  const columns = allColumns.filter((c) => c.id !== "actions" || canEdit)
 
   return (
     <PageContainer width="wide">
       <PageHeader
         title={<span data-testid="page-title">仓库管理</span>}
         subtitle={`共 ${total} 个仓库`}
-        actions={<Button onClick={openCreate}>+ 新建仓库</Button>}
+        actions={canEdit ? <Button onClick={openCreate}>+ 新建仓库</Button> : undefined}
       />
 
       <div className="mb-4">
@@ -279,8 +275,8 @@ export default function WarehousesPage() {
         empty={
           <EmptyState
             title="暂无仓库"
-            description="添加仓库后可在进出货单中快速选择"
-            action={<Button variant="outline" onClick={openCreate}>新建第一个仓库</Button>}
+            description={canEdit ? "添加仓库后可在进出货单中快速选择" : "还没有仓库"}
+            action={canEdit ? <Button variant="outline" onClick={openCreate}>新建第一个仓库</Button> : undefined}
           />
         }
       />
@@ -313,11 +309,8 @@ export default function WarehousesPage() {
                 {saving ? "保存中..." : "保存"}
               </Button>
             </>
-          ) : drawerItem ? (
+          ) : drawerItem && canEdit ? (
             <>
-              <Button variant="outline" size="sm" onClick={() => void handleRestore(drawerItem.id)}>
-                恢复
-              </Button>
               <Button
                 variant="destructive"
                 size="sm"
@@ -326,7 +319,7 @@ export default function WarehousesPage() {
                   closeDrawer()
                 }}
               >
-                软删除
+                删除
               </Button>
               <Button size="sm" onClick={() => openEdit(drawerItem)}>
                 编辑

@@ -6,12 +6,13 @@ import { toast } from "sonner"
 import {
   listProjects,
   deleteProject,
-  restoreProject,
   type ProjectItem,
   type ProjectStatus,
 } from "@/lib/api/projects"
 import ProjectForm from "@/components/project/ProjectForm"
+import CustomerName from "@/components/project/CustomerName"
 import { useConfirm } from "@/hooks/useConfirm"
+import { useRole } from "@/hooks/use-role"
 import { formatCNY } from "@/lib/format"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
@@ -23,6 +24,7 @@ import { Input } from "@/components/ui/input"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Skeleton } from "@/components/ui/skeleton"
+import { extractApiError } from "@/lib/api/errors"
 
 const STATUS_OPTIONS: { value: ProjectStatus | ""; label: string }[] = [
   { value: "", label: "全部" },
@@ -56,6 +58,9 @@ const PAGE_SIZE = 20
  * status filter, pagination, and a detail/create drawer (Story 28.2).
  */
 export default function ProjectsPage() {
+  // 增删改需要 catalog.write；角色未知时不遮挡，后端兜底。
+  const { known, can } = useRole()
+  const canEdit = !known || can("catalog.write")
   const [items, setItems] = useState<ProjectItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -90,7 +95,7 @@ export default function ProjectsPage() {
         })
         .catch((e) => {
           if (isCancelled?.() || signal?.aborted) return
-          setError(String(e))
+          setError(extractApiError(e).message)
         })
         .finally(() => {
           if (isCancelled?.()) return
@@ -144,8 +149,8 @@ export default function ProjectsPage() {
 
   async function handleDelete(item: ProjectItem) {
     const ok = await confirm({
-      title: "软删除项目",
-      body: `确认软删除「${item.name}」？删除后可在筛选中恢复。`,
+      title: "删除项目",
+      body: `确认删除「${item.name}」？删除后列表里不再显示，如需找回请联系客服。`,
       confirmText: "删除",
       danger: true,
     })
@@ -154,16 +159,7 @@ export default function ProjectsPage() {
       await deleteProject(item.id)
       load(q, statusFilter, offset)
     } catch (e) {
-      toast.error("删除失败：" + String(e))
-    }
-  }
-
-  async function handleRestoreById(id: string) {
-    try {
-      await restoreProject(id)
-      load(q, statusFilter, offset)
-    } catch (e) {
-      toast.error("恢复失败：" + String(e))
+      toast.error("删除失败：" + extractApiError(e).message)
     }
   }
 
@@ -175,7 +171,7 @@ export default function ProjectsPage() {
       <PageHeader
         title={<span data-testid="page-title">项目</span>}
         subtitle={`共 ${total} 个项目`}
-        actions={<Button onClick={openCreate}>+ 新建项目</Button>}
+        actions={canEdit ? <Button onClick={openCreate}>+ 新建项目</Button> : undefined}
       />
 
       <div className="mb-4 flex gap-2">
@@ -211,8 +207,8 @@ export default function ProjectsPage() {
       {!loading && !error && items.length === 0 && (
         <EmptyState
           title="暂无项目"
-          description="按项目跟踪进度和成本，把苗木和工序串起来"
-          action={<Button variant="outline" onClick={openCreate}>新建第一个项目</Button>}
+          description={canEdit ? "按项目跟踪进度和成本，把苗木和工序串起来" : "由老板、店长或店员录入"}
+          action={canEdit ? <Button variant="outline" onClick={openCreate}>新建第一个项目</Button> : undefined}
         />
       )}
 
@@ -237,7 +233,7 @@ export default function ProjectsPage() {
               <p className="mb-2 text-sm text-muted-foreground">{item.code}</p>
 
               {item.customerId && (
-                <span className="mr-2 rounded-full bg-muted px-2 py-0.5 text-xs">{item.customerId}</span>
+                <span className="mr-2 rounded-full bg-muted px-2 py-0.5 text-xs"><CustomerName customerId={item.customerId} /></span>
               )}
 
               {item.contractAmount && (
@@ -275,11 +271,8 @@ export default function ProjectsPage() {
           drawerMode === "create" ? "新建项目" : drawerMode === "edit" ? "编辑项目" : drawerItem?.name
         }
         footer={
-          drawerMode === "view" && drawerItem ? (
+          drawerMode === "view" && drawerItem && canEdit ? (
             <>
-              <Button variant="outline" size="sm" onClick={() => void handleRestoreById(drawerItem.id)}>
-                恢复
-              </Button>
               <Button
                 variant="destructive"
                 size="sm"
@@ -288,7 +281,7 @@ export default function ProjectsPage() {
                   closeDrawer()
                 }}
               >
-                软删除
+                删除
               </Button>
               <Button size="sm" onClick={() => setDrawerMode("edit")}>
                 编辑
@@ -317,8 +310,8 @@ export default function ProjectsPage() {
             )}
             {drawerItem.customerId && (
               <div>
-                <span className="text-muted-foreground">客户ID：</span>
-                <span>{drawerItem.customerId}</span>
+                <span className="text-muted-foreground">客户：</span>
+                <span><CustomerName customerId={drawerItem.customerId} /></span>
               </div>
             )}
             <div>

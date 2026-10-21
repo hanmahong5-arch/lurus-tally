@@ -19,6 +19,7 @@ export type TelemetryEvent =
   | "onboarding_first_po_exported"
   | "cmd_z_used"
   | "wad_increment"
+  | "web_error"
 
 /**
  * TelemetryMetadata maps each event to the shape of its `metadata` argument.
@@ -81,6 +82,20 @@ export interface TelemetryMetadata {
     /** Number of product lines included across all drafts. */
     line_count: number
   }
+
+  /** Browser-side error, logged by the backend so support can search by tenant. */
+  web_error: {
+    route: string
+    /** Truncated to 300 chars. Never put request bodies or user input here. */
+    message: string
+    /** Truncated to 1500 chars. */
+    stack?: string
+    kind: "render" | "unhandled" | "rejection" | "api"
+    /** Backend request id (api kind only). */
+    request_id?: string
+    /** Request path without query string (api kind only). */
+    path?: string
+  }
 }
 
 /**
@@ -104,5 +119,46 @@ export function trackEvent<E extends TelemetryEvent>(
     }).catch(() => undefined)
   } catch {
     // ignore
+  }
+}
+
+const ERR_DEDUP_MS = 60_000
+const MSG_MAX = 300
+const STACK_MAX = 1500
+const recentErrors = new Map<string, number>()
+
+/** Test hook: forget the dedupe window. */
+export function resetWebErrorDedupe(): void {
+  recentErrors.clear()
+}
+
+/**
+ * reportWebError sends a web_error event. The same message is reported at most
+ * once per 60 seconds; browser only; never throws.
+ */
+export function reportWebError(
+  kind: TelemetryMetadata["web_error"]["kind"],
+  message: string,
+  extra: { stack?: string; request_id?: string; path?: string } = {}
+): void {
+  if (typeof window === "undefined") return
+  try {
+    const msg = (message || "unknown").slice(0, MSG_MAX)
+    const now = Date.now()
+    const last = recentErrors.get(msg)
+    if (last !== undefined && now - last < ERR_DEDUP_MS) return
+    if (recentErrors.size > 200) recentErrors.clear()
+    recentErrors.set(msg, now)
+    const meta: TelemetryMetadata["web_error"] = {
+      route: window.location?.pathname ?? "",
+      message: msg,
+      kind,
+    }
+    if (extra.stack) meta.stack = extra.stack.slice(0, STACK_MAX)
+    if (extra.request_id) meta.request_id = extra.request_id
+    if (extra.path) meta.path = extra.path
+    trackEvent("web_error", meta)
+  } catch {
+    // telemetry must never break the UI
   }
 }

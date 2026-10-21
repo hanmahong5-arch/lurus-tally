@@ -3,6 +3,7 @@ import Decimal from "decimal.js"
 import {
   cartReducer,
   cartTotal,
+  cartNetTotal,
   initialCartState,
 } from "./cart-reducer"
 
@@ -118,5 +119,17 @@ describe("cartTotal", () => {
     ]
     // 2*9.99 + 3*4.50 = 19.98 + 13.50 = 33.48
     expect(cartTotal(items).toFixed(2)).toBe("33.48")
+  })
+
+  it("TestCartTotal_TwoLines1p5x3p33_EachLineToCentThenSum", () => {
+    const items = [
+      { ...makeProduct({ id: "p1", price: "1.5" }), quantity: new Decimal("3.33") },
+      { ...makeProduct({ id: "p2", price: "1.5" }), quantity: new Decimal("3.33") },
+    ]
+    // 4.995 -> 5.00 per line, so 10.00 (not 9.99)
+    expect(cartTotal(items).toFixed(2)).toBe("10.00")
+    const state = { ...initialCartState, items }
+    expect(cartNetTotal(state).toFixed(2)).toBe("10.00")
+    expect(Decimal.max(cartTotal(items).minus(cartNetTotal(state).toDecimalPlaces(2)), 0).toFixed(2)).toBe("0.00")
   })
 })

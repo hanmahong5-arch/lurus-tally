@@ -19,6 +19,13 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { render, screen } from "@testing-library/react"
 
+// 这些用例守的是正式收费后的订阅路径；种子期（SEED_TRIAL=true）不显示订阅入口，
+// 由 app/pricing/page.test.tsx 与 plans-view.test.tsx 覆盖。
+vi.mock("@/lib/billing/plans", async (orig) => {
+  const actual = await orig<typeof import("@/lib/billing/plans")>()
+  return { ...actual, SEED_TRIAL: false }
+})
+
 vi.mock("next/link", () => ({
   default: ({
     href,
@@ -81,5 +88,7 @@ describe("pricing → login → post-login-return param name consistency", () =>
       // of the real param would silently be ignored by the login page.
       expect(url.searchParams.has("next")).toBe(false)
     }
+    // 收费后没有「免费试用」按钮，FAQ 也不能再提它。
+    expect(screen.queryByText(/免费试用/)).not.toBeInTheDocument()
   })
 })

@@ -9,12 +9,15 @@
  *   - GETs may opt into transient retry (5xx / NetworkError) via `retry`
  *   - Network failure → NetworkError (toast unless offline banner is up)
  *   - 401 → trigger re-auth via next-auth signIn, throw UnauthorizedError
- *   - 403 → toast.error("权限不足"), throw ApiError
+ *   - 403 → toast.error(backend Chinese message, else "权限不足"), throw ApiError
+ *   - 402 subscription_expired → one toast per page load (owner: 去订阅页 action), throw ApiError
  *   - 5xx → toast.error("服务暂时不可用"), throw ApiError
  *   - 4xx → throw ApiError (no toast — caller decides UX)
  *   - opts.silent suppresses every toast / signIn side effect
  */
 
+import { normalizeRole } from "@/lib/roles"
+import { reportWebError } from "@/lib/telemetry"
 import { ApiError, NetworkError, UnauthorizedError } from "./errors"
 
 export interface ApiOptions extends RequestInit {
@@ -105,6 +108,41 @@ async function triggerSignIn(): Promise<void> {
   }
 }
 
+let subscriptionToastShown = false
+
+/** The shop is read-only (plan lapsed): tell the person once, with the way out for the owner. */
+async function toastSubscriptionExpired(): Promise<void> {
+  if (subscriptionToastShown) return
+  subscriptionToastShown = true
+  let isOwner = false
+  try {
+    const { getSession } = await import("next-auth/react")
+    const session = await getSession()
+    const user = session?.user as { role?: string | null; isOwner?: boolean } | undefined
+    isOwner = normalizeRole(user?.role, user?.isOwner === true) === "owner"
+  } catch {
+    // no session in this environment — treat as a non-owner
+  }
+  try {
+    const { toast } = await import("sonner")
+    if (isOwner) {
+      toast.error("套餐已到期，现在只能查看和导出", {
+        id: "subscription-expired",
+        action: {
+          label: "去订阅页",
+          onClick: () => {
+            if (typeof window !== "undefined") window.location.assign("/subscription")
+          },
+        },
+      })
+    } else {
+      toast.error("套餐已到期，现在只能查看和导出，请联系老板续费", { id: "subscription-expired" })
+    }
+  } catch {
+    // sonner unavailable — degrade silently
+  }
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
@@ -122,7 +160,7 @@ export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<
   // SW or VPN brings the link back).
   if (isWrite && typeof navigator !== "undefined" && navigator.onLine === false) {
     if (!silent) await safeToast("error", "网络已断开，请检查后重试")
-    throw new NetworkError("offline", "offline")
+    throw new NetworkError("offline", "offline", false)
   }
   const url = buildUrl(path)
 
@@ -133,9 +171,13 @@ export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<
     try {
       res = await fetch(url, { ...rest, headers: finalHeaders })
     } catch (err) {
+      // Caller-initiated cancellation (effect cleanup, route change) is not a
+      // network failure: rethrow as-is so callers' `signal.aborted` checks see
+      // it, and never toast.
+      if (rest.signal?.aborted || (err as Error)?.name === "AbortError") throw err
       const offline = typeof navigator !== "undefined" && navigator.onLine === false
       if (offline) {
-        throw new NetworkError("offline", "offline")
+        throw new NetworkError("offline", "offline", false)
       }
       if (attempt < maxRetries && (rest.signal == null || !rest.signal.aborted)) {
         await sleep(200 * 2 ** attempt)
@@ -143,23 +185,48 @@ export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<
         continue
       }
       if (!silent) await safeToast("error", "网络异常，请稍后重试")
-      throw new NetworkError("network", (err as Error)?.message ?? "network")
+      // fetch rejected: the connection failed before any reply, treated as never sent.
+      throw new NetworkError("network", (err as Error)?.message ?? "network", false)
     }
 
     if (res.ok) {
       if (res.status === 204) return undefined as unknown as T
-      return (await res.json()) as T
+      try {
+        return (await res.json()) as T
+      } catch (err) {
+        if (rest.signal?.aborted || (err as Error)?.name === "AbortError") throw err
+        // 2xx whose body was cut off: the caller never saw the result, so a
+        // retry with the same Idempotency-Key is the right move.
+        if (!silent) await safeToast("error", "网络异常，请稍后重试")
+        throw new NetworkError("network", (err as Error)?.message ?? "truncated response")
+      }
     }
 
     const { body, message, code } = await readBody(res)
+
+    // The proxy could not reach the backend (the write may or may not have
+    // landed): same as a lost response.
+    if (res.status === 502 && code === "upstream_unreachable") {
+      if (attempt < maxRetries) {
+        await sleep(200 * 2 ** attempt)
+        attempt++
+        continue
+      }
+      if (!silent) await safeToast("error", "网络异常，请稍后重试")
+      throw new NetworkError("network", code)
+    }
 
     if (res.status === 401) {
       if (!silent) await triggerSignIn()
       throw new UnauthorizedError(message, body)
     }
     if (res.status === 403) {
-      if (!silent) await safeToast("error", "权限不足")
+      if (!silent) await safeToast("error", /[一-鿿]/.test(message) ? message : "权限不足")
       throw new ApiError(403, code, message, body)
+    }
+    if (res.status === 402 && body.code === "subscription_expired") {
+      if (!silent) await toastSubscriptionExpired()
+      throw new ApiError(402, "subscription_expired", message, body)
     }
     if (res.status >= 500) {
       if (attempt < maxRetries) {
@@ -169,6 +236,10 @@ export async function apiFetch<T>(path: string, opts: ApiOptions = {}): Promise<
       }
       if (!silent) await safeToast("error", "服务暂时不可用")
       if (typeof console !== "undefined") console.error("[apiFetch] 5xx", url, message)
+      reportWebError("api", `${method} ${url.split("?")[0]} ${res.status}`, {
+        path: url.split("?")[0],
+        request_id: res.headers?.get?.("x-request-id") ?? undefined,
+      })
       throw new ApiError(res.status, code, message, body)
     }
     // 4xx other than 401/403 — silent at the client layer; callers decide UX.

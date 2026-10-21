@@ -71,6 +71,14 @@ export interface SSEEvent {
   data: unknown
 }
 
+// AI_NOT_CONFIGURED_CODE is the stable error code the backend returns (HTTP 503)
+// on every /ai/* route when no LLM is wired.
+export const AI_NOT_CONFIGURED_CODE = "ai_not_configured"
+
+export function isAINotConfigured(body: { error?: string } | null | undefined): boolean {
+  return body?.error === AI_NOT_CONFIGURED_CODE
+}
+
 /**
  * streamChat opens an SSE connection to the AI chat endpoint.
  * Calls onChunk for each streamed text chunk, onPlan for each plan card, and
@@ -86,6 +94,10 @@ export function streamChat(
     onPlan: (plan: AIPlan) => void
     onDone: () => void
     onError: (err: string) => void
+    // Called instead of onError when the backend has no LLM configured, so the
+    // UI can show a friendly empty state rather than an error. Falls back to
+    // onError when the caller does not provide it.
+    onNotConfigured?: () => void
   }
 ): () => void {
   const controller = new AbortController()
@@ -107,7 +119,11 @@ export function streamChat(
     }
 
     if (!resp.ok) {
-      const body = await resp.json().catch(() => ({})) as { error?: string; detail?: string }
+      const body = await resp.json().catch(() => ({})) as { error?: string; detail?: string; message?: string }
+      if (isAINotConfigured(body) && callbacks.onNotConfigured) {
+        callbacks.onNotConfigured()
+        return
+      }
       callbacks.onError(body.detail ?? body.error ?? `HTTP ${resp.status}`)
       return
     }
@@ -210,8 +226,10 @@ export function streamChat(
  * `silent: true` keeps the toast UX in the caller's hands — PlanCard renders
  * its own inline error.
  */
-export async function confirmPlan(planId: string): Promise<ConfirmPlanResult> {
-  return callPlanAction<ConfirmPlanResult>(planId, "confirm")
+export async function confirmPlan(planId: string, acknowledgedFlags: number[] = []): Promise<ConfirmPlanResult> {
+  // acknowledged_flags are indexes into the plan's payload.flags; the server
+  // refuses a flagged draft unless every index is listed.
+  return callPlanAction<ConfirmPlanResult>(planId, "confirm", { acknowledged_flags: acknowledgedFlags })
 }
 
 /**
@@ -237,11 +255,12 @@ export async function revertPlan(planId: string): Promise<RevertPlanResult> {
   return callPlanAction<RevertPlanResult>(planId, "revert")
 }
 
-async function callPlanAction<T>(planId: string, action: "confirm" | "cancel" | "revert"): Promise<T> {
+async function callPlanAction<T>(planId: string, action: "confirm" | "cancel" | "revert", body?: unknown): Promise<T> {
   // Re-throw ApiError directly so callers (e.g. PlanCard) can inspect .status
   // and .code for fine-grained UX (e.g. 422 execution_failed → failed visual).
   return apiFetch<T>(`${BASE}/ai/plans/${planId}/${action}`, {
     method: "POST",
     silent: true,
+    ...(body === undefined ? {} : { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) }),
   })
 }

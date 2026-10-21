@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest"
+import { describe, it, expect, vi, afterEach } from "vitest"
 import { render, screen } from "@testing-library/react"
 
 // Mock next/link and next/navigation
@@ -32,15 +32,22 @@ vi.mock("@/lib/profile", () => ({
 
 // We test a client wrapper component that wraps the sidebar logic
 // The actual layout.tsx is a Server Component; we test the Sidebar client component
+vi.mock("@/auth", () => ({ auth: async () => null }))
+vi.mock("@/components/ai-assistant/GlobalAI", () => ({ GlobalAI: () => null }))
+vi.mock("@/components/account/account-drawer", () => ({ AccountDrawer: () => null }))
+vi.mock("@/components/undo/UndoToastProvider", () => ({ UndoToastProvider: ({ children }: { children: React.ReactNode }) => children }))
+vi.mock("@/components/ui/offline-banner", () => ({ OfflineBanner: () => null }))
+vi.mock("@/components/ui/route-transition", () => ({ RouteTransition: ({ children }: { children: React.ReactNode }) => children }))
+import DashboardLayout from "./layout"
 import { DashboardSidebar } from "./sidebar"
 
 describe("DashboardSidebar", () => {
-  it("TestDashboardSidebar_RetailProfile_ShowsPosLink: retail profile shows POS link", () => {
+  it("TestDashboardSidebar_RetailProfile_ShowsPosLink: retail profile shows POS link", async () => {
     mockUseProfile.mockReturnValue({ profileType: "retail" })
 
     render(<DashboardSidebar />)
 
-    const posLink = screen.getByRole("link", { name: /POS 收银/i })
+    const posLink = await screen.findByRole("link", { name: /POS 收银/i })
     expect(posLink).toBeInTheDocument()
     expect(posLink.getAttribute("href")).toBe("/pos")
   })
@@ -99,5 +106,23 @@ describe("DashboardSidebar", () => {
     render(<DashboardSidebar />)
 
     expect(screen.getByRole("link", { name: /项目/ })).toBeInTheDocument()
+  })
+})
+
+describe("DashboardLayout shared device", () => {
+  afterEach(() => window.localStorage.clear())
+
+  it("leaves for the switch login when another tab signs out", async () => {
+    mockUseProfile.mockReturnValue({ profileType: "retail" })
+    const assign = vi.fn()
+    const orig = window.location
+    Object.defineProperty(window, "location", { configurable: true, value: { ...orig, assign } })
+    try {
+      render(await DashboardLayout({ children: <div>后台页</div> }))
+      window.dispatchEvent(new StorageEvent("storage", { key: "tally:signed-out-at", newValue: "123" }))
+      expect(assign).toHaveBeenCalledWith("/login?switch=1")
+    } finally {
+      Object.defineProperty(window, "location", { configurable: true, value: orig })
+    }
   })
 })

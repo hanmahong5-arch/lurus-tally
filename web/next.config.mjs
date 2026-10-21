@@ -1,6 +1,7 @@
 import path from "path"
 import { fileURLToPath } from "url"
 import { readdirSync, readFileSync } from "node:fs"
+import withSerwistInit from "@serwist/next"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -79,4 +80,12 @@ const nextConfig = {
   },
 }
 
-export default nextConfig
+// 离线壳：构建时把 app/sw.ts 打成 public/sw.js（产物不入库）。开发模式不生成，避免缓存干扰热更新。
+const withSerwist = withSerwistInit({
+  swSrc: "app/sw.ts",
+  swDest: "public/sw.js",
+  disable: process.env.NODE_ENV === "development",
+  additionalPrecacheEntries: [{ url: "/offline", revision: process.env.NEXT_PUBLIC_BUILD_ID || String(Date.now()) }],
+})
+
+export default withSerwist(nextConfig)

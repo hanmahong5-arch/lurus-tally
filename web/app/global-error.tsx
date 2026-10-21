@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect } from "react"
+import { reportWebError } from "@/lib/telemetry"
 
 // Root-layout fallback: renders without ThemeProvider or shared UI.
 export default function GlobalError({
@@ -12,6 +13,7 @@ export default function GlobalError({
 }) {
   useEffect(() => {
     console.error("[global-error]", error)
+    reportWebError("render", error.message, { stack: error.stack })
   }, [error])
 
   return (

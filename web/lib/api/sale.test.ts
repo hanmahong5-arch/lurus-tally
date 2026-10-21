@@ -9,6 +9,7 @@ import {
   listSaleBills,
   getSaleBill,
   quickCheckout,
+  billsExportUrl,
   type SaleBillHead,
   type SaleBillDetail,
   type QuickCheckoutResult,
@@ -170,5 +171,72 @@ describe("quickCheckout", () => {
         paid_amount: "999900",
       })
     ).rejects.toThrow("insufficient_stock")
+  })
+})
+
+describe("listSaleBills filters", () => {
+  beforeEach(() => {
+    global.fetch = vi.fn()
+    Object.defineProperty(global, "window", {
+      value: { location: { origin: "http://localhost:3000" } },
+      writable: true,
+    })
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it("sends date, payment, search and mine params and returns summary", async () => {
+    const summary = { count: 1, total_amount: "200.0000", paid_amount: "50.0000", unpaid_amount: "150.0000" }
+    ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({
+        items: [makeSaleHead({ partner_name: "老王", payment_status: "partial", unpaid_amount: "150.0000" })],
+        total: 1,
+        summary,
+      }),
+    })
+
+    const result = await listSaleBills({
+      date_from: "2026-10-01",
+      date_to: "2026-10-31",
+      partner_id: "c-1",
+      payment_status: "open",
+      q: "老王",
+      mine: true,
+    })
+    const url = String((global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0])
+    const usp = new URL(url, "http://localhost").searchParams
+    expect(usp.get("date_from")).toBe("2026-10-01")
+    expect(usp.get("date_to")).toBe("2026-10-31")
+    expect(usp.get("partner_id")).toBe("c-1")
+    expect(usp.get("payment_status")).toBe("open")
+    expect(usp.get("q")).toBe("老王")
+    expect(usp.get("mine")).toBe("1")
+    expect(result.summary?.unpaid_amount).toBe("150.0000")
+    expect(result.items[0].partner_name).toBe("老王")
+  })
+
+  it("omits unset filters", async () => {
+    ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ items: [], total: 0 }),
+    })
+    await listSaleBills({ mine: false })
+    const url = String((global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0])
+    const usp = new URL(url, "http://localhost").searchParams
+    expect(usp.has("date_from")).toBe(false)
+    expect(usp.has("payment_status")).toBe(false)
+    expect(usp.has("mine")).toBe(false)
+  })
+})
+
+describe("billsExportUrl", () => {
+  it("builds the sale export link with the current filters", () => {
+    const href = billsExportUrl("sale", { date_from: "2026-10-01", date_to: "2026-10-31", payment_status: "unpaid", mine: true })
+    const u = new URL(href, "http://localhost")
+    expect(u.pathname).toBe("/api/proxy/exports/bills.csv")
+    expect(u.searchParams.get("type")).toBe("sale")
+    expect(u.searchParams.get("date_from")).toBe("2026-10-01")
+    expect(u.searchParams.get("payment_status")).toBe("unpaid")
+    expect(u.searchParams.get("mine")).toBe("1")
   })
 })

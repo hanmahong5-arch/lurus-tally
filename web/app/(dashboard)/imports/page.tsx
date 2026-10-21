@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   uploadOrderCSV,
   listMappings,
@@ -10,14 +10,40 @@ import {
   type UnknownSKU,
   type SKUMapping,
 } from "@/lib/api/importing"
+import { getProduct } from "@/lib/api/products"
+import { ApiError, extractApiError } from "@/lib/api/errors"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 
 // ----- constants -----------------------------------------------------------
 
 const PLATFORMS: { value: Platform; label: string }[] = [
-  { value: "amazon", label: "Amazon" },
+  { value: "amazon", label: "亚马逊" },
   { value: "shopify", label: "Shopify" },
 ]
+
+// Skip reasons from the server are codes with optional detail after a colon; show plain Chinese only.
+function skipReasonLabel(reason: string): string {
+  const head = reason.split(":")[0]
+  switch (head) {
+    case "duplicate":
+      return "这张订单已经导入过"
+    case "unknown_sku":
+      return "有平台商品编码还没对应到本店商品"
+    case "cancelled":
+      return "平台上已取消"
+    case "approve_failed":
+      return "入账失败，请稍后重试"
+    default:
+      return "已跳过"
+  }
+}
+
+function platformLabel(value: string): string {
+  return PLATFORMS.find((p) => p.value === value)?.label ?? value
+}
+
+// At most this many product lookups in flight at once.
+const NAME_LOOKUP_CONCURRENCY = 6
 
 // Hard-code a dev warehouse for MVP; production passes it via settings/profile.
 // In V2 this becomes a dropdown populated from GET /api/v1/warehouses.
@@ -31,7 +57,7 @@ const DEV_WAREHOUSE_ID = process.env.NEXT_PUBLIC_DEFAULT_WAREHOUSE_ID ?? ""
  * Flow:
  *   1. Select platform + upload CSV file.
  *   2. Preview (dry-run) → show oversell rows highlighted.
- *   3. (Optional) map unknown SKUs.
+ *   3. (Optional) map unknown platform codes.
  *   4. Confirm import → show result summary.
  */
 export default function ImportsPage() {
@@ -47,8 +73,11 @@ export default function ImportsPage() {
 
   const [mappings, setMappings] = useState<SKUMapping[]>([])
   const [mappingsLoading, setMappingsLoading] = useState(true)
+  // Product names by id; an id absent from the map is still loading.
+  const [names, setNames] = useState<ReadonlyMap<string, NameState>>(new Map())
+  const requested = useRef(new Set<string>())
 
-  // Load existing SKU mappings on mount.
+  // Load existing platform code mappings on mount.
   useAbortableEffect(
     (signal) => {
       setMappingsLoading(true)
@@ -59,6 +88,41 @@ export default function ImportsPage() {
     },
     [],
   )
+
+  // Look up each distinct product once, so shops with any number of products resolve names.
+  const wantedIds = useMemo(() => {
+    const ids = new Set<string>()
+    for (const m of mappings) ids.add(m.product_id)
+    for (const o of previewResult?.oversells ?? []) ids.add(o.product_id)
+    for (const o of finalResult?.oversells ?? []) ids.add(o.product_id)
+    return Array.from(ids)
+  }, [mappings, previewResult, finalResult])
+
+  useEffect(() => {
+    const queue = wantedIds.filter((id) => !requested.current.has(id))
+    for (const id of queue) requested.current.add(id)
+    const seen = requested.current
+    let alive = true
+    const next = (): void => {
+      const id = queue.shift()
+      if (id === undefined || !alive) return
+      getProduct(id)
+        .then((p) => setNames((prev) => new Map(prev).set(id, { kind: "ok", name: p.name })))
+        .catch((e) => {
+          const notFound = e instanceof ApiError && e.status === 404
+          // A failed lookup may be retried the next time the id list changes.
+          if (!notFound) seen.delete(id)
+          setNames((prev) => new Map(prev).set(id, { kind: notFound ? "missing" : "error" }))
+        })
+        .finally(next)
+    }
+    for (let i = 0; i < NAME_LOOKUP_CONCURRENCY; i++) next()
+    return () => {
+      alive = false
+      // Ids not yet started go back to unrequested so a later run picks them up.
+      for (const id of queue) seen.delete(id)
+    }
+  }, [wantedIds])
 
   // Step 1 → 2: Preview (dry-run).
   const handlePreview = useCallback(async () => {
@@ -78,7 +142,7 @@ export default function ImportsPage() {
       setPreviewResult(result)
       setStep("preview")
     } catch (e) {
-      setError(String(e))
+      setError(extractApiError(e).message)
     } finally {
       setBusy(false)
     }
@@ -95,7 +159,7 @@ export default function ImportsPage() {
       setFinalResult(result)
       setStep("done")
     } catch (e) {
-      setError(String(e))
+      setError(extractApiError(e).message)
     } finally {
       setBusy(false)
     }
@@ -142,6 +206,7 @@ export default function ImportsPage() {
           busy={busy}
           onConfirm={handleConfirm}
           onBack={handleReset}
+          names={names}
         />
       )}
 
@@ -150,8 +215,8 @@ export default function ImportsPage() {
         <ResultCard result={finalResult} onReset={handleReset} />
       )}
 
-      {/* ── SKU Mapping table (always visible below) ── */}
-      <MappingsTable mappings={mappings} loading={mappingsLoading} />
+      {/* ── Mapping table (always visible below) ── */}
+      <MappingsTable mappings={mappings} loading={mappingsLoading} names={names} />
     </div>
   )
 }
@@ -218,16 +283,26 @@ function UploadCard({
   )
 }
 
+type NameState = { kind: "ok"; name: string } | { kind: "missing" } | { kind: "error" }
+
+function nameLabel(s: NameState | undefined): string {
+  if (!s) return "加载中"
+  if (s.kind === "ok") return s.name
+  return s.kind === "missing" ? "未找到商品" : "商品名暂时取不到"
+}
+
 function PreviewCard({
   result,
   busy,
   onConfirm,
   onBack,
+  names,
 }: {
   result: ImportResult
   busy: boolean
   onConfirm: () => void
   onBack: () => void
+  names: ReadonlyMap<string, NameState>
 }) {
   const hasOversells = result.oversells.length > 0
   const hasUnknown = result.unknown_skus.length > 0
@@ -239,23 +314,23 @@ function PreviewCard({
       <SummaryBadges summary={result.summary} />
 
       {hasOversells && (
-        <OversellTable rows={result.oversells} />
+        <OversellTable rows={result.oversells} names={names} />
       )}
 
       {hasUnknown && (
         <div className="rounded-md bg-amber-50 border border-amber-200 dark:bg-amber-950/30 dark:border-amber-800 p-3">
           <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-1">
-            以下 SKU 暂无映射关系，这些订单将被跳过：
+            以下平台商品编码暂无对应的本店商品，这些订单将被跳过：
           </p>
           <ul className="list-disc list-inside text-sm text-amber-700 dark:text-amber-300 space-y-0.5">
             {result.unknown_skus.map((u: UnknownSKU) => (
               <li key={u.platform_sku}>
-                [{u.platform}] {u.platform_sku}
+                [{platformLabel(u.platform)}] {u.platform_sku}
               </li>
             ))}
           </ul>
           <p className="text-xs text-muted-foreground mt-2">
-            请在下方 SKU 映射表中添加映射后重新上传。
+            请在下方商品编码对应表中添加对应关系后重新上传。
           </p>
         </div>
       )}
@@ -328,7 +403,7 @@ function ResultCard({
           <ul className="mt-2 list-disc list-inside space-y-0.5 text-muted-foreground">
             {result.skipped.map((s) => (
               <li key={s.platform_order_no}>
-                {s.platform_order_no} — {s.reason}
+                {s.platform_order_no} — {skipReasonLabel(s.reason)}
               </li>
             ))}
           </ul>
@@ -352,7 +427,7 @@ function SummaryBadges({ summary }: { summary: ImportResult["summary"] }) {
     { label: "导入", value: summary.imported, color: "bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-300" },
     { label: "跳过", value: summary.skipped, color: "bg-muted text-muted-foreground" },
     { label: "超卖", value: summary.oversell_rows, color: summary.oversell_rows > 0 ? "bg-destructive/10 text-destructive" : "bg-muted" },
-    { label: "未知SKU", value: summary.unknown_skus, color: summary.unknown_skus > 0 ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300" : "bg-muted" },
+    { label: "未对应商品编码", value: summary.unknown_skus, color: summary.unknown_skus > 0 ? "bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300" : "bg-muted" },
   ]
   return (
     <div className="flex flex-wrap gap-2">
@@ -365,7 +440,7 @@ function SummaryBadges({ summary }: { summary: ImportResult["summary"] }) {
   )
 }
 
-function OversellTable({ rows }: { rows: OversellRow[] }) {
+function OversellTable({ rows, names }: { rows: OversellRow[]; names: ReadonlyMap<string, NameState> }) {
   return (
     <div className="rounded-md border border-destructive/30 overflow-x-auto">
       <div className="px-3 py-2 bg-destructive/5 text-sm font-medium text-destructive border-b border-destructive/30">
@@ -375,7 +450,7 @@ function OversellTable({ rows }: { rows: OversellRow[] }) {
         <thead>
           <tr className="border-b text-left text-muted-foreground text-xs">
             <th className="px-3 py-2 font-medium">平台单号</th>
-            <th className="px-3 py-2 font-medium">Product ID</th>
+            <th className="px-3 py-2 font-medium">商品</th>
             <th className="px-3 py-2 font-medium text-right">请求数量</th>
             <th className="px-3 py-2 font-medium text-right">可用库存</th>
           </tr>
@@ -387,7 +462,7 @@ function OversellTable({ rows }: { rows: OversellRow[] }) {
               className="border-b last:border-0 bg-destructive/5"
             >
               <td className="px-3 py-1.5 font-mono text-xs">{r.platform_order_no}</td>
-              <td className="px-3 py-1.5 font-mono text-xs">{r.product_id.slice(0, 8)}</td>
+              <td className="px-3 py-1.5">{nameLabel(names.get(r.product_id))}</td>
               <td className="px-3 py-1.5 text-right">{r.requested_qty}</td>
               <td className="px-3 py-1.5 text-right text-destructive font-medium">{r.available_qty}</td>
             </tr>
@@ -401,38 +476,40 @@ function OversellTable({ rows }: { rows: OversellRow[] }) {
 function MappingsTable({
   mappings,
   loading,
+  names,
 }: {
   mappings: SKUMapping[]
   loading: boolean
+  names: ReadonlyMap<string, NameState>
 }) {
   return (
     <div className="rounded-lg border bg-card p-6 space-y-3">
-      <h2 className="font-medium">SKU 映射表</h2>
+      <h2 className="font-medium">商品编码对应表</h2>
       <p className="text-sm text-muted-foreground">
-        导入时自动学习的平台 SKU → Tally 商品 ID 对应关系。
+        导入时自动学习的平台商品编码与本店商品的对应关系。
       </p>
 
       {loading ? (
         <p className="text-sm text-muted-foreground">加载中…</p>
       ) : mappings.length === 0 ? (
-        <p className="text-sm text-muted-foreground">暂无映射，首次导入后自动填充。</p>
+        <p className="text-sm text-muted-foreground">暂无对应关系，首次导入后自动填充。</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead>
               <tr className="border-b text-left text-muted-foreground text-xs">
                 <th className="pb-2 pr-4 font-medium">平台</th>
-                <th className="pb-2 pr-4 font-medium">平台 SKU</th>
-                <th className="pb-2 pr-4 font-medium">Tally 商品 ID</th>
+                <th className="pb-2 pr-4 font-medium">平台商品编码</th>
+                <th className="pb-2 pr-4 font-medium">本店商品</th>
                 <th className="pb-2 font-medium">更新时间</th>
               </tr>
             </thead>
             <tbody>
               {mappings.map((m) => (
                 <tr key={m.id} className="border-b last:border-0">
-                  <td className="py-1.5 pr-4 capitalize">{m.platform}</td>
+                  <td className="py-1.5 pr-4">{platformLabel(m.platform)}</td>
                   <td className="py-1.5 pr-4 font-mono text-xs">{m.platform_sku}</td>
-                  <td className="py-1.5 pr-4 font-mono text-xs">{m.product_id.slice(0, 8)}</td>
+                  <td className="py-1.5 pr-4">{nameLabel(names.get(m.product_id))}</td>
                   <td className="py-1.5 text-muted-foreground text-xs">
                     {new Date(m.updated_at).toLocaleDateString("zh-CN")}
                   </td>

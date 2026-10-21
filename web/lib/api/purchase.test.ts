@@ -7,6 +7,7 @@ import {
   createPurchaseBill,
   approvePurchaseBill,
   listPurchaseBills,
+  billsExportUrl,
   getPurchaseBill,
   type BillHead,
   type BillDetail,
@@ -129,5 +130,49 @@ describe("getPurchaseBill", () => {
     const result = await getPurchaseBill("some-id")
     expect(result.head.bill_no).toBe("PO-20260423-0001")
     expect(Array.isArray(result.items)).toBe(true)
+  })
+})
+
+describe("listPurchaseBills filters", () => {
+  beforeEach(() => {
+    global.fetch = vi.fn()
+    Object.defineProperty(global, "window", {
+      value: { location: { origin: "http://localhost:3000" } },
+      writable: true,
+    })
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it("sends filters and returns partner_name and summary", async () => {
+    const summary = { count: 2, total_amount: "300.0000", paid_amount: "100.0000", unpaid_amount: "200.0000" }
+    ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+      ok: true,
+      json: async () => ({ items: [], total: 2, summary }),
+    })
+    const result = await listPurchaseBills({
+      date_from: "2026-10-01",
+      date_to: "2026-10-31",
+      payment_status: "open",
+      q: "PO-1",
+      mine: true,
+      partner_id: "s-1",
+    })
+    const url = String((global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0])
+    const usp = new URL(url, "http://localhost").searchParams
+    expect(usp.get("date_from")).toBe("2026-10-01")
+    expect(usp.get("payment_status")).toBe("open")
+    expect(usp.get("q")).toBe("PO-1")
+    expect(usp.get("mine")).toBe("1")
+    expect(usp.get("partner_id")).toBe("s-1")
+    expect(result.summary?.total_amount).toBe("300.0000")
+  })
+})
+
+describe("billsExportUrl", () => {
+  it("builds the purchase export link", () => {
+    const u = new URL(billsExportUrl("purchase", { date_from: "2026-10-01", q: "绿源" }), "http://localhost")
+    expect(u.searchParams.get("type")).toBe("purchase")
+    expect(u.searchParams.get("q")).toBe("绿源")
+    expect(u.searchParams.has("mine")).toBe(false)
   })
 })

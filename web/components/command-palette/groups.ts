@@ -7,6 +7,7 @@
  */
 
 import type { EntityType } from "@/lib/api/search"
+import type { Perm } from "@/lib/roles"
 
 export interface PaletteAction {
   id: string
@@ -23,6 +24,8 @@ export interface PaletteAction {
   sublabel?: string
   /** Entity type (entity search only). */
   entityType?: EntityType
+  /** Hidden from people whose role lacks this permission. */
+  perm?: Perm
 }
 
 /** Map entity type to a navigation route. Returns undefined when no route exists. */
@@ -47,18 +50,18 @@ export function entityHref(type: EntityType, id: string): string | undefined {
 export const PAGE_ACTIONS: PaletteAction[] = [
   { id: "nav-dashboard", label: "仪表盘", group: "pages", icon: "📊", href: "/dashboard" },
   { id: "nav-products",  label: "商品管理", group: "pages", icon: "📦", href: "/products" },
-  { id: "nav-purchases", label: "采购管理", group: "pages", icon: "🛒", href: "/purchases" },
+  { id: "nav-purchases", label: "采购管理", group: "pages", icon: "🛒", href: "/purchases", perm: "purchase.view" },
   { id: "nav-sales",     label: "销售管理", group: "pages", icon: "📈", href: "/sales" },
   { id: "nav-finance",   label: "财务管理", group: "pages", icon: "💰", href: "/finance/exchange-rates" },
-  { id: "nav-pos",       label: "POS 收银", group: "pages", icon: "🖥️", href: "/pos" },
-  { id: "nav-sub",       label: "订阅与计费", group: "pages", icon: "💳", href: "/subscription" },
+  { id: "nav-pos",       label: "POS 收银", group: "pages", icon: "🖥️", href: "/pos", perm: "bill.checkout" },
+  { id: "nav-sub",       label: "订阅与计费", group: "pages", icon: "💳", href: "/subscription", perm: "billing.manage" },
 ]
 
 /** Static quick-action items. */
 export const QUICK_ACTIONS: PaletteAction[] = [
-  { id: "act-new-purchase", label: "新建采购单", group: "actions", icon: "➕", href: "/purchases/new", shortcut: "" },
-  { id: "act-new-sale",     label: "新建销售单", group: "actions", icon: "➕", href: "/sales/new", shortcut: "" },
-  { id: "act-new-product",  label: "新建商品",   group: "actions", icon: "➕", href: "/products/new", shortcut: "" },
+  { id: "act-new-purchase", label: "新建采购单", group: "actions", icon: "➕", href: "/purchases/new", shortcut: "", perm: "bill.draft" },
+  { id: "act-new-sale",     label: "新建销售单", group: "actions", icon: "➕", href: "/sales/new", shortcut: "", perm: "bill.draft" },
+  { id: "act-new-product",  label: "新建商品",   group: "actions", icon: "➕", href: "/products/new", shortcut: "", perm: "product.write" },
 ]
 
 /** AI-ask sentinel — the primary ⌘K action; sends the query to the AI drawer. */

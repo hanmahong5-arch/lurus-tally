@@ -9,16 +9,16 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { buttonVariants } from "@/components/ui/button"
-import { TALLY_PLANS, formatCycle, formatPriceCNY } from "@/lib/billing/plans"
+import { SEED_TRIAL, TALLY_PLANS, formatCycle, formatPriceCNY } from "@/lib/billing/plans"
 import { cn } from "@/lib/utils"
 
 export const metadata: Metadata = {
   title: "Lurus Tally — 定价方案",
   description:
-    "AI-native 智能进销存。⌘K + AI 助手 + 多仓库。中小企业刚需档 ¥199/月起。",
+    "进销存，开单记账查库存。中小店铺刚需档 ¥58/月起。",
 }
 
-const LOGIN_NEXT = "/subscription"
+const LOGIN_NEXT = SEED_TRIAL ? "/dashboard" : "/subscription"
 const LOGIN_HREF = `/login?callbackUrl=${encodeURIComponent(LOGIN_NEXT)}`
 
 export default function PricingPage() {
@@ -30,8 +30,7 @@ export default function PricingPage() {
             Lurus Tally — 定价方案
           </h1>
           <p className="mx-auto max-w-2xl text-lg text-muted-foreground">
-            AI-native 智能进销存：⌘K Command Palette · AI 进货建议 ·
-            多仓库 · 中小企业刚需档。前 10 客户免费 90 天。
+            进销存，开单记账查库存。
           </p>
         </div>
 
@@ -74,26 +73,6 @@ export default function PricingPage() {
                     </li>
                   ))}
                 </ul>
-                <div className="mt-4 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-                  <div>
-                    SKU 上限：
-                    <span className="font-mono">
-                      {plan.caps.skus === -1 ? "不限" : plan.caps.skus}
-                    </span>
-                  </div>
-                  <div>
-                    用户：
-                    <span className="font-mono">
-                      {plan.caps.users === -1 ? "不限" : plan.caps.users}
-                    </span>
-                    {" · "}仓库：
-                    <span className="font-mono">
-                      {plan.caps.warehouses === -1
-                        ? "不限"
-                        : plan.caps.warehouses}
-                    </span>
-                  </div>
-                </div>
               </CardContent>
               <CardFooter>
                 <Link
@@ -103,7 +82,7 @@ export default function PricingPage() {
                     "w-full"
                   )}
                 >
-                  {plan.code === "free" ? "免费开始" : "登录后订阅"}
+                  {plan.code === "free" ? "免费开始" : SEED_TRIAL ? "免费试用" : "登录后订阅"}
                 </Link>
               </CardFooter>
             </Card>
@@ -113,31 +92,35 @@ export default function PricingPage() {
         <div className="mx-auto mt-20 max-w-3xl">
           <h2 className="mb-6 text-center text-2xl font-bold">常见问题</h2>
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 text-left">
+            {SEED_TRIAL && (
+              <div>
+                <h3 className="mb-2 text-base font-medium">想先试用怎么办？</h3>
+                <p className="text-sm leading-relaxed text-muted-foreground">
+                  试用期全部功能免费，点击“免费试用”登录即可使用，正式收费前会提前通知。
+                </p>
+              </div>
+            )}
             <div>
-              <h3 className="mb-2 text-base font-medium">前 10 客户免费 90 天是什么？</h3>
+              <h3 className="mb-2 text-base font-medium">
+                {SEED_TRIAL ? "什么时候开始收费？" : "支持哪些支付方式？"}
+              </h3>
               <p className="text-sm leading-relaxed text-muted-foreground">
-                跨境电商 FBA 周期 60-90 天，给足够时间看到 AI 补货建议的真实
-                效果。完成 onboarding 即可激活。
-              </p>
-            </div>
-            <div>
-              <h3 className="mb-2 text-base font-medium">支持哪些支付方式？</h3>
-              <p className="text-sm leading-relaxed text-muted-foreground">
-                钱包余额、支付宝、微信支付。企业版支持企业转账、发票开具。
+                {SEED_TRIAL
+                  ? "试用期全部功能免费，正式收费前会提前通知。"
+                  : "钱包余额、支付宝、微信支付。企业版支持企业转账、发票开具。"}
               </p>
             </div>
             <div>
               <h3 className="mb-2 text-base font-medium">能从 Excel / 店小秘迁过来吗？</h3>
               <p className="text-sm leading-relaxed text-muted-foreground">
-                提供 Excel / CSV 批量导入；店小秘 / 马帮的常见字段已预置映射。
+                提供 Excel / CSV 批量导入商品，以及亚马逊、Shopify 订单导入。
                 企业版含 1 对 1 数据迁移协助。
               </p>
             </div>
             <div>
-              <h3 className="mb-2 text-base font-medium">AI 会乱改我的库存吗？</h3>
+              <h3 className="mb-2 text-base font-medium">会不会改乱我的库存？</h3>
               <p className="text-sm leading-relaxed text-muted-foreground">
-                所有 AI 写操作 Preview Before Execute，30 秒内可 Cmd+Z 撤销，
-                完整审计日志。AI 不是卖点，自动化才是。
+                每次库存变动都有单据可查，谁在什么时候改了什么，都留有记录。
               </p>
             </div>
           </div>

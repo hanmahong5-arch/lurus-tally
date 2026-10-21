@@ -10,7 +10,26 @@ vi.mock("@/lib/api/projects", () => ({
   updateProject: vi.fn(),
 }))
 
+vi.mock("@/lib/api/customers", () => ({
+  getCustomer: vi.fn().mockResolvedValue({ id: "c-9", name: "老张绿化" }),
+}))
+
+vi.mock("@/components/entity-pickers", () => ({
+  CustomerPicker: ({ label, onSelect, onClear }: { label: string; onSelect: (o: { id: string; name: string }) => void; onClear?: () => void }) => (
+    <div>
+      <button type="button" onClick={() => onClear?.()}>
+        clear-customer
+      </button>
+      <span data-testid="picked">{label}</span>
+      <button type="button" onClick={() => onSelect({ id: "c-1", name: "李老板" })}>
+        pick-customer
+      </button>
+    </div>
+  ),
+}))
+
 import { createProject, updateProject } from "@/lib/api/projects"
+import { ApiError } from "@/lib/api/errors"
 import ProjectForm from "./ProjectForm"
 import type { ProjectItem } from "@/lib/api/projects"
 
@@ -124,5 +143,85 @@ describe("ProjectForm", () => {
     // The customer field container should be present in the DOM
     const customerField = screen.getByTestId("customer-field")
     expect(customerField).toBeInTheDocument()
+  })
+
+  it("TestProjectForm_Customer_PickedNotTypedAsId", async () => {
+    vi.mocked(createProject).mockResolvedValueOnce(mockItem)
+    const { container } = render(<ProjectForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    expect(container.textContent).not.toMatch(/UUID|客户ID/)
+
+    fireEvent.change(container.querySelector('input[name="code"]')!, { target: { value: "P9" } })
+    fireEvent.change(container.querySelector('input[name="name"]')!, { target: { value: "小区绿化" } })
+    fireEvent.click(screen.getByText("pick-customer"))
+    fireEvent.click(screen.getByRole("button", { name: /创建/ }))
+
+    await waitFor(() => expect(createProject).toHaveBeenCalledOnce())
+    expect(vi.mocked(createProject).mock.calls[0][0]).toMatchObject({ customerId: "c-1" })
+  })
+
+  it("TestProjectForm_Edit_ShowsCustomerName", async () => {
+    render(
+      <ProjectForm mode="edit" initialData={{ ...mockItem, customerId: "c-9" }} onSuccess={vi.fn()} onCancel={vi.fn()} />
+    )
+    await waitFor(() => expect(screen.getByTestId("picked").textContent).toBe("老张绿化"))
+  })
+
+  it("TestProjectForm_SubmitError_PlainChinese", async () => {
+    vi.mocked(createProject).mockRejectedValueOnce(new ApiError(409, "dup", "x", { error: "duplicate code" }))
+    const { container } = render(<ProjectForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    fireEvent.change(container.querySelector('input[name="code"]')!, { target: { value: "P9" } })
+    fireEvent.change(container.querySelector('input[name="name"]')!, { target: { value: "x" } })
+    fireEvent.click(screen.getByRole("button", { name: /创建/ }))
+    expect(await screen.findByText("这个项目编号已经用过了，换一个")).toBeInTheDocument()
+  })
+
+  async function submitWith(fill: (c: HTMLElement) => void) {
+    const { container } = render(<ProjectForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    fireEvent.change(container.querySelector('input[name="code"]')!, { target: { value: "P9" } })
+    fireEvent.change(container.querySelector('input[name="name"]')!, { target: { value: "x" } })
+    fill(container)
+    fireEvent.click(screen.getByRole("button", { name: /创建/ }))
+  }
+
+  it("TestProjectForm_AmountWithThousandsComma_SentClean", async () => {
+    vi.mocked(createProject).mockResolvedValueOnce(mockItem)
+    await submitWith((c) =>
+      fireEvent.change(c.querySelector('input[name="contractAmount"]')!, { target: { value: "1,200" } })
+    )
+    await waitFor(() => expect(createProject).toHaveBeenCalledOnce())
+    expect(vi.mocked(createProject).mock.calls[0][0]).toMatchObject({ contractAmount: "1200" })
+  })
+
+  it("TestProjectForm_AmountNotNumber_BlockedBeforeSubmit", async () => {
+    await submitWith((c) =>
+      fireEvent.change(c.querySelector('input[name="contractAmount"]')!, { target: { value: "1.2万" } })
+    )
+    expect(await screen.findByText(/合同金额请填写数字/)).toBeInTheDocument()
+    expect(createProject).not.toHaveBeenCalled()
+  })
+
+  it("TestProjectForm_EndBeforeStart_BlockedBeforeSubmit", async () => {
+    await submitWith((c) => {
+      fireEvent.change(c.querySelector('input[name="startDate"]')!, { target: { value: "2026-05-02" } })
+      fireEvent.change(c.querySelector('input[name="endDate"]')!, { target: { value: "2026-05-01" } })
+    })
+    expect(await screen.findByText("完工日期不能早于开工日期")).toBeInTheDocument()
+    expect(createProject).not.toHaveBeenCalled()
+  })
+
+  it("TestProjectForm_EnglishRejection_ReplacedWithFallback", async () => {
+    vi.mocked(createProject).mockRejectedValueOnce(
+      new ApiError(400, "bad", "x", { error: "project create validate: end_date must be on or after start_date" })
+    )
+    await submitWith(() => {})
+    expect(await screen.findByText("保存没成功，请检查填写的内容")).toBeInTheDocument()
+  })
+
+  it("TestProjectForm_EditClearCustomer_KeepsItAndSaysSo", async () => {
+    render(
+      <ProjectForm mode="edit" initialData={{ ...mockItem, customerId: "c-9" }} onSuccess={vi.fn()} onCancel={vi.fn()} />
+    )
+    fireEvent.click(screen.getByText("clear-customer"))
+    expect(screen.getByText(/暂不支持去掉客户/)).toBeInTheDocument()
   })
 })

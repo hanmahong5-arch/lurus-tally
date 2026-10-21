@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from "react"
 import { useProfile, ProfileGate } from "@/lib/profile"
+import { useRole } from "@/hooks/use-role"
 import { UnitSelector } from "@/components/unit-selector"
 import { HsCodeInput } from "@/components/cross-border/hs-code-input"
 import type {
@@ -10,11 +11,23 @@ import type {
   Product,
 } from "@/lib/api/products"
 import { ErrorBanner } from "@/components/ui/error-banner"
+import { extractApiError } from "@/lib/api/errors"
+import { listProducts } from "@/lib/api/products"
 import { Input } from "@/components/ui/input"
 import { Textarea } from "@/components/ui/textarea"
 import { Label } from "@/components/ui/label"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Button } from "@/components/ui/button"
+
+/** A stored price of 0 means "not set" (the SKU column is NOT NULL DEFAULT 0). */
+function priceText(v: string | undefined): string {
+  if (!v) return ""
+  const n = Number(v)
+  return Number.isFinite(n) && n > 0 ? v : ""
+}
+
+/** At most 6 decimals (NUMERIC(18,6)), digits only. Blank is allowed. */
+const PRICE_PATTERN = /^\d{0,12}(\.\d{0,6})?$/
 
 type ProfileType = "cross_border" | "retail" | "hybrid" | "horticulture" | null
 
@@ -46,12 +59,27 @@ const STRATEGY_LABELS: Record<MeasurementStrategy, string> = {
 const CONTROL_CLASS =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
 
+/** Name of another product already carrying this barcode; a failed lookup never blocks saving. */
+async function findBarcodeOwner(
+  barcode: string,
+  selfId: string | undefined,
+  tenantId: string | undefined,
+): Promise<string | null> {
+  try {
+    const res = await listProducts({ attributes_filter: { barcode }, limit: 2, tenantId })
+    return (res.items ?? []).find((p) => p.id !== selfId)?.name ?? null
+  } catch {
+    return null
+  }
+}
+
 /**
  * ProductForm is a profile-aware form for creating and editing products.
  *
  * Profile-aware fields:
  *   cross_border: hs_code, en_name, origin (under attributes)
  *   retail:       is_bulk, allow_credit (under attributes)
+ *   all profiles: barcode (under attributes; the POS scanner looks products up by it)
  *
  * Field state stays on useState because the page-level draft autosave hooks into
  * `onChange` on every keystroke; that integration is preserved verbatim.
@@ -65,6 +93,10 @@ export function ProductForm({
   onChange,
 }: ProductFormProps) {
   const { profileType } = useProfile()
+  // Purchase price is cost data: without cost.view the box is not drawn and
+  // nothing is sent (the backend drops it anyway). An unknown role hides it too.
+  const { known, can } = useRole()
+  const showCost = known && can("cost.view")
 
   const [code, setCode] = useState(initial?.code ?? "")
   const [name, setName] = useState(initial?.name ?? "")
@@ -77,12 +109,16 @@ export function ProductForm({
     useState<MeasurementStrategy>(
       (initial?.measurement_strategy as MeasurementStrategy) ?? "individual"
     )
+  const [retailPrice, setRetailPrice] = useState(priceText(initial?.retail_price))
+  const [wholesalePrice, setWholesalePrice] = useState(priceText(initial?.wholesale_price))
+  const [purchasePrice, setPurchasePrice] = useState(priceText(initial?.purchase_price))
   const [defaultUnitId, setDefaultUnitId] = useState<string | undefined>(
     initial?.default_unit_id
   )
 
   // Cross-border profile attributes
   const initialAttrs = (initial?.attributes ?? {}) as Record<string, unknown>
+  const [barcode, setBarcode] = useState<string>(String(initialAttrs.barcode ?? ""))
   const [hsCode, setHsCode] = useState<string>(String(initialAttrs.hs_code ?? ""))
   const [enName, setEnName] = useState<string>(String(initialAttrs.en_name ?? ""))
   const [origin, setOrigin] = useState<string>(String(initialAttrs.origin ?? ""))
@@ -114,22 +150,33 @@ export function ProductForm({
       remark: remark || undefined,
       measurement_strategy: measurementStrategy,
       default_unit_id: defaultUnitId,
+      retail_price: retailPrice || undefined,
+      wholesale_price: wholesalePrice || undefined,
+      purchase_price: showCost ? purchasePrice || undefined : undefined,
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [code, name, manufacturer, model, spec, brand, remark, measurementStrategy, defaultUnitId])
+  }, [code, name, manufacturer, model, spec, brand, remark, measurementStrategy, defaultUnitId, retailPrice, wholesalePrice, purchasePrice])
 
+  // Edits start from the stored attributes so keys this form does not show (e.g. those
+  // added by import or by another profile) survive the save.
   function buildAttributes(profile: ProfileType): Record<string, unknown> {
+    const attrs: Record<string, unknown> = { ...initialAttrs }
+    const put = (key: string, value: string) => {
+      // null, not delete: the backend merges attributes key by key and only drops a key sent as null.
+      if (value) attrs[key] = value
+      else if (key in initialAttrs) attrs[key] = null
+      else delete attrs[key]
+    }
+    put("barcode", barcode.trim())
     if (profile === "cross_border") {
-      const attrs: Record<string, unknown> = {}
-      if (hsCode) attrs.hs_code = hsCode
-      if (enName) attrs.en_name = enName
-      if (origin) attrs.origin = origin
-      return attrs
+      put("hs_code", hsCode)
+      put("en_name", enName)
+      put("origin", origin)
+    } else if (profile === "retail") {
+      attrs.is_bulk = isBulk
+      attrs.allow_credit = allowCredit
     }
-    if (profile === "retail") {
-      return { is_bulk: isBulk, allow_credit: allowCredit }
-    }
-    return {}
+    return attrs
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -137,6 +184,15 @@ export function ProductForm({
     setError(null)
     setSubmitting(true)
     try {
+      // Scanning at the till picks a product by barcode: two products sharing one would be ambiguous.
+      const bc = barcode.trim()
+      if (bc) {
+        const dup = await findBarcodeOwner(bc, initial?.id, tenantId)
+        if (dup) {
+          setError(`条码已被「${dup}」使用，请换一个条码，或先留空`)
+          return
+        }
+      }
       await onSubmit({
         code,
         name,
@@ -147,10 +203,13 @@ export function ProductForm({
         remark: remark || undefined,
         measurement_strategy: measurementStrategy,
         default_unit_id: defaultUnitId,
+        retail_price: retailPrice || undefined,
+        wholesale_price: wholesalePrice || undefined,
+        purchase_price: showCost ? purchasePrice || undefined : undefined,
         attributes: buildAttributes(profileType),
       })
     } catch (e) {
-      setError(String(e))
+      setError(extractApiError(e).message)
     } finally {
       setSubmitting(false)
     }
@@ -165,15 +224,14 @@ export function ProductForm({
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
         <div className="space-y-1.5">
           <Label htmlFor="pf-code">
-            商品编码 <span className="text-destructive">*</span>
+            商品编码
           </Label>
           <Input
             id="pf-code"
             value={code}
             onChange={(e) => setCode(e.target.value)}
-            required
             disabled={busy}
-            placeholder="如 SKU-001"
+            placeholder="留空自动生成"
           />
         </div>
         <div className="space-y-1.5">
@@ -204,6 +262,22 @@ export function ProductForm({
           <Label htmlFor="pf-spec">规格</Label>
           <Input id="pf-spec" value={spec} onChange={(e) => setSpec(e.target.value)} disabled={busy} />
         </div>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="pf-barcode">条码</Label>
+        <Input
+          id="pf-barcode"
+          value={barcode}
+          onChange={(e) => setBarcode(e.target.value)}
+          // A scanner ends every scan with Enter; that must not submit the form half-filled.
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.preventDefault()
+          }}
+          disabled={busy}
+          inputMode="numeric"
+          placeholder="用扫码枪扫一下商品上的条码，收银时扫码即可加入"
+        />
       </div>
 
       <div className="space-y-1.5">
@@ -243,6 +317,40 @@ export function ProductForm({
             className={CONTROL_CLASS}
           />
         </div>
+      </div>
+
+      <div className="space-y-3 rounded-lg border border-border p-4">
+        <p className="text-xs font-semibold tracking-wide text-muted-foreground">
+          价格（元）
+        </p>
+        <div className={showCost ? "grid grid-cols-1 gap-4 sm:grid-cols-3" : "grid grid-cols-1 gap-4 sm:grid-cols-2"}>
+          {(
+            [
+              ["pf-retail", "零售价", retailPrice, setRetailPrice],
+              ["pf-wholesale", "批发价", wholesalePrice, setWholesalePrice],
+              ...(showCost ? [["pf-purchase", "进价", purchasePrice, setPurchasePrice] as const] : []),
+            ] as const
+          ).map(([id, label, value, set]) => (
+            <div key={id} className="space-y-1.5">
+              <Label htmlFor={id}>{label}</Label>
+              <Input
+                id={id}
+                inputMode="decimal"
+                value={value}
+                onChange={(e) => {
+                  const v = e.target.value.trim()
+                  if (PRICE_PATTERN.test(v)) set(v)
+                }}
+                disabled={busy}
+                placeholder="如 12.50"
+              />
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          留空 = 收银时手输。填了零售价，收银台点选商品就会自动带出单价。
+        </p>
+        {known && !showCost && <p className="text-xs text-muted-foreground">进价由老板或店长填写。</p>}
       </div>
 
       {/* cross_border profile fields */}

@@ -4,12 +4,13 @@ import { useState } from "react"
 import Image from "next/image"
 
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { roleLabel, useRole } from "@/hooks/use-role"
 import {
   computeStatusLight,
-  fetchAccountSummary,
   type AccountStatusLight,
   type AccountSummary,
 } from "@/lib/api/account"
+import { loadAccountSummary } from "./load-summary"
 import { useAccountDrawer } from "./account-drawer-provider"
 import { cn } from "@/lib/utils"
 
@@ -40,9 +41,12 @@ export function AccountCard() {
   const [summary, setSummary] = useState<AccountSummary | null>(null)
   const [failed, setFailed] = useState(false)
   const { openDrawer } = useAccountDrawer()
+  // Plan and wallet belong to the owner; everyone else only reads who they are.
+  const { role, can } = useRole()
+  const withBilling = can("billing.manage")
 
   useAbortableEffect((_signal, isCancelled) => {
-    fetchAccountSummary()
+    loadAccountSummary(withBilling)
       .then((s) => {
         if (isCancelled()) return
         setSummary(s)
@@ -51,12 +55,12 @@ export function AccountCard() {
         if (isCancelled()) return
         setFailed(true)
       })
-  }, [])
+  }, [withBilling])
 
   const light: AccountStatusLight = summary ? computeStatusLight(summary.billing) : "amber"
   const tone = STATUS_TONE[light]
   const displayName = summary?.identity.display_name || summary?.identity.email || "账户"
-  const planCode = summary?.billing?.subscription?.plan_code ?? "free"
+  const roleName = role ? roleLabel(role) : ""
 
   const avatarSrc = summary?.identity.avatar_url
     ? avatarProxyUrl(summary.identity.avatar_url)
@@ -81,23 +85,27 @@ export function AccountCard() {
             {(displayName[0] ?? "?").toUpperCase()}
           </span>
         )}
-        <span
-          className={cn(
-            "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-background",
-            tone.dot,
-          )}
-          aria-label={tone.label}
-        />
+        {withBilling && (
+          <span
+            className={cn(
+              "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full ring-2 ring-background",
+              tone.dot,
+            )}
+            aria-label={tone.label}
+          />
+        )}
       </div>
       <div className="min-w-0 flex-1">
         <div className="truncate text-sm font-medium">
           {failed ? "未登录" : displayName}
         </div>
         <div className="mt-0.5 flex items-center gap-1.5">
-          <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
-            {planCode}
-          </span>
-          <span className="text-[10px] text-muted-foreground">{tone.label}</span>
+          {roleName && (
+            <span className="rounded-full bg-muted px-1.5 py-0.5 text-[10px] tracking-wide text-muted-foreground">
+              {roleName}
+            </span>
+          )}
+          {withBilling && <span className="text-[10px] text-muted-foreground">{tone.label}</span>}
         </div>
       </div>
       <span className="text-muted-foreground" aria-hidden="true">

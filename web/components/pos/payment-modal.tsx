@@ -4,13 +4,19 @@ import React, { useState, useEffect, useRef } from "react"
 import Decimal from "decimal.js"
 import { formatCNY } from "@/lib/format"
 import type { PaymentMethod } from "@/lib/api/pos"
+import { CustomerPicker } from "@/components/entity-pickers"
+import { LOCKED_HINT, useSubscriptionLocked } from "@/hooks/use-subscription-locked"
 
 export type PaymentMode = "cash" | "wechat" | "alipay" | "credit"
 
 export interface PaymentConfirmArgs {
   paymentMethod: PaymentMethod
   paidAmount: Decimal
+  /** Customer profile the credit sale is booked to; always set for credit. */
+  partnerId?: string
   customerName?: string
+  /** Free-text note for the bill, e.g. the last digits of a wechat / alipay receipt. */
+  note?: string
 }
 
 interface PaymentModalProps {
@@ -36,7 +42,8 @@ const MODE_LABELS: Record<PaymentMode, string> = {
 
 /**
  * PaymentModal handles payment confirmation for the POS checkout flow.
- * Supports cash (with change calculation), WeChat, Alipay (QR placeholder), and credit.
+ * Supports cash (with change calculation), WeChat / Alipay (cashier confirms the money
+ * arrived, optionally noting the receipt's last digits), and credit (a customer is required).
  */
 export function PaymentModal({
   open,
@@ -47,20 +54,30 @@ export function PaymentModal({
   onClose,
 }: PaymentModalProps) {
   const [paidAmountStr, setPaidAmountStr] = useState("")
+  const [customerId, setCustomerId] = useState("")
   const [customerName, setCustomerName] = useState("")
+  const [tail, setTail] = useState("")
   const cashInputRef = useRef<HTMLInputElement>(null)
+  const locked = useSubscriptionLocked()
 
-  // Reset when mode or open changes
+  // The parent builds a fresh Decimal every render; key the reset on its string form so a
+  // re-render during a failed checkout does not wipe the cashier's input (it would change
+  // the request fingerprint and drop the Idempotency-Key).
+  const totalStr = totalAmount.toFixed(2)
+
+  // Reset when mode, open or the payable amount changes
   useEffect(() => {
     if (open) {
-      setPaidAmountStr(totalAmount.toFixed(2))
+      setPaidAmountStr(totalStr)
+      setCustomerId("")
       setCustomerName("")
+      setTail("")
       if (mode === "cash") {
         // Use setTimeout to allow DOM to render before focusing
         setTimeout(() => cashInputRef.current?.focus(), 50)
       }
     }
-  }, [open, mode, totalAmount])
+  }, [open, mode, totalStr])
 
   // Close on ESC — disabled while loading so an in-flight checkout cannot be
   // dismissed mid-request (the server still finishes; the client would lose
@@ -81,19 +98,28 @@ export function PaymentModal({
   const isNegativeChange = change.lt(0)
 
   const handleCashConfirm = () => {
+    if (locked) return
     if (paidAmountStr) {
       onConfirm({ paymentMethod: "cash", paidAmount })
     }
   }
 
   const handleQrConfirm = (method: "wechat" | "alipay") => {
-    onConfirm({ paymentMethod: method, paidAmount: totalAmount })
+    if (locked) return
+    const digits = tail.trim()
+    onConfirm({
+      paymentMethod: method,
+      paidAmount: totalAmount,
+      note: digits ? `${method === "wechat" ? "微信" : "支付宝"}流水尾号 ${digits}` : undefined,
+    })
   }
 
   const handleCreditConfirm = () => {
+    if (locked || !customerId) return
     onConfirm({
       paymentMethod: "credit",
       paidAmount: new Decimal(0),
+      partnerId: customerId,
       customerName: customerName || undefined,
     })
   }
@@ -131,6 +157,12 @@ export function PaymentModal({
             {formatCNY(totalAmount.toNumber())}
           </div>
         </div>
+
+        {locked && (
+          <p role="alert" className="mb-3 rounded-lg bg-amber-100 px-3 py-2 text-sm text-amber-950">
+            {LOCKED_HINT}
+          </p>
+        )}
 
         {/* Cash mode */}
         {mode === "cash" && (
@@ -174,7 +206,7 @@ export function PaymentModal({
 
             <button
               onClick={handleCashConfirm}
-              disabled={!paidAmountStr || isNegativeChange || loading}
+              disabled={!paidAmountStr || isNegativeChange || loading || locked}
               className="h-12 w-full rounded-lg bg-emerald-500 text-base font-semibold text-white hover:bg-emerald-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? "处理中..." : "确认收款"}
@@ -184,21 +216,32 @@ export function PaymentModal({
 
         {/* WeChat / Alipay mode */}
         {(mode === "wechat" || mode === "alipay") && (
-          <div className="flex flex-col items-center gap-4">
-            <div className="flex h-48 w-48 items-center justify-center rounded-lg border-2 border-dashed border-border bg-muted text-sm text-muted-foreground">
-              二维码占位区
-              <br />
-              200×200
-            </div>
+          <div className="flex flex-col gap-3">
             <p className="text-sm text-muted-foreground">
-              请扫描{mode === "wechat" ? "微信" : "支付宝"}付款码完成支付
+              请让顾客用{mode === "wechat" ? "微信" : "支付宝"}付款，确认到账后再点下面的按钮。
             </p>
+            <div>
+              <label htmlFor="pay-tail" className="mb-1 block text-sm font-medium">
+                流水尾号（选填）
+              </label>
+              <input
+                id="pay-tail"
+                type="text"
+                inputMode="numeric"
+                maxLength={12}
+                value={tail}
+                onChange={(e) => setTail(e.target.value)}
+                placeholder="方便日后对账，可不填"
+                className="w-full rounded-lg border border-border bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
+                aria-label="流水尾号"
+              />
+            </div>
             <button
               onClick={() => handleQrConfirm(mode)}
-              disabled={loading}
+              disabled={loading || locked}
               className="h-12 w-full rounded-lg bg-primary text-base font-semibold text-primary-foreground hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              {loading ? "处理中..." : "已收款"}
+              {loading ? "处理中..." : "已收到顾客付款"}
             </button>
           </div>
         )}
@@ -207,22 +250,31 @@ export function PaymentModal({
         {mode === "credit" && (
           <div className="flex flex-col gap-3">
             <div>
-              <label htmlFor="customer-name" className="mb-1 block text-sm font-medium">
-                客户姓名
+              <label htmlFor="credit-customer" className="mb-1 block text-sm font-medium">
+                客户
               </label>
-              <input
-                id="customer-name"
-                type="text"
-                value={customerName}
-                onChange={(e) => setCustomerName(e.target.value)}
-                placeholder="请输入客户姓名"
-                className="w-full rounded-lg border border-border bg-background px-3 py-2 outline-none focus:ring-2 focus:ring-ring"
-                aria-label="客户姓名"
+              <CustomerPicker
+                id="credit-customer"
+                value={customerId}
+                label={customerName}
+                placeholder="搜索客户，没有就直接新建"
+                disabled={loading}
+                onSelect={(c) => {
+                  setCustomerId(c.id)
+                  setCustomerName(c.name)
+                }}
+                onClear={() => {
+                  setCustomerId("")
+                  setCustomerName("")
+                }}
               />
+              {!customerId && (
+                <p className="mt-1 text-xs text-orange-600">赊账必须选择客户，欠款才会记到他名下</p>
+              )}
             </div>
             <button
               onClick={handleCreditConfirm}
-              disabled={loading}
+              disabled={loading || locked || !customerId}
               className="h-12 w-full rounded-lg bg-orange-500 text-base font-semibold text-white hover:bg-orange-600 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? "处理中..." : "确认赊账"}

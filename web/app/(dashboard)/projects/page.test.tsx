@@ -4,6 +4,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, waitFor, fireEvent } from "@testing-library/react"
 
+// 当前登录人的店内角色，可按用例切换
+let mockRole: string | undefined = "owner"
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: mockRole ? { user: { role: mockRole, isOwner: mockRole === "owner" } } : null,
+    status: mockRole ? "authenticated" : "loading",
+  }),
+}))
+
 // Mock API module
 vi.mock("@/lib/api/projects", () => ({
   listProjects: vi.fn(),
@@ -38,6 +47,7 @@ function makeItem(i: number): ProjectItem {
 describe("ProjectsPage", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockRole = "owner"
   })
 
   it("TestProjectsPage_Renders_SearchAndGrid", async () => {
@@ -93,5 +103,39 @@ describe("ProjectsPage", () => {
       },
       { timeout: 1000 }
     )
+  })
+
+  it("TestProjectsPage_Finance_HidesWriteButtons", async () => {
+    mockRole = "finance"
+    vi.mocked(listProjects).mockResolvedValueOnce({ items: [makeItem(1)], total: 1 })
+    render(<ProjectsPage />)
+    await waitFor(() => {
+      expect(screen.getByText("项目1")).toBeInTheDocument()
+    })
+    expect(screen.queryByRole("button", { name: /新建项目/ })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText("项目1"))
+    await waitFor(() => {
+      expect(screen.getByTestId("project-detail-drawer")).toBeInTheDocument()
+    })
+    expect(screen.queryByRole("button", { name: "编辑" })).not.toBeInTheDocument()
+    expect(screen.queryByRole("button", { name: "删除" })).not.toBeInTheDocument()
+  })
+
+  it("TestProjectsPage_Finance_EmptyStateHasNoCreateAction", async () => {
+    mockRole = "finance"
+    vi.mocked(listProjects).mockResolvedValueOnce({ items: [], total: 0 })
+    render(<ProjectsPage />)
+    await waitFor(() => {
+      expect(screen.getByText("暂无项目")).toBeInTheDocument()
+    })
+    expect(screen.queryByRole("button", { name: /新建第一个项目/ })).not.toBeInTheDocument()
+    expect(screen.getByText("由老板、店长或店员录入")).toBeInTheDocument()
+  })
+
+  it("TestProjectsPage_Manager_ShowsCreateButton", async () => {
+    mockRole = "manager"
+    vi.mocked(listProjects).mockResolvedValueOnce({ items: [], total: 0 })
+    render(<ProjectsPage />)
+    expect(screen.getByRole("button", { name: /新建项目/ })).toBeInTheDocument()
   })
 })

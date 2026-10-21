@@ -1,20 +1,26 @@
 "use client"
 
-import { useCallback, useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import Link from "next/link"
 import { toast } from "sonner"
 import type { ColumnDef } from "@tanstack/react-table"
 import { listProducts, deleteProduct, restoreProduct, type Product } from "@/lib/api/products"
+import { extractApiError } from "@/lib/api/errors"
 import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useTenantId } from "@/hooks/use-tenant-id"
+import { useRole } from "@/hooks/use-role"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
-import { DataTable } from "@/components/ui/data-table"
+import { DataTable, statusCell } from "@/components/ui/data-table"
+import { DataCard } from "@/components/ui/data-card"
+import { formatCNY } from "@/lib/format"
 import { Badge } from "@/components/ui/badge"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/empty-state"
+import { ProductImportDialog } from "@/components/product-import-dialog"
+import { BarcodeScanner } from "@/components/barcode-scanner"
 
 /**
  * Products list page — GET /api/v1/products
@@ -28,13 +34,34 @@ const STRATEGY_LABELS: Record<string, string> = {
   serial: "序列号",
 }
 
+// 列表接口当前不返回条码字段时显示占位。
+function barcodeOf(p: Product): string {
+  const b = (p as Product & { barcode?: string }).barcode
+  return b || "—"
+}
+
 export default function ProductsPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [q, setQ] = useState("")
+  const [importOpen, setImportOpen] = useState(false)
   const tenantId = useTenantId()
+  // Adding, importing, editing and deleting need product.write; others only look.
+  // An unknown role hides nothing (the backend decides).
+  const { known, can } = useRole()
+  const mayWrite = !known || can("product.write")
+
+  // /products?import=1 (dashboard "去导入") opens the import dialog straight away.
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (url.searchParams.get("import") !== "1") return
+    if (mayWrite) setImportOpen(true)
+    // Drop the flag so a refresh doesn't pop the dialog again.
+    url.searchParams.delete("import")
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash)
+  }, [mayWrite])
 
   const load = useCallback((query?: string, signal?: AbortSignal, isCancelled?: () => boolean) => {
     setLoading(true)
@@ -47,7 +74,7 @@ export default function ProductsPage() {
       })
       .catch((e) => {
         if (isCancelled?.() || signal?.aborted) return
-        setError(String(e))
+        setError(extractApiError(e).message)
       })
       .finally(() => {
         if (isCancelled?.()) return
@@ -77,11 +104,11 @@ export default function ProductsPage() {
     } catch (e) {
       // Delete failed — remove the entry we just pushed so undo doesn't fire.
       globalUndoStack.pop()
-      toast.error("删除失败：" + String(e))
+      toast.error("删除失败：" + extractApiError(e).message)
     }
   }
 
-  const columns: ColumnDef<Product>[] = [
+  const allColumns: ColumnDef<Product>[] = [
     {
       id: "code",
       header: "编码",
@@ -140,6 +167,7 @@ export default function ProductsPage() {
       ),
     },
   ]
+  const columns = mayWrite ? allColumns : allColumns.filter((c) => c.id !== "actions")
 
   return (
     <PageContainer width="wide">
@@ -147,9 +175,16 @@ export default function ProductsPage() {
         title="商品管理"
         subtitle={`共 ${total} 条商品`}
         actions={
-          <Link href="/products/new" className={buttonVariants()}>
-            + 新建商品
-          </Link>
+          mayWrite ? (
+            <>
+              <Button variant="outline" onClick={() => setImportOpen(true)}>
+                批量导入
+              </Button>
+              <Link href="/products/new" className={buttonVariants()}>
+                + 新建商品
+              </Link>
+            </>
+          ) : undefined
         }
       />
 
@@ -164,10 +199,23 @@ export default function ProductsPage() {
             if (e.key === "Enter") load(q || undefined)
           }}
         />
+        <BarcodeScanner
+          onScan={(code) => {
+            setQ(code)
+            load(code)
+          }}
+        />
         <Button variant="outline" onClick={() => load(q || undefined)}>
           搜索
         </Button>
       </div>
+
+      <ProductImportDialog
+        open={importOpen}
+        onOpenChange={setImportOpen}
+        tenantId={tenantId}
+        onImported={() => load(q || undefined)}
+      />
 
       <DataTable
         columns={columns}
@@ -175,16 +223,51 @@ export default function ProductsPage() {
         loading={loading}
         error={error}
         getRowId={(p) => p.id}
+        mobileCard={(p) => (
+          <DataCard
+            title={p.name}
+            subtitle={p.code}
+            aside={statusCell(p.enabled ? "启用" : "停用", p.enabled ? "ok" : "neutral")}
+            fields={[
+              { label: "售价", value: p.retail_price ? formatCNY(p.retail_price) : "—" },
+              { label: "条码", value: barcodeOf(p) },
+              { label: "品牌", value: p.brand || "—" },
+            ]}
+            actions={
+              mayWrite ? (
+                <>
+                  <Link href={`/products/${p.id}`} className="text-xs text-primary hover:underline">
+                    编辑
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => handleDelete(p)}
+                    className="text-xs text-destructive hover:underline"
+                  >
+                    删除
+                  </button>
+                </>
+              ) : undefined
+            }
+          />
+        )}
         animateRows
         skeletonRows={5}
         empty={
           <EmptyState
             title="暂无商品"
-            description="创建第一个商品以开始管理库存"
+            description={mayWrite ? "新建第一个商品，或把表格里的商品一次导入" : "还没有商品，等老板或店长添加后这里就会出现"}
             action={
-              <Link href="/products/new" className="text-sm text-primary hover:underline">
-                立即新建
-              </Link>
+              mayWrite ? (
+                <div className="flex gap-4">
+                  <Link href="/products/new" className="text-sm text-primary hover:underline">
+                    立即新建
+                  </Link>
+                  <button type="button" onClick={() => setImportOpen(true)} className="text-sm text-primary hover:underline">
+                    批量导入
+                  </button>
+                </div>
+              ) : undefined
             }
           />
         }

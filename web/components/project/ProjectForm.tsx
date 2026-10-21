@@ -1,12 +1,15 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   createProject,
   updateProject,
   type ProjectItem,
   type ProjectStatus,
 } from "@/lib/api/projects"
+import { getCustomer } from "@/lib/api/customers"
+import { formSaveError } from "@/lib/form-error"
+import { CustomerPicker } from "@/components/entity-pickers"
 
 const STATUS_OPTIONS: { value: ProjectStatus; label: string }[] = [
   { value: "active", label: "进行中" },
@@ -24,7 +27,7 @@ interface Props {
 
 /**
  * ProjectForm — create or edit a project entry (Story 28.2).
- * Customer field is a plain text input for MVP; Combobox deferred to S28.8.
+ * The customer is picked (or created on the spot) with the shared customer picker.
  */
 export default function ProjectForm({
   mode,
@@ -35,6 +38,7 @@ export default function ProjectForm({
   const [code, setCode] = useState(initialData?.code ?? "")
   const [name, setName] = useState(initialData?.name ?? "")
   const [customerId, setCustomerId] = useState(initialData?.customerId ?? "")
+  const [customerName, setCustomerName] = useState("")
   const [contractAmount, setContractAmount] = useState(
     initialData?.contractAmount ?? ""
   )
@@ -51,12 +55,32 @@ export default function ProjectForm({
   const [nameError, setNameError] = useState("")
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState("")
+  const [amountError, setAmountError] = useState("")
+  const [dateError, setDateError] = useState("")
+  const [customerNote, setCustomerNote] = useState("")
+
+  // Editing: the project only stores the customer id, so look the name up for the picker.
+  const initialCustomerId = initialData?.customerId
+  useEffect(() => {
+    if (!initialCustomerId) return
+    let cancelled = false
+    getCustomer(initialCustomerId)
+      .then((c) => {
+        if (!cancelled) setCustomerName(c.name)
+      })
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [initialCustomerId])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     setCodeError("")
     setNameError("")
     setSubmitError("")
+    setAmountError("")
+    setDateError("")
 
     let valid = true
     if (!name.trim()) {
@@ -67,6 +91,16 @@ export default function ProjectForm({
       setCodeError("项目编号不能为空")
       valid = false
     }
+    // Thousands commas are fine; anything else that is not a plain number is asked again.
+    const amount = contractAmount.replace(/[,，\s]/g, "")
+    if (amount && !/^\d+(\.\d{1,2})?$/.test(amount)) {
+      setAmountError("合同金额请填写数字，最多两位小数，例如 12000 或 12000.50")
+      valid = false
+    }
+    if (startDate && endDate && endDate < startDate) {
+      setDateError("完工日期不能早于开工日期")
+      valid = false
+    }
     if (!valid) return
 
     setSubmitting(true)
@@ -75,7 +109,7 @@ export default function ProjectForm({
         code: code.trim(),
         name: name.trim(),
         customerId: customerId.trim() || undefined,
-        contractAmount: contractAmount.trim() || undefined,
+        contractAmount: amount || undefined,
         startDate: startDate || undefined,
         endDate: endDate || undefined,
         status,
@@ -92,7 +126,7 @@ export default function ProjectForm({
       }
       onSuccess(item)
     } catch (e) {
-      setSubmitError(String(e))
+      setSubmitError(formSaveError(e, "这个项目编号已经用过了，换一个"))
     } finally {
       setSubmitting(false)
     }
@@ -139,17 +173,32 @@ export default function ProjectForm({
         )}
       </div>
 
-      {/* Customer field — plain text input for MVP */}
-      {/* TODO(S28.8): swap to partner Combobox once partner search API is ready */}
+      {/* Customer */}
       <div data-testid="customer-field">
-        <label className="block text-xs font-medium mb-1">客户ID</label>
-        <input
-          name="customerId"
-          className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
+        <label className="block text-xs font-medium mb-1">客户</label>
+        <CustomerPicker
           value={customerId}
-          onChange={(e) => setCustomerId(e.target.value)}
-          placeholder="客户 UUID（可选）"
+          label={customerName}
+          placeholder="搜索或新建客户（可不填）"
+          className="w-full"
+          onSelect={(o) => {
+            setCustomerNote("")
+            setCustomerId(o.id)
+            setCustomerName(o.name)
+          }}
+          onClear={() => {
+            if (mode === "edit" && initialData?.customerId) {
+              // The backend cannot drop a customer yet; keep it and say so instead of a silent no-op.
+              setCustomerNote("暂不支持去掉客户，可以换成另一个客户")
+              return
+            }
+            setCustomerId("")
+            setCustomerName("")
+          }}
         />
+        {customerNote && (
+          <p className="mt-1 text-xs text-muted-foreground">{customerNote}</p>
+        )}
       </div>
 
       {/* Contract amount */}
@@ -164,6 +213,9 @@ export default function ProjectForm({
           onChange={(e) => setContractAmount(e.target.value)}
           placeholder="0.00"
         />
+        {amountError && (
+          <p className="mt-1 text-xs text-destructive">{amountError}</p>
+        )}
       </div>
 
       {/* Date range */}
@@ -189,6 +241,8 @@ export default function ProjectForm({
           />
         </div>
       </div>
+
+      {dateError && <p className="-mt-2 text-xs text-destructive">{dateError}</p>}
 
       {/* Status */}
       <div>

@@ -53,6 +53,9 @@ export interface BillingOverview {
   }
   subscription?: SubscriptionSnapshot | null
   entitlements?: Record<string, string>
+  /** True when the plan lapsed and the shop is read-only. */
+  locked?: boolean
+  lock_message?: string
 }
 
 /**
@@ -92,6 +95,45 @@ export async function getBillingOverview(): Promise<BillingOverview> {
   } catch (err) {
     toBillingError(err, "getBillingOverview")
   }
+}
+
+/** One plan quota: limit -1 means unlimited; enforced=false means usage is only recorded. */
+export interface PlanLimit {
+  limit: number
+  used: number
+  enforced: boolean
+}
+
+export type PlanLimitKey = "max_users" | "max_skus" | "max_warehouses"
+
+export interface SubscriptionLockState {
+  locked: boolean
+  lock_message?: string
+  /** Plan quotas with current usage; absent when the shop has no platform plan. */
+  limits?: Partial<Record<PlanLimitKey, PlanLimit>>
+  /** True when this call really re-asked the platform (refresh=1, throttled to once per 10s). */
+  refreshed?: boolean
+}
+
+/** Read-only flag for the banner; open to every member, never throws a toast. */
+export async function getSubscriptionState(
+  opts: { refresh?: boolean } = {},
+): Promise<SubscriptionLockState> {
+  return apiFetch<SubscriptionLockState>(
+    opts.refresh ? "/subscription/state?refresh=1" : "/subscription/state",
+    {
+      cache: "no-store",
+      silent: true,
+    },
+  )
+}
+
+/** Same as getSubscriptionState() without refresh. */
+export async function getSubscriptionLockState(): Promise<SubscriptionLockState> {
+  return apiFetch<SubscriptionLockState>("/subscription/state", {
+    cache: "no-store",
+    silent: true,
+  })
 }
 
 export async function subscribe(req: SubscribeRequest): Promise<SubscribeResponse> {

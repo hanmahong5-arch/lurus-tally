@@ -5,15 +5,18 @@ import { motion, AnimatePresence, useReducedMotion } from "framer-motion"
 import { SparklesIcon } from "lucide-react"
 import { MessageList, type UIMessage } from "./MessageList"
 import { streamChat, type AIPlan } from "@/lib/api/ai"
+import { AINotConfigured } from "@/components/ai-assistant/AINotConfigured"
+import { AI_NOT_ENTITLED_ERR, useAIAvailability } from "@/components/ai-assistant/ai-availability"
 import { useGlobalShortcut } from "@/hooks/useGlobalShortcut"
 import { useFocusTrap } from "@/hooks/useFocusTrap"
+import { AI_HISTORY_KEY } from "@/lib/device-keys"
 import { trackEvent } from "@/lib/telemetry"
 import { Button } from "@/components/ui/button"
 
 // Persisted conversation history key. Each tenant sees their own history because
 // the key is stored per-browser tab; for a full multi-session experience a
 // server-side store would be needed.
-const STORAGE_KEY = "tally_ai_history"
+const STORAGE_KEY = AI_HISTORY_KEY
 const MAX_STORED_MESSAGES = 50
 
 function loadHistory(): UIMessage[] {
@@ -52,7 +55,17 @@ export function AIDrawer() {
   const [messages, setMessages] = useState<UIMessage[]>(loadHistory)
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const [pendingAutoSend, setPendingAutoSend] = useState<string | null>(null)
+  // Probed once on mount, and flipped by a send that learns the assistant is
+  // not enabled; "未开通" shows the empty state and stops all sends.
+  const { availability, markUnavailable } = useAIAvailability()
+  const notConfigured = availability === "not_configured" || availability === "not_entitled"
+  // ⌘K hands the drawer a query. The query lives in a ref and is cleared only
+  // when the send timer fires: clearing it earlier (or in state read by the
+  // effect) made the effect cleanup cancel its own timer, so nothing was sent.
+  // `autoSendTick` just re-runs the effect when a new query arrives.
+  const pendingQueryRef = useRef<string | null>(null)
+  const [autoSendTick, setAutoSendTick] = useState(0)
+  const sendRef = useRef<(text: string) => void>(() => {})
   const inputRef = useRef<HTMLInputElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const cancelRef = useRef<(() => void) | null>(null)
@@ -84,7 +97,8 @@ export function AIDrawer() {
       if (!query) return
       openTriggerRef.current = "deeplink"
       setOpen(true)
-      setPendingAutoSend(query)
+      pendingQueryRef.current = query
+      setAutoSendTick((n) => n + 1)
     }
     window.addEventListener("tally:ai-query", handler)
     return () => window.removeEventListener("tally:ai-query", handler)
@@ -100,86 +114,20 @@ export function AIDrawer() {
     }
   }, [open])
 
-  // Auto-send when pendingAutoSend is set and the drawer has opened.
+  // Auto-send the ⌘K query once the drawer is open and idle. The timer gives
+  // React a beat to mount the open drawer; if a dependency changes first the
+  // cleanup cancels it and the next run re-schedules, because the ref is only
+  // cleared inside the timer callback — so /ai/chat is called exactly once.
   useEffect(() => {
-    if (!pendingAutoSend || !open || isLoading) return
-    const q = pendingAutoSend
-    setPendingAutoSend(null)
-    setInput(q)
-    // Use a timeout so React flushes the input state before we send.
+    if (!pendingQueryRef.current || !open || isLoading || notConfigured) return
     const timer = setTimeout(() => {
-      // sendMessage reads input from state; by now the state should be q.
-      // We duplicate the send logic inline to avoid stale-closure issues.
-      setInput("")
-      const history = messages
-        .filter((m) => !m.isStreaming)
-        .map((m) => ({ role: m.role, content: m.content }))
-      setMessages((prev) => {
-        const updated = [...prev, { role: "user" as const, content: q }]
-        saveHistory(updated)
-        return updated
-      })
-      setMessages((prev) => [
-        ...prev,
-        { role: "assistant" as const, content: "", isStreaming: true, plans: [] },
-      ])
-      setIsLoading(true)
-      const cancel = streamChat(q, history, {
-        onChunk: (chunk) => {
-          setMessages((prev) => {
-            const updated = [...prev]
-            const last = updated[updated.length - 1]
-            if (last?.role === "assistant" && last.isStreaming) {
-              updated[updated.length - 1] = { ...last, content: last.content + chunk }
-            }
-            return updated
-          })
-        },
-        onPlan: (plan) => {
-          setMessages((prev) => {
-            const updated = [...prev]
-            const last = updated[updated.length - 1]
-            if (last?.role === "assistant") {
-              updated[updated.length - 1] = { ...last, plans: [...(last.plans ?? []), plan] }
-            }
-            return updated
-          })
-        },
-        onDone: () => {
-          setIsLoading(false)
-          cancelRef.current = null
-          setMessages((prev) => {
-            const updated = [...prev]
-            const last = updated[updated.length - 1]
-            if (last?.role === "assistant" && last.isStreaming) {
-              updated[updated.length - 1] = { ...last, isStreaming: false }
-            }
-            saveHistory(updated)
-            return updated
-          })
-        },
-        onError: (err) => {
-          setIsLoading(false)
-          cancelRef.current = null
-          setMessages((prev) => {
-            const updated = [...prev]
-            const last = updated[updated.length - 1]
-            if (last?.role === "assistant" && last.isStreaming) {
-              updated[updated.length - 1] = {
-                ...last,
-                content: last.content || `错误: ${err}`,
-                isStreaming: false,
-              }
-            }
-            saveHistory(updated)
-            return updated
-          })
-        },
-      })
-      cancelRef.current = cancel
+      const q = pendingQueryRef.current
+      if (!q) return
+      pendingQueryRef.current = null
+      sendRef.current(q)
     }, 150)
     return () => clearTimeout(timer)
-  }, [pendingAutoSend, open, isLoading, messages]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [autoSendTick, open, isLoading, notConfigured])
 
   // Auto-focus input when drawer opens.
   useEffect(() => {
@@ -202,7 +150,7 @@ export function AIDrawer() {
     // override lets a suggestion chip (or any programmatic trigger) send text
     // directly, without a race on the debounced input state.
     const text = (override ?? input).trim()
-    if (!text || isLoading) return
+    if (!text || isLoading || notConfigured) return
 
     setInput("")
 
@@ -265,9 +213,30 @@ export function AIDrawer() {
           return updated
         })
       },
+      onNotConfigured: () => {
+        setIsLoading(false)
+        cancelRef.current = null
+        markUnavailable("not_configured")
+        // Drop the unanswered turn (user message + empty assistant placeholder).
+        setMessages((prev) => {
+          const updated = prev.slice(0, -2)
+          saveHistory(updated)
+          return updated
+        })
+      },
       onError: (err) => {
         setIsLoading(false)
         cancelRef.current = null
+        if (err === AI_NOT_ENTITLED_ERR) {
+          // 403 from the plan gate: same empty state, not an error bubble.
+          markUnavailable("not_entitled")
+          setMessages((prev) => {
+            const updated = prev.slice(0, -2)
+            saveHistory(updated)
+            return updated
+          })
+          return
+        }
         setMessages((prev) => {
           const updated = [...prev]
           const last = updated[updated.length - 1]
@@ -287,7 +256,12 @@ export function AIDrawer() {
     cancelRef.current = cancel
     // assistantIdx used for reference only; streaming updates use prev tail.
     void assistantIdx
-  }, [input, isLoading, messages])
+  }, [input, isLoading, notConfigured, messages, markUnavailable])
+
+  // The auto-send timer always calls the latest sendMessage.
+  useEffect(() => {
+    sendRef.current = (text: string) => sendMessage(text)
+  }, [sendMessage])
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -382,7 +356,11 @@ export function AIDrawer() {
 
         {/* Message list */}
         <div className="flex-1 overflow-y-auto">
-          <MessageList messages={messages} onSuggestion={(q) => sendMessage(q)} />
+          {notConfigured ? (
+            <AINotConfigured reason={availability === "not_entitled" ? "not_entitled" : "not_configured"} />
+          ) : (
+            <MessageList messages={messages} onSuggestion={(q) => sendMessage(q)} />
+          )}
           <div ref={messagesEndRef} />
         </div>
 
@@ -406,13 +384,13 @@ export function AIDrawer() {
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder="问我关于库存、销售的问题..."
-              disabled={isLoading}
+              disabled={isLoading || notConfigured}
               data-testid="ai-input"
               className="flex-1 rounded-lg border border-border bg-muted/50 px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus:outline-none disabled:opacity-50"
             />
             <Button
               onClick={() => sendMessage()}
-              disabled={isLoading || !input.trim()}
+              disabled={isLoading || notConfigured || !input.trim()}
               data-testid="ai-send-btn"
               size="lg"
             >

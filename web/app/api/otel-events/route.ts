@@ -22,6 +22,8 @@ const VALID_EVENTS = new Set([
   // web/lib/telemetry.ts wad_increment). Missing here = 400-rejected =
   // North Star never recorded.
   "wad_increment",
+  // Browser-side errors (render / unhandled / rejection / api); logged by the backend.
+  "web_error",
 ])
 
 interface OtelEventPayload {

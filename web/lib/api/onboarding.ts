@@ -27,9 +27,25 @@ export async function seedDemo(
   })
 }
 
+export interface ConvertedProduct {
+  id: string
+  code: string
+  name: string
+}
+
+export interface ClearDemoResult {
+  cleared_products: number
+  /** Sample products an approved bill still uses; kept as real products. */
+  converted_products: ConvertedProduct[]
+  /** Follow-up for the owner; present when converted_products is not empty. */
+  hint?: string
+}
+
 /**
- * clearDemo — removes all demo-marked rows for the authenticated tenant.
+ * clearDemo — clears the sample data for the authenticated tenant. Sample
+ * products that approved bills still use are kept as real products and listed
+ * in the result.
  */
-export async function clearDemo(): Promise<void> {
-  await apiFetch<void>("/onboarding/clear-demo", { method: "POST" })
+export async function clearDemo(): Promise<ClearDemoResult> {
+  return apiFetch<ClearDemoResult>("/onboarding/clear-demo", { method: "POST" })
 }

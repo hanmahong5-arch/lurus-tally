@@ -2,6 +2,18 @@
 
 import React, { useState, useEffect, useRef, useCallback } from "react"
 import { listProducts, type Product } from "@/lib/api/products"
+import { BarcodeScanner } from "@/components/barcode-scanner"
+import { NetworkError } from "@/lib/api/errors"
+import { catalogItemToProduct, searchCatalogWithMeta } from "@/lib/catalog-cache"
+
+/** 缓存时间转「x 分钟前」。 */
+function agoText(updatedAt: number): string {
+  const min = Math.max(0, Math.round((Date.now() - updatedAt) / 60_000))
+  if (min < 1) return "刚刚"
+  if (min < 60) return `${min} 分钟前`
+  const h = Math.round(min / 60)
+  return h < 24 ? `${h} 小时前` : `${Math.round(h / 24)} 天前`
+}
 
 interface ProductSearchProps {
   onSelect: (product: Product) => void
@@ -9,11 +21,12 @@ interface ProductSearchProps {
   lastAddedProductId?: string
 }
 
-const BARCODE_RE = /^\d+$/
+const BARCODE_RE = /^[A-Za-z0-9-]{6,}$/
 
 /**
  * ProductSearch provides a debounced input that supports both barcode scanning
- * (numeric-only input → attribute_filter lookup) and name search (free text → q param).
+ * (alphanumeric input of 6+ chars → attribute_filter lookup, falling back to name / code search
+ * when no barcode matches) and name search (free text → q param).
  *
  * Single barcode match → auto-adds to cart without user confirmation.
  * Multiple name results → shows a dropdown (up to 8 items), keyboard navigable.
@@ -25,6 +38,8 @@ export const ProductSearch = React.forwardRef<HTMLInputElement, ProductSearchPro
     const [highlighted, setHighlighted] = useState(0)
     const [loading, setLoading] = useState(false)
     const [notFound, setNotFound] = useState(false)
+    // 结果来自离线缓存时记下缓存时间，列表里标「缓存价」。
+    const [cachedAt, setCachedAt] = useState<number | null>(null)
 
     const internalRef = useRef<HTMLInputElement>(null)
     // Merge the forwarded ref with the internal ref so we can use both
@@ -45,34 +60,68 @@ export const ProductSearch = React.forwardRef<HTMLInputElement, ProductSearchPro
         const isBarcode = BARCODE_RE.test(q.trim())
         setLoading(true)
 
-        try {
-          const res = isBarcode
-            ? await listProducts({
-                attributes_filter: { barcode: q.trim() },
-                limit: 1,
-                tenantId,
-                signal,
-              })
-            : await listProducts({ q: q.trim(), limit: 20, tenantId, signal })
-
+        // 断网或请求没发出去：改查本机目录缓存；条码唯一命中仍自动加购。
+        const searchCache = async () => {
+          const hit = tenantId ? await searchCatalogWithMeta(tenantId, q.trim()) : null
           if (signal.aborted) return
-          const items = res.items ?? []
-
-          if (isBarcode && items.length === 1) {
-            // Auto-select on unambiguous barcode scan
+          const items = (hit?.items ?? []).map(catalogItemToProduct)
+          if (isBarcode && items.length === 1 && hit?.items[0].barcode === q.trim()) {
             onSelect(items[0])
             setQuery("")
             setResults([])
             setNotFound(false)
-          } else if (isBarcode && items.length === 0) {
-            setResults([])
-            setNotFound(true)
-          } else {
-            setResults(items.slice(0, 8))
-            setNotFound(false)
+            setCachedAt(null)
+            return
           }
-        } catch {
-          if (!signal.aborted) setResults([])
+          setResults(items)
+          setNotFound(items.length === 0)
+          setCachedAt(hit && items.length > 0 ? hit.updated_at : null)
+        }
+
+        try {
+          if (typeof navigator !== "undefined" && navigator.onLine === false) {
+            await searchCache()
+            return
+          }
+          setCachedAt(null)
+          if (isBarcode) {
+            const hit = await listProducts({
+              attributes_filter: { barcode: q.trim() },
+              limit: 2,
+              tenantId,
+              signal,
+            })
+            if (signal.aborted) return
+            const exact = hit.items ?? []
+            if (exact.length === 1) {
+              // Auto-select on unambiguous barcode scan
+              onSelect(exact[0])
+              setQuery("")
+              setResults([])
+              setNotFound(false)
+              return
+            }
+            if (exact.length > 1) {
+              // Two products share the barcode: let the cashier pick instead of guessing.
+              setResults(exact.slice(0, 8))
+              setNotFound(false)
+              return
+            }
+          }
+          // Not a barcode (or a number that is no barcode, e.g. a spec such as "304"):
+          // look it up by name / code.
+          const res = await listProducts({ q: q.trim(), limit: 20, tenantId, signal })
+          if (signal.aborted) return
+          const items = res.items ?? []
+          setResults(items.slice(0, 8))
+          setNotFound(items.length === 0)
+        } catch (err) {
+          if (signal.aborted) return
+          if (err instanceof NetworkError) {
+            await searchCache()
+          } else {
+            setResults([])
+          }
         } finally {
           if (!signal.aborted) setLoading(false)
         }
@@ -143,28 +192,37 @@ export const ProductSearch = React.forwardRef<HTMLInputElement, ProductSearchPro
 
     return (
       <div className="relative w-full">
-        <input
-          ref={inputRef}
-          type="text"
-          role="textbox"
-          autoFocus
-          value={query}
-          onChange={(e) => {
-            setQuery(e.target.value)
-            setHighlighted(0)
-          }}
-          onKeyDown={handleKeyDown}
-          placeholder="商品名 / 编码 / 扫码 (F1)"
-          className="w-full rounded-lg border border-border bg-background px-4 py-3 text-xl outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground"
-        />
+        <div className="flex items-stretch gap-2">
+          <input
+            ref={inputRef}
+            type="text"
+            role="textbox"
+            autoFocus
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value)
+              setHighlighted(0)
+            }}
+            onKeyDown={handleKeyDown}
+            placeholder="商品名 / 编码 / 扫码 (F1)"
+            className="w-full rounded-lg border border-border bg-background px-4 py-3 text-xl outline-none focus:ring-2 focus:ring-ring placeholder:text-muted-foreground"
+          />
+          <BarcodeScanner
+            className="h-auto self-stretch"
+            onScan={(code) => {
+              setQuery(code)
+              setHighlighted(0)
+            }}
+          />
+        </div>
 
         {loading && (
-          <div className="absolute right-3 top-3 text-sm text-muted-foreground">搜索中...</div>
+          <div className="absolute right-24 top-3 text-sm text-muted-foreground">搜索中...</div>
         )}
 
         {notFound && (
           <div className="absolute left-0 right-0 top-full z-20 mt-1 rounded-lg border border-border bg-background p-3 text-sm text-muted-foreground shadow-lg">
-            未找到条码商品
+            未找到商品
           </div>
         )}
 
@@ -188,6 +246,12 @@ export const ProductSearch = React.forwardRef<HTMLInputElement, ProductSearchPro
                 {product.code && (
                   <span className="ml-2 text-xs text-muted-foreground font-mono">
                     {product.code}
+                  </span>
+                )}
+                {cachedAt !== null && (
+                  <span className="ml-2 text-xs text-amber-700">
+                    缓存价（{agoText(cachedAt)}）
+                    {product.retail_price ? ` ¥${product.retail_price}` : ""}
                   </span>
                 )}
               </li>

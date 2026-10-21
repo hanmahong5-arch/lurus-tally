@@ -67,11 +67,13 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
                         value={item.unitPrice.isZero() ? "" : item.unitPrice.toString()}
                         onChange={(e) => {
                           const v = e.target.value
-                          if (v && !isNaN(Number(v))) {
+                          // Empty input falls back to 0 = "not priced", so the last digit can be erased.
+                          // Prices are money: at most two decimals, never negative.
+                          if (v === "" || (!isNaN(Number(v)) && Number(v) >= 0 && /^\d*\.?\d{0,2}$/.test(v))) {
                             dispatch({
                               type: "SET_UNIT_PRICE",
                               productId: item.productId,
-                              unitPrice: new Decimal(v),
+                              unitPrice: new Decimal(v || "0"),
                             })
                           }
                         }}
@@ -82,7 +84,7 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
                         }`}
                         data-pos-price={item.productId}
                       />
-                      <span>/ {item.unitName}</span>
+                      {item.unitName && <span>/ {item.unitName}</span>}
                     </div>
                   </div>
 
@@ -164,10 +166,12 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
             <input
               type="number"
               min="0"
+              aria-label="整单优惠"
               value={state.discount.toString()}
               onChange={(e) => {
                 const v = e.target.value
-                if (!isNaN(Number(v))) {
+                // A negative discount would silently raise the bill; ignore it.
+                if (!isNaN(Number(v)) && Number(v) >= 0) {
                   dispatch({
                     type: "APPLY_DISCOUNT",
                     amount: new Decimal(v || "0"),
@@ -180,6 +184,7 @@ export function Cart({ state, dispatch, onCheckout }: CartProps) {
             <input
               type="text"
               placeholder="备注"
+              maxLength={200}
               value={state.remark}
               onChange={(e) =>
                 dispatch({ type: "SET_REMARK", remark: e.target.value })

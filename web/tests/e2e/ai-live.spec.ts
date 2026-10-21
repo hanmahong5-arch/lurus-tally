@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test"
 
 // Real LLM round-trip via /api/v1/ai/chat (SSE). Verifies that AI is wired
-// end-to-end: NEWAPI_API_KEY → llmclient → DeepSeek → tools dispatched →
+// end-to-end: NEWAPI_API_KEY → llmclient → model → tools dispatched →
 // response chunks streamed back. We expect at least one `chunk` event with
 // non-empty content, and a `done` event to close.
 test("AI chat returns non-empty response via newapi", async ({ request }) => {

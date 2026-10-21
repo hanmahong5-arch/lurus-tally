@@ -14,7 +14,12 @@ const oidcProvider: OIDCConfig<Record<string, unknown>> = {
   type: "oidc",
   clientId: process.env.OIDC_CLIENT_ID,
   clientSecret: process.env.OIDC_CLIENT_SECRET,
-  issuer: process.env.OIDC_ISSUER ?? "https://identity.lurus.cn",
+  issuer: process.env.OIDC_ISSUER ?? "",
+}
+
+// 无内置 issuer 兜底：非 dev 模式下缺失则启动期告警一次（SSO 登录将不可用）。
+if (!process.env.OIDC_ISSUER && process.env.AUTH_DEV_PROVIDER !== "true") {
+  console.warn("[auth] OIDC_ISSUER 未设置：SSO 登录不可用，请在部署配置中注入 OIDC_ISSUER。")
 }
 
 declare module "next-auth" {
@@ -62,7 +67,7 @@ const DEV_USER_ID = "00000000-0000-0000-0000-000000000002"
 // If someone accidentally sets AUTH_DEV_PROVIDER=true in production, we emit a
 // console.error and refuse to activate the provider. This is a production-safety
 // red line — dev sessions must never work in production.
-function devProviderEnabled(): boolean {
+export function devProviderEnabled(): boolean {
   const opted = process.env.AUTH_DEV_PROVIDER === "true"
   if (!opted) return false
 
@@ -113,6 +118,22 @@ async function fetchMe(accessToken: string): Promise<MePayload | null> {
   }
 }
 
+// fetchDevMe asks a TALLY_DEV_MODE backend which tenant the fixed dev user
+// belongs to (the backend trusts X-IDP-Subject in dev mode). Null on any
+// failure — the caller then falls back to the fixed dev tenant.
+async function fetchDevMe(): Promise<MePayload | null> {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/v1/me`, {
+      headers: { "X-IDP-Subject": DEV_USER_ID },
+      cache: "no-store",
+    })
+    if (!res.ok) return null
+    return (await res.json()) as MePayload
+  } catch {
+    return null
+  }
+}
+
 // devCredentialsProvider returns an offline Credentials provider that accepts
 // any email + optional tenantId and issues a fixed dev session. This provider
 // is only included in the providers list when devProviderEnabled() returns true.
@@ -131,8 +152,14 @@ function devCredentialsProvider() {
     },
     async authorize(raw) {
       const email = typeof raw?.email === "string" && raw.email ? raw.email : "dev@tally.test"
+      // A blank tenant means "the tenant this dev user already belongs to":
+      // ask the TALLY_DEV_MODE backend, which resolves it from the subject, so
+      // data created earlier is visible instead of an empty fixed dev tenant.
+      const me = await fetchDevMe()
       const tenantId =
-        typeof raw?.tenantId === "string" && raw.tenantId ? raw.tenantId : DEV_TENANT_ID
+        typeof raw?.tenantId === "string" && raw.tenantId
+          ? raw.tenantId
+          : me?.tenant_id || DEV_TENANT_ID
       const accessToken =
         typeof raw?.accessToken === "string" && raw.accessToken ? raw.accessToken : undefined
 
@@ -143,7 +170,9 @@ function devCredentialsProvider() {
         name: "Dev User",
         // Extra fields stored in the JWT via the jwt() callback below.
         devTenantId: tenantId,
+        devProfileType: me?.tenant_id === tenantId ? me.profile_type || undefined : undefined,
         devAccessToken: accessToken,
+        devRole: me?.tenant_id === tenantId && me.role ? { role: me.role, isOwner: me.is_owner } : undefined,
       }
     },
   })
@@ -173,15 +202,18 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       // The `user` object from authorize() carries devTenantId; we detect this
       // path by the absence of an OIDC account object.
       const devUser = user as
-        | (typeof user & { devTenantId?: string; devAccessToken?: string })
+        | (typeof user & { devTenantId?: string; devProfileType?: string; devAccessToken?: string; devRole?: { role: string; isOwner: boolean } })
         | undefined
       if (devUser?.devTenantId !== undefined) {
         t.sub = typeof user?.id === "string" ? user.id : DEV_USER_ID
         t.tenantId = devUser.devTenantId
-        t.profileType = "cross_border"
+        t.profileType = devUser.devProfileType ?? "cross_border"
         t.isFirstTime = false
-        t.role = "owner"
-        t.isOwner = true
+        // The dev user is the owner unless the TALLY_DEV_MODE backend says the
+        // fixed subject belongs to this tenant with another role.
+        const devMe = devUser.devRole
+        t.role = devMe?.role || "owner"
+        t.isOwner = devMe ? devMe.isOwner : true
         t.profileFetchedAt = Date.now()
         // Offline dev sessions normally carry no accessToken. STAGE UAT may
         // hand the dev provider a backend bearer (PAT) — pass it through so

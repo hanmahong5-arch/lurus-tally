@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation"
 import { useEffect, useState } from "react"
+import { reportWebError } from "@/lib/telemetry"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 
@@ -18,6 +19,7 @@ export default function RootError({
 
   useEffect(() => {
     console.error("[app-error]", error)
+    reportWebError("render", error.message, { stack: error.stack })
   }, [error])
 
   const copy = async () => {
