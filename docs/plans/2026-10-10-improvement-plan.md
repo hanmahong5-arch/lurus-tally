@@ -37,6 +37,8 @@
 
 ### 交付形态改造轮（2026-10-15，10/10 工作包落代码，全仓质量门全绿，工作树未提交）
 
+**2026-10-21 checkpoint：已合入 main 并部署 STAGE**：单 PR #23（四个主题 commit，未按原计划拆分支）合入 main，合并提交 `e0f30918`；stage overlay `105011d8` 钉 `main-e0f3091`；CI run 39539336564 全绿；R6 apply 2026-10-21 03:45 UTC，迁移 55→60（dirty=false），backend/web 1/1 Running 0 重启，公网 ready 200 / me 401 / login、sw.js、offline 200 / pos 307；apply 前已备份 `/data/backups/tally-preupgrade/`。后续 `f547a173`（/zxing 不经登录门）未部署。**未做**：平台 147 未上 R6（团队功能 503）、平台作用域 key 未签、飞鹅账号未入 secret、UAT 未跑、真机验收未做。
+
 > 依据：治理仓 `doc/decisions/0038-tally-delivery-forms-and-pricing.md`（原定编号 0037 已被占用）。结论：SaaS Web + PWA 为主交付，不换栈不建新端；私有化只诚实化；小程序/原生 App 不做（解冻条件见 ADR）。本轮全部由小模型实现、主控逐项核实（AllowNegative 只来自 pos_offline 内部路径、能力标志落点、Guard nil 安全、迁移 SQL、飞鹅官方文档核对接口地址与签名）。
 
 | 包 | 内容 | 验收 |
@@ -58,9 +60,9 @@
 **待负责人裁决（不阻塞落地）**：定价数字与客群；2b-app-tally 归档或保留 FREEZE；微信登录平台侧路径（Zitadel 通用 OAuth vs 中转）；离线负库存「允许为负 + 待办」是否接受；付款日期是否随 `occurred_at` 归日（当前是）；负库存是否计入待办总数（当前计入）。
 
 **本轮新增落地项（并入下方清单，编号续 19–24）**：
-19. 迁移 000060 随 000056–059 一起上 R6（先 pg_dump）；上后核 `bill_head_tenant_client_ref_uidx` 存在。
+19. ✅ 迁移 000060 随 000056–059 一起上 R6（先 pg_dump）；上后核 `bill_head_tenant_client_ref_uidx` 存在。
 20. 飞鹅：平台注册开发者账号，`FEIE_USER/FEIE_UKEY` 写入 tally secret；网络放行出站 `api.feieyun.cn:80`；用一台 58mm 真机走「设置→云打印机→测试页→结账自动出票→拔线→上线补打一张」。
-21. configmap 新键：`PLATFORM_BASE_URL`、`PLATFORM_NOTIFY_URL`、`PLAN_LIMITS=shadow`、`FEIE_API_URL`（base 已加；stage overlay 若覆盖 configmap 需同步）。
+21. ✅ configmap 新键：`PLATFORM_BASE_URL`、`PLATFORM_NOTIFY_URL`、`PLAN_LIMITS=shadow`、`FEIE_API_URL`（base 已加；stage overlay 若覆盖 configmap 需同步）。
 22. 离线真机验收：飞行模式打开 `/pos` → 扫码 2 笔结账并打离线小票 → 恢复网络自动上传 → 今日结单 2 笔不重复 → 库存不足那笔变负并出现在待办「负库存」→ 隔天重放不重复。
 23. 发布：15 轮 + 本轮合入后打 `v0.1.0`（`scripts/release/cut.sh v0.1.0`，需安装 git-cliff），推送由负责人；`v1.0.0` 留给首个付费客户 + PROD。
 24. 手机/扫码真机：375px 过库存/商品/开单/盘点/收银；EAN-13 与 Code128 在 Chrome Android、iOS Safari、微信内各扫一遍（微信内摄像头权限单独测）。
@@ -155,10 +157,10 @@
 共用收银机换人（退出时清购物车并强制重新输入账号）；零单价采购草稿审核拦截（422，列出商品，可按赠品确认）；收银交班按人；店员盘点无进价商品的提示；剩余 4 处身份解析统一；AI 关闭时不露入口、代码中清除模型名；团队与平台边角（并发解散返回 410、已解散组织过滤）；员工页面最后几处 403。
 
 ### 上线落地清单（负责人决定上线时执行；汇总自第六至八轮复审）
-1. **分支与 PR**：Tally 按主题拆分（迁移 000056–58+退货发票 / 第五六轮体验 / 团队与权限 000059+各轮 / AI），各用 `_worktrees/<名>` 逐路径 stage；`go.mod` 有他人改动，先与其负责人协调。平台从 `_worktrees/platform-members` 提 147 及加固、解散接口。
-2. **迁移顺序**：平台 146（他人分支）→ 147 先上 R6 并确认 RLS 生效；再 Tally 000056→000059（上前 pg_dump 备份 tally schema，确认 version=59 且未 dirty）。
+1. ✅ **分支与 PR**（实际：单 PR #23 四个主题 commit，非拆分支）：Tally 按主题拆分（迁移 000056–58+退货发票 / 第五六轮体验 / 团队与权限 000059+各轮 / AI），各用 `_worktrees/<名>` 逐路径 stage；`go.mod` 有他人改动，先与其负责人协调。平台从 `_worktrees/platform-members` 提 147 及加固、解散接口。
+2. ✅ **迁移顺序**（实际 STAGE 已 pg_dump 备份并升到 60；平台 147 未上，仍待办）：平台 146（他人分支）→ 147 先上 R6 并确认 RLS 生效；再 Tally 000056→000059（上前 pg_dump 备份 tally schema，确认 version=59 且未 dirty）。
 3. **平台密钥**：给 Tally 签作用域 key（service_name=tally，带 org:write、account:read），写入 R6 上 Tally 的 secret；用老板账号在团队页实测一次邀请。
-4. **AI 关闭**：种子环境置空模型与网关密钥配置（`deploy/k8s/base/configmap.yaml` 中的模型默认值移到需要的 overlay），确认 `/todo/summary` 返回 `ai_enabled=false`、`/ai/chat` 返回 503。
+4. ✅ **AI 关闭**（overlay 置空 DEFAULT_AI_MODEL）：种子环境置空模型与网关密钥配置（`deploy/k8s/base/configmap.yaml` 中的模型默认值移到需要的 overlay），确认 `/todo/summary` 返回 `ai_enabled=false`、`/ai/chat` 返回 503。
 5. **NATS**：确认 Tally 与平台用同一套 NATS，能收到 `identity.org.>` 成员事件。
 6. **存量回填**：R6 现有租户的平台组织由老板打开团队页时懒回填，抽查 GetMember 返回 owner。
 7. **契约登记**：contracts.md 补平台对内组织接口、成员事件、dissolve；Tally 的 team 接口与错误码、clear-demo、收银模式、收银退货与店员草稿语义、零单价 422、pos-summary mine、payments.csv 新列；lurus.yaml identity 消费者加 tally；service-status、变更记录（`python scripts/iter/iter.py change`）同步；台账状态改为实际。
