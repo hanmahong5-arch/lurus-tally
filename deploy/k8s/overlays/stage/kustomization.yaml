@@ -27,6 +27,16 @@ patches:
     target:
       kind: ConfigMap
       name: tally-config
+  # 种子期 STAGE 关闭 AI 助手(负责人决定):DEFAULT_AI_MODEL 置空后,
+  # app.go 因缺模型名不装配 AI 路由(仅一条 Warn)。base 未定义 AI_MODEL_CHAT /
+  # AI_MODEL_EXTRACT,无需处理;重新启用时删掉本 patch 即可。
+  - patch: |-
+      - op: replace
+        path: /data/DEFAULT_AI_MODEL
+        value: ""
+    target:
+      kind: ConfigMap
+      name: tally-config
   # STAGE web must sign users in against the STAGE issuer too, or the id_token's
   # `iss` won't match the backend's OIDC_ISSUER (test-auth) → backend 401.
   - patch: |-

@@ -10,6 +10,12 @@
 # grandparent — see INSTALL.md for the exact working directory):
 #   docker compose -f deploy/customer/docker-compose.customer.yml --env-file deploy/customer/.env up -d --build
 #
+# Path A (delivered image tarball, no build/network needed — see INSTALL.md
+# "Path A"): set TALLY_BACKEND_IMAGE / TALLY_WEB_IMAGE in your --env-file to
+# the tags printed by `docker load`, then run the same command with
+# `--pull never --no-build` instead of `--build` (--pull never alone still
+# falls back to a source build when a tag is mistyped).
+#
 # All tunables are read from an env file you create from .env.customer.example.
 # Nothing in this file talks to any Lurus-internal network — every hostname
 # below is either a container name on the private `tally_customer` network or
@@ -61,6 +67,17 @@ services:
       retries: 20
 
   backend:
+    # Image resolution, in order (see INSTALL.md "Path A / Path B"):
+    #   1. If TALLY_BACKEND_IMAGE is set in your --env-file (e.g. after
+    #      `docker load` on a delivered image tarball), that image is used
+    #      as-is. Start with `up -d --pull never --no-build`: --pull never only
+    #      stops registry pulls; without --no-build a mistyped tag silently
+    #      falls back to building from source (verified 2026-09-05).
+    #   2. Otherwise `docker compose up` falls back to building from the
+    #      source tree you were handed (../../Dockerfile) and tags the
+    #      result with this same name. Never pulled from a private registry
+    #      either way.
+    image: ${TALLY_BACKEND_IMAGE:-lurus-tally-backend:customer}
     build:
       context: ../..
       dockerfile: Dockerfile
@@ -73,6 +90,14 @@ services:
       DATABASE_DSN: postgres://${POSTGRES_USER:-tally}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lurus}?sslmode=disable&search_path=tally
       REDIS_URL: redis://redis:6379/5
       NATS_URL: nats://nats:4222
+    # 同机装了别的 Lurus 产品时,用这个名字去找它们(Platform / newapi / memorus)。
+    # 那些产品是**另一个 compose 项目**,有自己的网络,所以 `http://core:18104`
+    # 这种服务名在这里解析不出来;它们把端口发布在宿主上,走宿主网关才通。
+    # Linux 上 `host.docker.internal` 默认不存在,必须显式声明成 host-gateway
+    # (2026-09-07 实测:不声明 → 容器内解析失败;声明后打宿主已发布端口 → 200)。
+    # 没装别的产品时这行是无害的:不填 PLATFORM_BASE_URL 就没人会去解析它。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${TALLY_BACKEND_PORT:-18200}:18200"
     networks:
@@ -90,6 +115,9 @@ services:
     # (curl http://localhost:18200/internal/v1/tally/health from the host).
 
   web:
+    # Image resolution — same rule as `backend` above, keyed off
+    # TALLY_WEB_IMAGE instead.
+    image: ${TALLY_WEB_IMAGE:-lurus-tally-web:customer}
     build:
       context: ../../web
       dockerfile: Dockerfile
@@ -106,6 +134,12 @@ services:
       # container port in the `ports:` mapping if you ever change it.
       PORT: "3000"
       NEXTAUTH_URL: ${TALLY_WEB_PUBLIC_URL:-http://localhost:3000}
+      # next-auth v5 derives trustHost from AUTH_URL/AUTH_TRUST_HOST, and the
+      # web image pins NODE_ENV=production, so without this line every
+      # /api/auth/session call answers 500 UntrustedHost and an anonymous
+      # visit to / is bounced to /setup instead of /login (rehearsal 2026-09-05).
+      # Same value the stage deployment uses (deploy/k8s/base/configmap-web.yaml).
+      AUTH_TRUST_HOST: "true"
     ports:
       - "${TALLY_WEB_PORT:-3000}:3000"
     networks:

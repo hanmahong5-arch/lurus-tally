@@ -8,6 +8,10 @@ data:
   LOG_LEVEL: "info"
   GIN_MODE: "release"
   KOVA_URL: ""
+  # 集成地址不再写死在代码里(空 = 降级)，默认值集中在这里。
+  # platform-core 内部 API / 通知服务。配对的 PLATFORM_INTERNAL_KEY 在 tally-secrets。
+  PLATFORM_BASE_URL: "http://platform-core.lurus-platform.svc:18104"
+  PLATFORM_NOTIFY_URL: "http://notification.lurus-platform.svc:18900"
   # memorus Rust 版 (memorus-r, R6 lurus-system)。config.go 读 MEMORUS_BASE_URL
   # （旧 key MEMORUS_URL 无人读，已移除）；client 直接拼 {base}/memories，
   # 故 base 须含 /api/v1 前缀。配对的 MEMORUS_API_KEY 在 tally-secrets。
@@ -40,3 +44,8 @@ data:
   LANGFUSE_HOST: ""
   # Shopify webhook secret — set via Secret; empty → handler rejects every push.
   # SHOPIFY_WEBHOOK_SECRET lives in secret.yaml
+  # Plan quota mode for members/SKUs/warehouses: off | shadow | enforce. Seed phase stays shadow (log only).
+  PLAN_LIMITS: "shadow"
+  # 云打印(飞鹅)。API 地址可覆盖；账号 FEIE_USER / FEIE_UKEY 属密钥，放 tally-secrets，不写这里。
+  # 两者任一为空 -> 云打印整体关闭，收银台回落到浏览器打印。出网需放行 api.feieyun.cn:80 (见 docs/ops/cloud-print.md)。
+  FEIE_API_URL: "http://api.feieyun.cn/Api/Open/"
