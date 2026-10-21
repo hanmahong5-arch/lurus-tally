@@ -546,7 +546,7 @@ func HasCostColumns(data []byte) bool {
 }
 
 func parseImportCSV(data []byte) ([]*importLine, error) {
-	if bytes.HasPrefix(data, []byte("PK")) || bytes.HasPrefix(data, []byte{0xD0, 0xCF, 0x11, 0xE0}) {
+	if bytes.HasPrefix(data, []byte("PK\x03\x04")) || bytes.HasPrefix(data, []byte{0xD0, 0xCF, 0x11, 0xE0}) {
 		return nil, &ImportError{Msg: "暂不支持直接上传 Excel 文件，请在 Excel 里选「另存为」，保存类型选「CSV」后再上传"}
 	}
 	text, err := DecodeCSVText(data)
