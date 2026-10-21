@@ -7,9 +7,11 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	handlerteam "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/team"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appTenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/tenant"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
 
 // ChooseProfileExecutor is the interface satisfied by ChooseProfileUseCase.
@@ -26,6 +28,30 @@ type GetMeExecutor interface {
 type Handler struct {
 	chooseProfile ChooseProfileExecutor
 	getMe         GetMeExecutor
+	team          *handlerteam.Handler
+
+	// offlineQueueAvailable is true when the Redis idempotency store is wired, i.e. replayed
+	// offline checkouts are deduplicated. Reported to the web in GET /me.
+	offlineQueueAvailable bool
+}
+
+// WithOfflineQueueAvailable sets the offline_queue_available flag reported by GET /me.
+func (h *Handler) WithOfflineQueueAvailable(ok bool) *Handler {
+	h.offlineQueueAvailable = ok
+	return h
+}
+
+// meResponse is GET /me: the account context plus deployment capability flags.
+type meResponse struct {
+	*appTenant.GetMeOutput
+	OfflineQueueAvailable bool `json:"offline_queue_available"`
+}
+
+// WithTeam mounts the /team routes (members, invites, join) alongside the auth
+// routes, so router.New keeps its signature. nil keeps them answering 501.
+func (h *Handler) WithTeam(t *handlerteam.Handler) *Handler {
+	h.team = t
+	return h
 }
 
 // New creates a Handler wired to the provided use cases.
@@ -42,6 +68,13 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/me", h.GetMe)
 	rg.POST("/tenant/profile", h.ChooseProfile)
 	rg.POST("/auth/logout", h.Logout)
+	if h.team != nil {
+		h.team.RegisterRoutes(rg)
+	} else {
+		handlerteam.RegisterNotConfigured(rg, func(c *gin.Context) {
+			c.JSON(http.StatusNotImplemented, gin.H{"error": "handler not configured"})
+		})
+	}
 }
 
 // chooseProfileRequest is the JSON body for POST /api/v1/tenant/profile.
@@ -65,7 +98,7 @@ func (h *Handler) ChooseProfile(c *gin.Context) {
 	if sub == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error":  "unauthorized",
-			"detail": "authentication required",
+			"detail": "请先登录",
 		})
 		return
 	}
@@ -74,7 +107,7 @@ func (h *Handler) ChooseProfile(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error":  "bad request",
-			"detail": "invalid request body: " + err.Error(),
+			"detail": "提交的内容格式不对，请刷新页面后重试",
 		})
 		return
 	}
@@ -97,23 +130,21 @@ func (h *Handler) ChooseProfile(c *gin.Context) {
 		case errors.Is(err, domain.ErrInvalidProfileType):
 			c.JSON(http.StatusBadRequest, gin.H{
 				"error":  "bad request",
-				"detail": "profile_type must be 'cross_border' or 'retail'",
+				"detail": "请选择一种业务类型",
 			})
 		case errors.Is(err, domain.ErrProfileAlreadySet):
 			c.JSON(http.StatusConflict, gin.H{
 				"error":  "conflict",
-				"detail": "a different profile is already set for this tenant",
+				"detail": "这个账号已经选过其他业务类型，不能再改",
 			})
 		case errors.Is(err, appTenant.ErrInconsistentTenantState):
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error":  "inconsistent state",
-				"detail": "tenant has user mapping but no profile — contact support",
+				"detail": "账号信息不完整，请联系客服处理",
 			})
 		default:
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"error":  "internal server error",
-				"detail": err.Error(),
-			})
+			httperr.Write(c, httperr.Wrap(http.StatusInternalServerError, "internal_error",
+				"保存没成功，请稍后再试", "", err))
 		}
 		return
 	}
@@ -128,20 +159,18 @@ func (h *Handler) GetMe(c *gin.Context) {
 	if sub == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"error":  "unauthorized",
-			"detail": "not authenticated",
+			"detail": "请先登录",
 		})
 		return
 	}
 
 	out, err := h.getMe.Execute(c.Request.Context(), appTenant.GetMeInput{UserSub: sub})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error":  "internal server error",
-			"detail": err.Error(),
-		})
+		httperr.Write(c, httperr.Wrap(http.StatusInternalServerError, "internal_error",
+			"账号信息读取失败，请稍后再试", "", err))
 		return
 	}
-	c.JSON(http.StatusOK, out)
+	c.JSON(http.StatusOK, meResponse{GetMeOutput: out, OfflineQueueAvailable: h.offlineQueueAvailable})
 }
 
 // Logout handles POST /api/v1/auth/logout.

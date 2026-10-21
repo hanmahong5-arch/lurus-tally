@@ -113,6 +113,36 @@ export async function getProductStock(
   return listStockSnapshots({ product_id: productId, tenantId, limit: 100, signal })
 }
 
+export interface StockAdjustItem {
+  product_id: string
+  /** Physical quantity actually counted (NUMERIC string, base unit). */
+  counted_qty: string
+}
+
+export interface StockAdjustResult {
+  adjust_id: string
+  /** Products whose stock was changed to match the count. */
+  adjusted: number
+  /** Products already matching the count (nothing written). */
+  unchanged: number
+  items: { product_id: string; before: string; counted: string; delta: string }[]
+}
+
+/**
+ * Stock count: POST /stock/adjustments. The server writes only the difference between the
+ * counted and the book quantity; the average cost does not change.
+ */
+export async function adjustStock(
+  input: { warehouse_id: string; items: StockAdjustItem[]; remark?: string },
+  tenantId?: string
+): Promise<StockAdjustResult> {
+  return apiFetch<StockAdjustResult>("/stock/adjustments", {
+    method: "POST",
+    body: JSON.stringify(input),
+    tenantId,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Server-side helpers (RSC / Server Actions)
 // Call the backend in-cluster directly with an access token.  Never import

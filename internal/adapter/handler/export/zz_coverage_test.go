@@ -40,6 +40,8 @@ import (
 
 	handlerexport "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/export"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
+	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
+	appexport "github.com/hanmahong5-arch/lurus-tally/internal/app/export"
 )
 
 func init() {
@@ -52,13 +54,14 @@ func init() {
 // business invariants (never-called on 401, exact tenant threaded through,
 // only the matching route's Exporter fires).
 type spyExporter struct {
-	mu       sync.Mutex
-	called   bool
-	gotTID   uuid.UUID
-	body     string
-	err      error // returned AFTER writing body, simulating a mid-stream failure
-	delay    time.Duration
-	finished atomic.Bool // set true right before Execute returns
+	mu        sync.Mutex
+	called    bool
+	gotTID    uuid.UUID
+	gotFilter appexport.BillsFilter
+	body      string
+	err       error // returned AFTER writing body, simulating a mid-stream failure
+	delay     time.Duration
+	finished  atomic.Bool // set true right before Execute returns
 }
 
 func (s *spyExporter) Execute(_ context.Context, tenantID uuid.UUID, w io.Writer) (int, error) {
@@ -84,6 +87,13 @@ func (s *spyExporter) Execute(_ context.Context, tenantID uuid.UUID, w io.Writer
 	return 1, nil
 }
 
+func (s *spyExporter) ExecuteFiltered(ctx context.Context, tenantID uuid.UUID, f appexport.BillsFilter, w io.Writer) (int, error) {
+	s.mu.Lock()
+	s.gotFilter = f
+	s.mu.Unlock()
+	return s.Execute(ctx, tenantID, w)
+}
+
 func (s *spyExporter) wasCalled() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -104,7 +114,7 @@ func newLogBuf() (*slog.Logger, *bytes.Buffer) {
 	return slog.New(h), &buf
 }
 
-func newAuthedEngine(bills, stock, payments handlerexport.Exporter, tenantID uuid.UUID, log *slog.Logger) *gin.Engine {
+func newAuthedEngine(bills handlerexport.BillsExporter, stock, payments handlerexport.Exporter, tenantID uuid.UUID, log *slog.Logger) *gin.Engine {
 	r := gin.New()
 	api := r.Group("/api/v1")
 	api.Use(func(c *gin.Context) {
@@ -378,4 +388,119 @@ func min(a, b int) int {
 		return a
 	}
 	return b
+}
+
+// ----- bills filter parsing -----
+
+func billsGet(t *testing.T, bills *spyExporter, query string, sub string) *httptest.ResponseRecorder {
+	t.Helper()
+	r := gin.New()
+	api := r.Group("/api/v1")
+	api.Use(func(c *gin.Context) {
+		c.Set(middleware.CtxKeyTenantID, uuid.New())
+		if sub != "" {
+			c.Set(middleware.CtxKeyIDPSubject, sub)
+		}
+		c.Next()
+	})
+	handlerexport.New(bills, &spyExporter{}, &spyExporter{}, nil).RegisterRoutes(api)
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/exports/bills.csv"+query, nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	return w
+}
+
+func TestBills_PaymentStatusOpenPassedThrough(t *testing.T) {
+	bills := &spyExporter{body: "h\n"}
+	w := billsGet(t, bills, "?status=2&payment_status=open", uuid.New().String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d body=%s", w.Code, w.Body.String())
+	}
+	if bills.gotFilter.PaymentStatus != "open" {
+		t.Errorf("PaymentStatus = %q", bills.gotFilter.PaymentStatus)
+	}
+}
+
+func TestBills_PaymentStatusWithoutStatusAllowed(t *testing.T) {
+	for _, ps := range []string{"open", "paid", "unpaid", "partial"} {
+		bills := &spyExporter{body: "h\n"}
+		w := billsGet(t, bills, "?payment_status="+ps, uuid.New().String())
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: code = %d body=%s", ps, w.Code, w.Body.String())
+		}
+		if bills.gotFilter.PaymentStatus != ps {
+			t.Errorf("PaymentStatus = %q, want %q", bills.gotFilter.PaymentStatus, ps)
+		}
+	}
+}
+
+func TestBills_InvoiceStatusPassedThrough(t *testing.T) {
+	for _, q := range []string{"?invoice_status=none", "?status=2&invoice_status=partial", "?invoice_status=full&payment_status=paid"} {
+		bills := &spyExporter{body: "h\n"}
+		w := billsGet(t, bills, q, uuid.New().String())
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: code = %d body=%s", q, w.Code, w.Body.String())
+		}
+		want := strings.SplitN(strings.SplitN(q, "invoice_status=", 2)[1], "&", 2)[0]
+		if bills.gotFilter.InvoiceStatus != want {
+			t.Errorf("%s: InvoiceStatus = %q, want %q", q, bills.gotFilter.InvoiceStatus, want)
+		}
+	}
+}
+
+func TestBills_FilterParsedAndFilenameCarriesRange(t *testing.T) {
+	bills := &spyExporter{body: "h\n"}
+	sub := uuid.New()
+	w := billsGet(t, bills, "?type=sale&status=2&date_from=2026-10-01&date_to=2026-10-31&payment_status=unpaid&q=%20wang%20&mine=1&partner_id="+sub.String(), sub.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("code = %d body=%s", w.Code, w.Body.String())
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "tally-bills-20261001-20261031.csv") {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+	f := bills.gotFilter
+	if f.Type != "sale" || f.Status == nil || *f.Status != 2 || f.PaymentStatus != "unpaid" || f.Q != "wang" ||
+		f.CreatorID == nil || *f.CreatorID != sub || f.PartnerID == nil {
+		t.Fatalf("filter = %+v", f)
+	}
+	// Dates are Asia/Shanghai midnights; the upper bound is the day after date_to.
+	if got := f.DateFrom.UTC().Format(time.RFC3339); got != "2026-09-30T16:00:00Z" {
+		t.Errorf("DateFrom = %s", got)
+	}
+	if got := f.DateTo.UTC().Format(time.RFC3339); got != "2026-10-31T16:00:00Z" {
+		t.Errorf("DateTo = %s", got)
+	}
+}
+
+func TestBills_NoParamsKeepsEmptyFilter(t *testing.T) {
+	bills := &spyExporter{body: "h\n"}
+	w := billsGet(t, bills, "", "")
+	if w.Code != http.StatusOK || !bills.wasCalled() {
+		t.Fatalf("code = %d called=%v", w.Code, bills.wasCalled())
+	}
+	f := bills.gotFilter
+	if f.Type != "" || f.Status != nil || f.DateFrom != nil || f.DateTo != nil || f.CreatorID != nil || f.Q != "" {
+		t.Errorf("filter not empty: %+v", f)
+	}
+	if cd := w.Header().Get("Content-Disposition"); !strings.Contains(cd, "tally-bills-"+repobill.BillNoDay(time.Now())+".csv") {
+		t.Errorf("Content-Disposition = %q", cd)
+	}
+}
+
+func TestBills_InvalidFilter_400WithChineseMessage(t *testing.T) {
+	for _, q := range []string{
+		"?date_from=bad", "?date_to=2026-13-40", "?type=x", "?status=7", "?status=abc",
+		"?partner_id=nope", "?payment_status=x", "?date_from=2026-10-31&date_to=2026-10-01", "?mine=1",
+		"?payment_status=open&status=0", "?invoice_status=x", "?invoice_status=full&status=9", "?mine=yes", "?mine=true", "?q=" + strings.Repeat("字", 65),
+	} {
+		bills := &spyExporter{body: "h\n"}
+		w := billsGet(t, bills, q, "")
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: code = %d, want 400", q, w.Code)
+			continue
+		}
+		if !strings.Contains(w.Body.String(), `"message"`) || bills.wasCalled() {
+			t.Errorf("%s: body=%s called=%v", q, w.Body.String(), bills.wasCalled())
+		}
+	}
 }

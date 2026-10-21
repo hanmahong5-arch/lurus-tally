@@ -108,7 +108,7 @@ func (s *SQLBootstrapStore) Bootstrap(ctx context.Context, in BootstrapInput) er
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO tally.user_identity_mapping
 			(id, tenant_id, zitadel_sub, email, display_name, role, is_owner, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, 'admin', true, $6, $6)
+		VALUES ($1, $2, $3, $4, $5, 'owner', true, $6, $6)
 	`, uuid.New(), in.TenantID, in.IDPSubject, in.Email, in.DisplayName, now); err != nil {
 		return fmt.Errorf("bootstrap: insert mapping: %w", err)
 	}
@@ -135,6 +135,12 @@ func (s *SQLBootstrapStore) Bootstrap(ctx context.Context, in BootstrapInput) er
 	// supplier row at onboarding time).
 	if err := seedDemoEntities(ctx, tx, in.TenantID, in.ProfileType, now); err != nil {
 		return fmt.Errorf("bootstrap: seed demo entities: %w", err)
+	}
+
+	// 5. Seed industry-default units so the product form's unit dropdown already
+	// has 株/棵 (nursery) or 个/把 (retail) instead of an empty custom list.
+	if err := seedDefaultUnits(ctx, tx, in.TenantID, in.ProfileType, now); err != nil {
+		return fmt.Errorf("bootstrap: seed default units: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -194,4 +200,55 @@ func demoEntityNames(pt domain.ProfileType) (warehouse, supplier string) {
 	default:
 		return "主仓库", "默认供应商"
 	}
+}
+
+// defaultUnit is one industry-preset unit_def row for a fresh tenant.
+type defaultUnit struct {
+	Code     string
+	Name     string
+	UnitType string
+}
+
+// defaultUnitsFor maps a profile type to the tenant-custom units seeded at
+// onboarding. Codes avoid the system codes (pcs/box/kg/g/m/cm/l). Pure function
+// so tests can assert presets without a PG. Unknown profiles get none: the
+// system units are always visible anyway.
+func defaultUnitsFor(pt domain.ProfileType) []defaultUnit {
+	switch pt {
+	case domain.ProfileTypeHorticulture:
+		return []defaultUnit{
+			{"zhu", "株", "count"},
+			{"ke", "棵", "count"},
+			{"cong", "丛", "count"},
+			{"dai", "袋", "count"},
+			{"sqm", "平方米", "area"},
+		}
+	case domain.ProfileTypeRetail:
+		return []defaultUnit{
+			{"ge", "个", "count"},
+			{"ba", "把", "count"},
+			{"gen", "根", "count"},
+			{"he", "盒", "count"},
+			{"tao", "套", "count"},
+			{"bao", "包", "count"},
+			{"juan", "卷", "count"},
+		}
+	default:
+		return nil
+	}
+}
+
+// seedDefaultUnits inserts the profile's preset units inside the bootstrap tx.
+// ON CONFLICT keeps it safe if a code was somehow already present.
+func seedDefaultUnits(ctx context.Context, tx *sql.Tx, tenantID uuid.UUID, pt domain.ProfileType, now time.Time) error {
+	for _, u := range defaultUnitsFor(pt) {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO tally.unit_def (id, tenant_id, code, name, unit_type, is_system, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, $5, false, $6, $6)
+			ON CONFLICT (tenant_id, code) DO NOTHING
+		`, uuid.New(), tenantID, u.Code, u.Name, u.UnitType, now); err != nil {
+			return fmt.Errorf("insert unit %s: %w", u.Code, err)
+		}
+	}
+	return nil
 }

@@ -6,12 +6,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	repoTenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/tenant"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // PlatformAccountUpserter abstracts the platform account upsert call so this
@@ -21,6 +23,13 @@ import (
 // subscribe, top up wallet, and receive notifications.
 type PlatformAccountUpserter interface {
 	UpsertAccount(ctx context.Context, req platformclient.UpsertAccountRequest) (*platformclient.Account, error)
+}
+
+// OrgProvisioner creates (idempotently) the platform organization that carries
+// a shop's members and roles, owned by the given platform account. Implemented
+// by *app/team.Service.
+type OrgProvisioner interface {
+	EnsureTenantOrg(ctx context.Context, tenantID uuid.UUID, ownerAccountID int64) error
 }
 
 // ErrInconsistentTenantState is returned when a user_identity_mapping exists
@@ -53,6 +62,7 @@ type ChooseProfileInput struct {
 type ChooseProfileUseCase struct {
 	store    repoTenant.BootstrapStore
 	upserter PlatformAccountUpserter // may be nil when platform integration is disabled
+	orgs     OrgProvisioner          // may be nil: no team features, shop stays single-person
 	logger   *slog.Logger
 }
 
@@ -65,6 +75,18 @@ func NewChooseProfileUseCase(store repoTenant.BootstrapStore, upserter PlatformA
 		logger = slog.Default()
 	}
 	return &ChooseProfileUseCase{store: store, upserter: upserter, logger: logger}
+}
+
+// WithOrgProvisioner returns a copy that also creates the shop's platform
+// organization right after the platform account is known (new shops) and on
+// the idempotent heal path (existing shops without one). nil keeps the receiver.
+func (uc *ChooseProfileUseCase) WithOrgProvisioner(p OrgProvisioner) *ChooseProfileUseCase {
+	if p == nil {
+		return uc
+	}
+	cp := *uc
+	cp.orgs = p
+	return &cp
 }
 
 // Execute runs the onboarding logic. See type doc for idempotency guarantees.
@@ -104,9 +126,10 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 			// Wave 2 (the column was added in migration 000051).
 			//
 			// Owner only: upsertPlatformAccount pins the CALLER's account as the
-			// tenant's plan holder. A member re-running onboarding would otherwise
-			// move the tenant's subscription, entitlements and usage attribution
-			// onto their personal account, silently dropping the owner's paid plan.
+			// tenant's plan holder and organization owner. A member re-running
+			// onboarding would otherwise move the tenant's subscription,
+			// entitlements and usage attribution onto their personal account,
+			// silently dropping the owner's paid plan.
 			if mapping.IsOwner {
 				uc.upsertPlatformAccount(ctx, mapping.TenantID, in)
 			}
@@ -128,6 +151,13 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 		DisplayName: in.DisplayName,
 		ProfileType: pt,
 	}); err != nil {
+		// A concurrent request for the same subject (double click) won the
+		// race and committed first: our insert hit the unique key. Treat it
+		// as the idempotent path instead of reporting a failed save.
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && pg.Code == "23505" {
+			return uc.resolveConcurrentBootstrap(ctx, in, pt)
+		}
 		return nil, fmt.Errorf("choose profile: bootstrap: %w", err)
 	}
 
@@ -204,20 +234,50 @@ func (uc *ChooseProfileUseCase) upsertPlatformAccount(ctx context.Context, tenan
 				slog.Int64("account_id", acc.ID),
 				slog.String("error", err.Error()))
 		}
+		// Shop team: make sure the platform organization behind this shop exists
+		// with this account as owner. Non-blocking and idempotent, like the above;
+		// the team API also backfills lazily.
+		if uc.orgs != nil {
+			if err := uc.orgs.EnsureTenantOrg(ctx, tenantID, acc.ID); err != nil {
+				uc.logger.Warn("platform organization provisioning failed (non-blocking)",
+					slog.String("tenant_id", tenantID.String()),
+					slog.String("error", err.Error()))
+			}
+		}
 	}
 }
 
 // deriveTenantName produces a sensible default name for the tenant row when
 // no explicit name is provided at onboarding time. The user can rename later.
 func deriveTenantName(displayName, email, sub string) string {
-	if displayName != "" {
-		return displayName + " 的企业"
+	// The name shows on shared invite links and join pages: never an email or an internal id.
+	if name := strings.TrimSpace(displayName); name != "" && !strings.Contains(name, "@") {
+		return name + "的店"
 	}
-	if email != "" {
-		return email + " 的企业"
+	return "我的店铺"
+}
+
+// resolveConcurrentBootstrap re-reads the mapping and profile committed by the
+// request that won the bootstrap race and answers as the returning-user path
+// would: same type succeeds, a different type conflicts.
+func (uc *ChooseProfileUseCase) resolveConcurrentBootstrap(ctx context.Context, in ChooseProfileInput, pt domain.ProfileType) (*domain.TenantProfile, error) {
+	mapping, err := uc.store.GetMappingBySub(ctx, in.IDPSubject)
+	if err != nil {
+		return nil, fmt.Errorf("choose profile: re-lookup mapping: %w", err)
 	}
-	if len(sub) >= 8 {
-		return "Tenant " + sub[:8]
+	if mapping == nil {
+		return nil, fmt.Errorf("choose profile: bootstrap conflict but mapping not found")
 	}
-	return "Tenant " + sub
+	existing, err := uc.store.GetProfileByTenantID(ctx, mapping.TenantID)
+	if err != nil {
+		return nil, fmt.Errorf("choose profile: re-lookup profile: %w", err)
+	}
+	if existing == nil {
+		return nil, ErrInconsistentTenantState
+	}
+	if existing.ProfileType != pt {
+		return nil, fmt.Errorf("choose profile: %w", domain.ErrProfileAlreadySet)
+	}
+	uc.upsertPlatformAccount(ctx, mapping.TenantID, in)
+	return existing, nil
 }

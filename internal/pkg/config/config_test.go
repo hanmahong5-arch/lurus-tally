@@ -111,10 +111,10 @@ func TestConfig_AllSet_ReturnsConfig(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("default LogLevel: want info, got %s", cfg.LogLevel)
 	}
-	// memorus-r default must carry the /api/v1 prefix — the client joins paths
-	// by concatenation (see .env.example), so a prefix-less base 404s silently.
-	if cfg.MemoryBaseURL != "http://memorus-r.lurus-system.svc:8880/api/v1" {
-		t.Errorf("default MemoryBaseURL: want http://memorus-r.lurus-system.svc:8880/api/v1, got %s", cfg.MemoryBaseURL)
+	// Integration URLs default to empty (= degrade); real addresses come from
+	// deploy config (configmap), never from code.
+	if cfg.MemoryBaseURL != "" {
+		t.Errorf("default MemoryBaseURL: want empty, got %s", cfg.MemoryBaseURL)
 	}
 }
 
@@ -254,5 +254,72 @@ func TestConfig_ShutdownTimeout_InvalidReturnsError(t *testing.T) {
 
 	if _, err := config.Load(); err == nil {
 		t.Fatal("expected error when SHUTDOWN_TIMEOUT is not a valid duration, got nil")
+	}
+}
+
+func TestConfig_AIModelRouting_DefaultsEmptyAndReadsEnv(t *testing.T) {
+	setEnv(t, fullEnv())
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AIModelChat != "" || cfg.AIModelExtract != "" {
+		t.Errorf("task models must default to empty (= no routing), got chat=%q extract=%q", cfg.AIModelChat, cfg.AIModelExtract)
+	}
+
+	env := fullEnv()
+	env["AI_MODEL_CHAT"] = "chat-model"
+	env["AI_MODEL_EXTRACT"] = "small-model"
+	setEnv(t, env)
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.AIModelChat != "chat-model" || cfg.AIModelExtract != "small-model" {
+		t.Errorf("got chat=%q extract=%q", cfg.AIModelChat, cfg.AIModelExtract)
+	}
+}
+
+func TestConfig_LLMModelPricesCNY(t *testing.T) {
+	env := fullEnv()
+	env["LLM_MODEL_PRICES_CNY"] = ""
+	setEnv(t, env)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.LLMModelPricesCNY != "" {
+		t.Errorf("LLMModelPricesCNY: want empty by default, got %q", cfg.LLMModelPricesCNY)
+	}
+	env["LLM_MODEL_PRICES_CNY"] = "m-a:0.002:0.008"
+	setEnv(t, env)
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.LLMModelPricesCNY != "m-a:0.002:0.008" {
+		t.Errorf("LLMModelPricesCNY: got %q", cfg.LLMModelPricesCNY)
+	}
+}
+
+func TestConfig_DefaultAIModel_EmptyUnlessConfigured(t *testing.T) {
+	env := fullEnv()
+	env["DEFAULT_AI_MODEL"] = ""
+	setEnv(t, env)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.DefaultAIModel != "" {
+		t.Errorf("DefaultAIModel: want empty (deployment must configure it), got %q", cfg.DefaultAIModel)
+	}
+	env["DEFAULT_AI_MODEL"] = "configured-model"
+	setEnv(t, env)
+	cfg, err = config.Load()
+	if err != nil {
+		t.Fatalf("expected no error, got: %v", err)
+	}
+	if cfg.DefaultAIModel != "configured-model" {
+		t.Errorf("DefaultAIModel: want configured value, got %q", cfg.DefaultAIModel)
 	}
 }

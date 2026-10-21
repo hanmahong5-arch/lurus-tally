@@ -13,12 +13,14 @@ import {
 } from "@/lib/api/replenish"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useTenantId } from "@/hooks/use-tenant-id"
+import { useRole } from "@/hooks/use-role"
 import { trackEvent } from "@/lib/telemetry"
 import { notifyFirstPoExported } from "@/components/onboarding/OnboardingWizard"
 import { extractApiError } from "@/lib/api/errors"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable, currencyCell } from "@/components/ui/data-table"
+import { DataCard } from "@/components/ui/data-card"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
@@ -47,6 +49,11 @@ export default function ReplenishPage() {
   const [submitting, setSubmitting] = useState(false)
   const [scorecard, setScorecard] = useState<ReplenishScorecard | null>(null)
   const tenantId = useTenantId()
+  // Estimated amounts are cost data, and drafting needs bill.draft. An unknown role hides
+  // nothing (the backend decides).
+  const { known, can } = useRole()
+  const showCost = !known || can("cost.view")
+  const mayDraft = !known || can("bill.draft")
 
   const load = useCallback(
     (signal?: AbortSignal, isCancelled?: () => boolean) => {
@@ -161,7 +168,7 @@ export default function ReplenishPage() {
   const allSelected =
     suggestions.length > 0 && selected.size === suggestions.length
 
-  const columns: ColumnDef<ReplenishSuggestion>[] = [
+  const allColumns: ColumnDef<ReplenishSuggestion>[] = [
     {
       id: "select",
       header: () => (
@@ -292,6 +299,11 @@ export default function ReplenishPage() {
     },
   ]
 
+  // The select column only serves drafting.
+  const columns = allColumns.filter(
+    (c) => (showCost || c.id !== "est_amount_cny") && (mayDraft || c.id !== "select")
+  )
+
   const selectedRows = suggestions.filter((r) => selected.has(r.product_id))
   const totalEstAmt = selectedRows.reduce(
     (sum, r) => sum + parseFloat(r.est_amount_cny || "0"),
@@ -304,16 +316,20 @@ export default function ReplenishPage() {
         title="补货决策"
         subtitle={
           selected.size > 0
-            ? `已选 ${selected.size} 件，预计金额 ${formatCNY(totalEstAmt)}`
+            ? showCost
+              ? `已选 ${selected.size} 件，预计金额 ${formatCNY(totalEstAmt)}`
+              : `已选 ${selected.size} 件`
             : "每周补货建议 — 按紧迫度排序"
         }
         actions={
-          <Button
-            onClick={handleGenerateDrafts}
-            disabled={selected.size === 0 || submitting}
-          >
-            {submitting ? "生成中…" : "生成采购草稿"}
-          </Button>
+          mayDraft ? (
+            <Button
+              onClick={handleGenerateDrafts}
+              disabled={selected.size === 0 || submitting}
+            >
+              {submitting ? "生成中…" : "生成采购草稿"}
+            </Button>
+          ) : undefined
         }
       />
 
@@ -339,6 +355,35 @@ export default function ReplenishPage() {
         loading={loading}
         error={error}
         getRowId={(r) => r.product_id}
+        mobileCard={(r) => (
+          <DataCard
+            title={
+              <span className="flex items-center gap-2">
+                {mayDraft && (
+                  <input
+                    type="checkbox"
+                    checked={selected.has(r.product_id)}
+                    onChange={() => toggleRow(r.product_id)}
+                    onClick={(e) => e.stopPropagation()}
+                    aria-label={`手机端选择 ${r.product_name}`}
+                  />
+                )}
+                <span className="truncate">{r.product_name}</span>
+              </span>
+            }
+            subtitle={r.product_code}
+            aside={
+              <Badge tone={urgencyTone(r.urgency_score)}>{urgencyLabel(r.urgency_score)}</Badge>
+            }
+            fields={[
+              { label: "可用库存", value: r.available_qty },
+              { label: "安全线", value: r.safety_qty },
+              { label: "建议订量", value: <span className="font-semibold">{r.suggested_qty}</span> },
+              ...(showCost ? [{ label: "预计金额", value: currencyCell(r.est_amount_cny) }] : []),
+              { label: "建议供应商", value: r.supplier_name || "—" },
+            ]}
+          />
+        )}
         animateRows
         empty={
           <EmptyState

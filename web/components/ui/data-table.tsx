@@ -1,6 +1,6 @@
 "use client"
 
-import type { ReactNode } from "react"
+import { useEffect, useState, type ReactNode } from "react"
 import {
   type ColumnDef,
   type RowData,
@@ -45,6 +45,30 @@ export function statusCell(label: ReactNode, tone: BadgeTone) {
 }
 
 // Stagger only the first rows, and cap the delay so a full page never feels slow.
+// 与 tailwind md 断点一致：小于 768px 视为手机。
+const MOBILE_QUERY = "(max-width: 767px)"
+
+/**
+ * 当前是否手机视口。首屏(含服务端渲染)返回 null：卡片与表格都输出，交给 CSS 断点切换，避免水合不一致；
+ * 挂载后按真实视口只保留一种，避免同一行在 DOM 里出现两份。无 matchMedia 的环境按桌面处理。
+ */
+function useIsMobile(enabled: boolean): boolean | null {
+  const [isMobile, setIsMobile] = useState<boolean | null>(null)
+  useEffect(() => {
+    if (!enabled) return
+    if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+      setIsMobile(false)
+      return
+    }
+    const mql = window.matchMedia(MOBILE_QUERY)
+    const sync = () => setIsMobile(mql.matches)
+    sync()
+    mql.addEventListener?.("change", sync)
+    return () => mql.removeEventListener?.("change", sync)
+  }, [enabled])
+  return isMobile
+}
+
 const STAGGER_LIMIT = 30
 const STAGGER_STEP_MS = 20
 const STAGGER_MAX_STEPS = 12
@@ -63,6 +87,8 @@ interface DataTableProps<T> {
   animateRows?: boolean
   /** Whole-row click (e.g. open a detail panel). Action cells should stopPropagation. */
   onRowClick?: (row: T) => void
+  /** 手机端卡片渲染。提供后，md 以下显示卡片列表，md 及以上显示原表格。 */
+  mobileCard?: (row: T) => ReactNode
   className?: string
 }
 
@@ -82,8 +108,10 @@ export function DataTable<T>({
   skeletonRows = 5,
   animateRows = false,
   onRowClick,
+  mobileCard,
   className,
 }: DataTableProps<T>) {
+  const isMobile = useIsMobile(!!mobileCard)
   const table = useReactTable({
     data,
     columns,
@@ -97,7 +125,9 @@ export function DataTable<T>({
     return <>{empty ?? <EmptyState title="暂无数据" />}</>
   }
 
-  return (
+  const rows = table.getRowModel().rows
+
+  const tableEl = (
     <div className={cn("overflow-x-auto rounded-xl border border-border", className)}>
       <table className="w-full text-sm">
         <thead className="bg-muted/50 text-muted-foreground">
@@ -165,5 +195,27 @@ export function DataTable<T>({
         </tbody>
       </table>
     </div>
+  )
+
+  if (!mobileCard) return tableEl
+
+  return (
+    <>
+      {isMobile !== false && (
+      <div data-testid="data-table-mobile" className="space-y-3 md:hidden">
+        {rows.map((row) => (
+          <div
+            key={row.id}
+            data-testid="data-table-mobile-item"
+            onClick={onRowClick ? () => onRowClick(row.original) : undefined}
+            className={cn(onRowClick && "cursor-pointer")}
+          >
+            {mobileCard(row.original)}
+          </div>
+        ))}
+      </div>
+      )}
+      {isMobile !== true && <div className="hidden md:block">{tableEl}</div>}
+    </>
   )
 }

@@ -1,4 +1,6 @@
 import { SubscriptionPlansView } from "./plans-view"
+import { UsageTable } from "./usage-table"
+import { SEED_TRIAL } from "@/lib/billing/plans"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 
@@ -14,9 +16,14 @@ export default function SubscriptionPage() {
     <PageContainer width="wide">
       <PageHeader
         title="订阅与计费"
-        subtitle="选择适合企业规模的套餐，钱包余额可一键开通；支付宝 / 微信支付随后跳转。"
+        subtitle={
+          SEED_TRIAL
+            ? "试用期全部功能免费"
+            : "选择适合你的套餐，钱包余额可一键开通；支付宝 / 微信支付随后跳转。"
+        }
       />
       <SubscriptionPlansView />
+      <UsageTable />
     </PageContainer>
   )
 }

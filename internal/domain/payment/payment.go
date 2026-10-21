@@ -20,6 +20,8 @@ const (
 	PayTypeCard     PayType = "card"
 	PayTypeCredit   PayType = "credit"
 	PayTypeTransfer PayType = "transfer"
+	// PayTypeBank is a bank-account payment (legacy and API clients still send it).
+	PayTypeBank PayType = "bank"
 )
 
 // validPayTypes contains all accepted PayType values.
@@ -30,12 +32,13 @@ var validPayTypes = map[PayType]struct{}{
 	PayTypeCard:     {},
 	PayTypeCredit:   {},
 	PayTypeTransfer: {},
+	PayTypeBank:     {},
 }
 
 // Validate returns an error if p is not a recognised PayType.
 func (p PayType) Validate() error {
 	if _, ok := validPayTypes[p]; !ok {
-		return fmt.Errorf("payment: invalid pay_type %q; must be one of cash/wechat/alipay/card/credit/transfer", p)
+		return fmt.Errorf("payment: invalid pay_type %q; must be one of cash/wechat/alipay/card/credit/transfer/bank", p)
 	}
 	return nil
 }

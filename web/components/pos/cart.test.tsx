@@ -44,6 +44,21 @@ describe("Cart", () => {
     expect(screen.getByText("Bolt M8")).toBeInTheDocument()
   })
 
+  it("TestCart_ClearUnitPrice_DispatchesZero: emptying the price box returns the line to unpriced", () => {
+    const dispatch = vi.fn()
+    const state = makeState({ items: [sampleItem] })
+
+    render(<Cart state={state} dispatch={dispatch} onCheckout={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText("Bolt M8 单价"), { target: { value: "" } })
+
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SET_UNIT_PRICE",
+      productId: "p1",
+      unitPrice: new Decimal(0),
+    })
+  })
+
   it("TestCart_AdjustQuantity_UpdatesTotal: clicking + dispatches SET_QUANTITY with incremented qty", () => {
     const dispatch = vi.fn()
     const onCheckout = vi.fn()
@@ -139,5 +154,21 @@ describe("Cart", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /现金/ }))
     expect(onCheckout).toHaveBeenCalledWith("cash")
+  })
+
+  it("TestCart_UnitPriceMoreThanTwoDecimals_Ignored: money input is capped at cents", () => {
+    const dispatch = vi.fn()
+    render(<Cart state={makeState({ items: [sampleItem] })} dispatch={dispatch} onCheckout={vi.fn()} />)
+    const input = screen.getByLabelText("Bolt M8 单价")
+
+    fireEvent.change(input, { target: { value: "12.345" } })
+    expect(dispatch).not.toHaveBeenCalled()
+
+    fireEvent.change(input, { target: { value: "12.34" } })
+    expect(dispatch).toHaveBeenCalledWith({
+      type: "SET_UNIT_PRICE",
+      productId: "p1",
+      unitPrice: new Decimal("12.34"),
+    })
   })
 })

@@ -11,6 +11,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
+	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/unit"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 	"github.com/shopspring/decimal"
@@ -117,7 +118,8 @@ func (r *Repo) GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.Uni
 }
 
 // GetConversionFactor returns the conversion_factor for the (product, unit) pair from product_unit.
-// Returns appbill.ErrInvalidUnitForProduct when the pair does not exist.
+// A product's base unit (product.default_unit_id / product.unit_id) needs no product_unit
+// row and converts at 1. Any other unit without a row returns appbill.ErrInvalidUnitForProduct.
 // This is a surgical extension for Story 6.1 (ApprovePurchaseUseCase dependency).
 func (r *Repo) GetConversionFactor(ctx context.Context, productID, unitID uuid.UUID) (decimal.Decimal, error) {
 	const q = `SELECT conversion_factor FROM tally.product_unit WHERE product_id = $1 AND unit_id = $2`
@@ -126,7 +128,17 @@ func (r *Repo) GetConversionFactor(ctx context.Context, productID, unitID uuid.U
 	dbh := dbscope.From(ctx, r.db)
 	err := dbh.QueryRowContext(ctx, q, productID, unitID).Scan(&factor)
 	if errors.Is(err, sql.ErrNoRows) {
-		return decimal.Zero, errInvalidUnitForProduct
+		const baseQ = `SELECT EXISTS (
+			SELECT 1 FROM tally.product
+			WHERE id = $1 AND (default_unit_id = $2 OR unit_id = $2))`
+		var isBase bool
+		if err := dbh.QueryRowContext(ctx, baseQ, productID, unitID).Scan(&isBase); err != nil {
+			return decimal.Zero, fmt.Errorf("unit repo: check base unit: %w", err)
+		}
+		if isBase {
+			return decimal.NewFromInt(1), nil
+		}
+		return decimal.Zero, appbill.ErrInvalidUnitForProduct
 	}
 	if err != nil {
 		return decimal.Zero, fmt.Errorf("unit repo: get conversion factor: %w", err)
@@ -135,10 +147,6 @@ func (r *Repo) GetConversionFactor(ctx context.Context, productID, unitID uuid.U
 	f, _ := decimalutil.Parse(factor, "conversion_factor")
 	return f, nil
 }
-
-// errInvalidUnitForProduct is a package-level sentinel wrapping the app-layer error.
-// We import the app-layer error indirectly to avoid circular imports.
-var errInvalidUnitForProduct = fmt.Errorf("unit: unit_id is not valid for this product")
 
 // Delete removes a tenant-custom unit_def.
 // The caller (use case) is responsible for checking is_system before calling this.
@@ -168,4 +176,95 @@ func joinAnd(parts []string) string {
 		result += "(" + p + ")"
 	}
 	return result
+}
+
+// ProductUnit is one unit a product can be billed in. Factor converts one of this unit
+// into the product's base unit (the base unit itself is 1).
+type ProductUnit struct {
+	ID     uuid.UUID
+	Code   string
+	Name   string
+	Factor decimal.Decimal
+	IsBase bool
+}
+
+// ProductUnits returns the product's base unit first, then every unit with a configured
+// conversion factor. Units without a product_unit row (and that are not the base unit)
+// are left out because the bill approval would reject them. Returns ErrNotFound when the
+// product does not exist for the tenant.
+func (r *Repo) ProductUnits(ctx context.Context, tenantID, productID uuid.UUID) ([]ProductUnit, error) {
+	dbh := dbscope.From(ctx, r.db)
+
+	var baseA, baseB uuid.NullUUID
+	err := dbh.QueryRowContext(ctx,
+		`SELECT default_unit_id, unit_id FROM tally.product
+		 WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`, productID, tenantID).Scan(&baseA, &baseB)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("unit repo: product units: %w", err)
+	}
+
+	rows, err := dbh.QueryContext(ctx, `
+		SELECT u.id, u.code, u.name, pu.conversion_factor::text, pu.is_base
+		FROM tally.product_unit pu
+		JOIN tally.unit_def u ON u.id = pu.unit_id
+		WHERE pu.product_id = $1 AND pu.tenant_id = $2`, productID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("unit repo: product units: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var conv []ProductUnit
+	for rows.Next() {
+		var u ProductUnit
+		var factor string
+		if err := rows.Scan(&u.ID, &u.Code, &u.Name, &factor, &u.IsBase); err != nil {
+			return nil, fmt.Errorf("unit repo: product units scan: %w", err)
+		}
+		if u.Factor, err = decimalutil.Parse(factor, "conversion_factor"); err != nil {
+			return nil, fmt.Errorf("unit repo: product units scan: %w", err)
+		}
+		conv = append(conv, u)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("unit repo: product units rows: %w", err)
+	}
+
+	// Base unit: the product's own pointer wins, else the unit flagged is_base.
+	baseID := uuid.Nil
+	switch {
+	case baseA.Valid:
+		baseID = baseA.UUID
+	case baseB.Valid:
+		baseID = baseB.UUID
+	default:
+		for _, u := range conv {
+			if u.IsBase {
+				baseID = u.ID
+				break
+			}
+		}
+	}
+	out := make([]ProductUnit, 0, len(conv)+1)
+	if baseID != uuid.Nil {
+		base := ProductUnit{ID: baseID, Factor: decimal.NewFromInt(1), IsBase: true}
+		err := dbh.QueryRowContext(ctx,
+			`SELECT code, name FROM tally.unit_def WHERE id = $1 AND (is_system = true OR tenant_id = $2)`,
+			baseID, tenantID).Scan(&base.Code, &base.Name)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("unit repo: product units base: %w", err)
+		}
+		if err == nil {
+			out = append(out, base)
+		}
+	}
+	for _, u := range conv {
+		if u.ID == baseID {
+			continue
+		}
+		u.IsBase = false
+		out = append(out, u)
+	}
+	return out, nil
 }

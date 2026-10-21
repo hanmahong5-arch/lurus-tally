@@ -26,6 +26,8 @@ func newRequireKeyEngine() *gin.Engine {
 	api.POST("/purchase-bills/:id/approve", reached)
 	api.POST("/sale-bills/:id/approve", reached)
 	api.POST("/sale-bills/quick-checkout", reached)
+	api.POST("/sale-bills/:id/return", reached)
+	api.POST("/purchase-bills/:id/return", reached)
 	api.POST("/ai/plans/:plan_id/confirm", reached)
 	api.POST("/products", reached) // non-allowlisted write
 	return e
@@ -37,6 +39,8 @@ var allowlistedRoutes = []struct{ method, path string }{
 	{http.MethodPost, "/api/v1/purchase-bills/11111111-1111-1111-1111-111111111111/approve"},
 	{http.MethodPost, "/api/v1/sale-bills/22222222-2222-2222-2222-222222222222/approve"},
 	{http.MethodPost, "/api/v1/sale-bills/quick-checkout"},
+	{http.MethodPost, "/api/v1/sale-bills/22222222-2222-2222-2222-222222222222/return"},
+	{http.MethodPost, "/api/v1/purchase-bills/11111111-1111-1111-1111-111111111111/return"},
 	{http.MethodPost, "/api/v1/ai/plans/33333333-3333-3333-3333-333333333333/confirm"},
 }
 

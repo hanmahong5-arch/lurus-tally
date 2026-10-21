@@ -55,6 +55,7 @@ type Config struct {
 	// bootable.
 	PlatformBaseURL     string // PLATFORM_BASE_URL: e.g. http://platform-core.lurus-platform.svc:18104
 	PlatformInternalKey string // PLATFORM_INTERNAL_KEY: bearer token for platform internal API
+	DevMode             bool   // TALLY_DEV_MODE: explicit local-development mode (header auth, local stand-ins for platform APIs)
 
 	// Auth — when OIDCIssuer is empty, AuthMiddleware is skipped and the
 	// service trusts X-Tenant-ID + X-IDP-Subject headers (dev only). In
@@ -76,12 +77,17 @@ type Config struct {
 	// When PlatformNotifyURL is empty it defaults to the in-cluster address.
 	PlatformNotifyURL string // PLATFORM_NOTIFY_URL: e.g. http://notification.lurus-platform.svc:18900
 
-	// AI assistant — routed through lurus newapi (newapi.lurus.cn).
+	// AI assistant — routed through lurus newapi (address injected via NEWAPI_BASE_URL).
 	// When NewAPIBaseURL is empty the AI routes return 501.
-	NewAPIBaseURL    string // NEWAPI_BASE_URL: e.g. https://newapi.lurus.cn/v1
+	NewAPIBaseURL    string // NEWAPI_BASE_URL: e.g. https://newapi.example.com/v1; empty = AI off
 	NewAPIKey        string // NEWAPI_API_KEY: bearer token for newapi (injected via secret)
-	DefaultAIModel   string // DEFAULT_AI_MODEL: model name (default "deepseek-v4-flash")
+	DefaultAIModel   string // DEFAULT_AI_MODEL: model name (no default; empty keeps the AI assistant off)
+	AIModelChat      string // AI_MODEL_CHAT: model for the chat loop (empty = DefaultAIModel)
+	AIModelExtract   string // AI_MODEL_EXTRACT: model for spoken-order extraction (empty = DefaultAIModel)
 	AIPlanTTLSeconds int    // AI_PLAN_TTL_SECONDS: destructive plan TTL (default 1800)
+	// LLMModelPricesCNY is the per-1k-token price table, "name:prompt:completion,..."
+	// (LLM_MODEL_PRICES_CNY). Empty = no priced models; cost metrics stay at 0.
+	LLMModelPricesCNY string
 
 	// Memory — memorus-r integration (http://memorus-r.lurus-system.svc:8880/api/v1).
 	// Both must be set to enable memory recall in the AI Drawer.
@@ -90,10 +96,19 @@ type Config struct {
 	MemoryBaseURL string // MEMORUS_BASE_URL: e.g. http://memorus-r.lurus-system.svc:8880/api/v1
 	MemoryAPIKey  string // MEMORUS_API_KEY: X-API-Key header value
 
+	// Cloud receipt printing (Feie). USER/UKEY empty -> cloud-print disabled, till falls back to browser print.
+	FeieUser   string // FEIE_USER (secret)
+	FeieUKey   string // FEIE_UKEY (secret)
+	FeieAPIURL string // FEIE_API_URL, default http://api.feieyun.cn/Api/Open/
+
 	// Shopify webhook — HMAC-SHA256 secret for verifying inbound order pushes.
 	// When empty the /webhooks/shopify/orders route still mounts but rejects
 	// every request as misconfigured (handler logs once at startup).
 	ShopifyWebhookSecret string // SHOPIFY_WEBHOOK_SECRET: raw secret from Shopify Partner Dashboard
+
+	// PlanLimits is the plan quota mode (members / SKUs / warehouses): off | shadow | enforce.
+	// shadow (default) only logs would-be refusals; enforce rejects with 403 plan_limit_reached.
+	PlanLimits string // PLAN_LIMITS
 }
 
 // required reads an environment variable and returns a descriptive error when absent.
@@ -182,29 +197,35 @@ func Load() (*Config, error) {
 	}
 
 	return &Config{
-		DatabaseDSN:     dbDSN,
-		RedisURL:        redisURL,
-		NATSURL:         natsURL,
-		Port:            optional("PORT", "18200"),
-		LogLevel:        optional("LOG_LEVEL", "info"),
-		GinMode:         optional("GIN_MODE", "release"),
-		ServiceVersion:  optional("SERVICE_VERSION", "dev"),
-		ShutdownTimeout: shutdownTimeout,
-		MigrateOnBoot:   optional("MIGRATE_ON_BOOT", "true") != "false",
-		PlatformBaseURL: optional("PLATFORM_BASE_URL",
-			"http://platform-core.lurus-platform.svc:18104"),
-		PlatformInternalKey: optional("PLATFORM_INTERNAL_KEY", ""),
-		PlatformNotifyURL: optional("PLATFORM_NOTIFY_URL",
-			"http://notification.lurus-platform.svc:18900"),
+		DatabaseDSN:          dbDSN,
+		RedisURL:             redisURL,
+		NATSURL:              natsURL,
+		Port:                 optional("PORT", "18200"),
+		LogLevel:             optional("LOG_LEVEL", "info"),
+		GinMode:              optional("GIN_MODE", "release"),
+		ServiceVersion:       optional("SERVICE_VERSION", "dev"),
+		ShutdownTimeout:      shutdownTimeout,
+		MigrateOnBoot:        optional("MIGRATE_ON_BOOT", "true") != "false",
+		PlatformBaseURL:      optional("PLATFORM_BASE_URL", ""),
+		PlatformInternalKey:  optional("PLATFORM_INTERNAL_KEY", ""),
+		DevMode:              devMode,
+		PlatformNotifyURL:    optional("PLATFORM_NOTIFY_URL", ""),
 		OIDCIssuer:           oidcIssuer,
 		OIDCAudience:         oidcAudience,
 		OIDCJWKSPath:         optional("OIDC_JWKS_PATH", defaultOIDCJWKSPath),
-		NewAPIBaseURL:        optional("NEWAPI_BASE_URL", "https://newapi.lurus.cn/v1"),
+		NewAPIBaseURL:        optional("NEWAPI_BASE_URL", ""),
 		NewAPIKey:            optional("NEWAPI_API_KEY", ""),
-		DefaultAIModel:       optional("DEFAULT_AI_MODEL", "deepseek-v4-flash"),
+		DefaultAIModel:       optional("DEFAULT_AI_MODEL", ""),
+		AIModelChat:          optional("AI_MODEL_CHAT", ""),
+		AIModelExtract:       optional("AI_MODEL_EXTRACT", ""),
 		AIPlanTTLSeconds:     aiPlanTTL,
-		MemoryBaseURL:        optional("MEMORUS_BASE_URL", "http://memorus-r.lurus-system.svc:8880/api/v1"),
+		LLMModelPricesCNY:    optional("LLM_MODEL_PRICES_CNY", ""),
+		MemoryBaseURL:        optional("MEMORUS_BASE_URL", ""),
 		MemoryAPIKey:         optional("MEMORUS_API_KEY", ""),
+		FeieUser:             optional("FEIE_USER", ""),
+		FeieUKey:             optional("FEIE_UKEY", ""),
+		FeieAPIURL:           optional("FEIE_API_URL", "http://api.feieyun.cn/Api/Open/"),
 		ShopifyWebhookSecret: optional("SHOPIFY_WEBHOOK_SECRET", ""),
+		PlanLimits:           optional("PLAN_LIMITS", "shadow"),
 	}, nil
 }

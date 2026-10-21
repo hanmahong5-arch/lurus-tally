@@ -7,6 +7,7 @@ package router
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -18,11 +19,13 @@ import (
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
+	handlercust "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/customer"
 	handlerdigest "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/digest"
 	handlerexport "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/export"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
 	handlerimporting "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/importing"
+	handlerinvoice "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/invoice"
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
 	handleronboarding "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/onboarding"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
@@ -45,7 +48,7 @@ func init() {
 // handler is real, every business handler and every middleware slot is nil.
 func buildNilRouter() *gin.Engine {
 	h := health.New("dev")
-	return New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 // buildFullyWiredRouter constructs New(...) with every handler slot and every
@@ -83,8 +86,10 @@ func buildFullyWiredRouter() *gin.Engine {
 	imph := handlerimporting.New(nil, uuid.Nil)
 	digh := handlerdigest.New(nil)
 	onh := handleronboarding.NewForTest(nil, nil)
+	custh := handlercust.New(nil, nil, nil)
+	invh := handlerinvoice.New(nil, nil, nil, nil, nil)
 
-	return New(h, authMW, tenantDBMW, idempotencyMW, ph, uh, ah, pat, sh, bh, ch, saleh, payh, bilh, aih, dh, projh, mh, suph, wh, exh, acct, replh, reph, srch, imph, digh, onh)
+	return New(h, authMW, tenantDBMW, idempotencyMW, ph, uh, ah, pat, sh, bh, ch, saleh, payh, bilh, aih, dh, projh, mh, suph, wh, exh, acct, replh, reph, srch, imph, digh, onh, custh, invh)
 }
 
 // TestNilHandlerGroups_Return501NotFound is the outline's killer-feature table:
@@ -112,6 +117,11 @@ func TestNilHandlerGroups_Return501NotFound(t *testing.T) {
 		{"nursery-dict", http.MethodGet, "/api/v1/nursery-dict"},
 		{"projects", http.MethodGet, "/api/v1/projects"},
 		{"suppliers", http.MethodGet, "/api/v1/suppliers"},
+		{"customers", http.MethodGet, "/api/v1/customers"},
+		{"customers-get", http.MethodGet, "/api/v1/customers/00000000-0000-0000-0000-000000000001"},
+		{"invoices", http.MethodGet, "/api/v1/invoices"},
+		{"invoices-get", http.MethodGet, "/api/v1/invoices/00000000-0000-0000-0000-000000000001"},
+		{"invoices-void", http.MethodPost, "/api/v1/invoices/00000000-0000-0000-0000-000000000001/void"},
 		{"warehouses", http.MethodGet, "/api/v1/warehouses"},
 		{"exports", http.MethodGet, "/api/v1/exports/bills.csv"},
 		{"account", http.MethodGet, "/api/v1/account/profile"},
@@ -134,6 +144,13 @@ func TestNilHandlerGroups_Return501NotFound(t *testing.T) {
 
 			if w.Code == http.StatusNotFound {
 				t.Fatalf("%s %s: got 404 — route not registered (want 501 stub)", tc.method, tc.path)
+			}
+			if tc.group == "ai" {
+				// AI routes degrade with a stable machine code, not the generic 501.
+				if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), `"error":"ai_not_configured"`) {
+					t.Fatalf("%s %s: want 503 ai_not_configured, got %d (body=%s)", tc.method, tc.path, w.Code, w.Body.String())
+				}
+				return
 			}
 			if w.Code != http.StatusNotImplemented {
 				t.Fatalf("%s %s: want 501, got %d (body=%s)", tc.method, tc.path, w.Code, w.Body.String())
@@ -174,7 +191,7 @@ func TestMiddlewareOrder_AuthWinsBeforeIdempotencyCheck(t *testing.T) {
 	denyAuth := func(c *gin.Context) {
 		c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "unauthenticated"})
 	}
-	r := New(h, denyAuth, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	r := New(h, denyAuth, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	w := httptest.NewRecorder()
 	req, _ := http.NewRequest(http.MethodPost, "/api/v1/payments", nil)
@@ -230,6 +247,8 @@ func TestFullyWiredRouter_RegistersEveryHandlerGroup(t *testing.T) {
 		{http.MethodGet, "/api/v1/nursery-dict"},
 		{http.MethodGet, "/api/v1/projects"},
 		{http.MethodGet, "/api/v1/suppliers"},
+		{http.MethodGet, "/api/v1/customers"},
+		{http.MethodGet, "/api/v1/invoices"},
 		{http.MethodGet, "/api/v1/warehouses"},
 		{http.MethodGet, "/api/v1/exports/bills.csv"},
 		{http.MethodGet, "/api/v1/account/profile"},

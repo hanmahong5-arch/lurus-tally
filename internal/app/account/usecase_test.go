@@ -16,11 +16,12 @@ import (
 // ---- fakes -----------------------------------------------------------------
 
 type fakeSessionRepo struct {
-	upserts []domain.Session
-	listed  []*domain.Session
-	revoked []uuid.UUID
-	touched int
-	listErr error
+	upserts   []domain.Session
+	listed    []*domain.Session
+	revoked   []uuid.UUID
+	revokedBy []string
+	touched   int
+	listErr   error
 }
 
 func (f *fakeSessionRepo) Upsert(_ context.Context, s *domain.Session) error {
@@ -33,8 +34,9 @@ func (f *fakeSessionRepo) List(_ context.Context, _ uuid.UUID, _ string) ([]*dom
 	}
 	return f.listed, nil
 }
-func (f *fakeSessionRepo) Revoke(_ context.Context, _ uuid.UUID, id uuid.UUID) error {
+func (f *fakeSessionRepo) Revoke(_ context.Context, _ uuid.UUID, userID string, id uuid.UUID) error {
 	f.revoked = append(f.revoked, id)
+	f.revokedBy = append(f.revokedBy, userID)
 	return nil
 }
 func (f *fakeSessionRepo) Touch(_ context.Context, _ uuid.UUID, _, _ string) error {
@@ -239,5 +241,16 @@ func TestSetAvatar_HappyPath(t *testing.T) {
 	}
 	if repo.avatar.ct != "image/png" {
 		t.Errorf("content type not stored: %s", repo.avatar.ct)
+	}
+}
+
+func TestRevokeSession_PassesOwnerToRepo(t *testing.T) {
+	id := uuid.New()
+	repo := &fakeSessionRepo{listed: []*domain.Session{{ID: id}}}
+	if err := appacct.NewRevokeSession(repo).Execute(context.Background(), uuid.New(), "u-1", id); err != nil {
+		t.Fatal(err)
+	}
+	if len(repo.revokedBy) != 1 || repo.revokedBy[0] != "u-1" {
+		t.Fatalf("revoke must be scoped to the caller, got %v", repo.revokedBy)
 	}
 }

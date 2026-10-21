@@ -6,12 +6,17 @@ import Link from "next/link"
 import type { ColumnDef } from "@tanstack/react-table"
 import { listStockSnapshots, type StockSnapshot } from "@/lib/api/stock"
 import { listProducts, type Product } from "@/lib/api/products"
+import { listWarehouses } from "@/lib/api/warehouses"
+import { extractApiError } from "@/lib/api/errors"
+import { StockAdjustDialog, type CountWarehouse } from "@/components/stock-adjust-dialog"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useTenantId } from "@/hooks/use-tenant-id"
+import { useRole } from "@/hooks/use-role"
 import { formatCNY } from "@/lib/format"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
-import { DataTable } from "@/components/ui/data-table"
+import { DataTable, statusCell } from "@/components/ui/data-table"
+import { DataCard } from "@/components/ui/data-card"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/empty-state"
@@ -32,17 +37,14 @@ function formatDecimal(raw: string | undefined, fractionDigits = 3): string {
   return n.toFixed(fractionDigits)
 }
 
-function shortId(id: string | undefined): string {
-  if (!id) return "—"
-  return id.slice(0, 8)
-}
-
 export default function StockPage() {
   const router = useRouter()
   const [snapshots, setSnapshots] = useState<StockSnapshot[]>([])
   const [products, setProducts] = useState<Map<string, Product>>(new Map())
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [warehouses, setWarehouses] = useState<CountWarehouse[]>([])
+  const [countOpen, setCountOpen] = useState(false)
   const [warehouseFilter, setWarehouseFilter] = useState<string>("")
   const [q, setQ] = useState("")
   const tenantId = useTenantId()
@@ -54,16 +56,26 @@ export default function StockPage() {
     // failure should error; product failure should degrade silently so the
     // user still sees stock numbers (with short-id fallback).
     Promise.allSettled([
-      listStockSnapshots({ tenantId, limit: 200, signal, retry: 2 }),
-      listProducts({ tenantId, limit: 200, signal, retry: 2 }),
+      listStockSnapshots({ tenantId, limit: 500, signal, retry: 2 }),
+      listProducts({ tenantId, limit: 500, signal, retry: 2 }),
+      listWarehouses({ tenantId, limit: 200, signal, retry: 2 }),
     ])
-      .then(([snapRes, prodRes]) => {
+      .then(([snapRes, prodRes, whRes]) => {
         if (isCancelled?.() || signal?.aborted) return
         if (snapRes.status === "rejected") {
-          setError(String(snapRes.reason))
+          setError(extractApiError(snapRes.reason).message)
           return
         }
         setSnapshots(snapRes.value)
+        if (whRes.status === "fulfilled") {
+          setWarehouses(
+            (whRes.value.items ?? []).map((w) => ({
+              id: w.id,
+              name: w.name,
+              isDefault: Boolean((w as { is_default?: boolean }).is_default ?? w.isDefault),
+            }))
+          )
+        }
         const map = new Map<string, Product>()
         if (prodRes.status === "fulfilled") {
           for (const p of prodRes.value.items ?? []) map.set(p.id, p)
@@ -79,6 +91,9 @@ export default function StockPage() {
   useAbortableEffect((signal, isCancelled) => {
     load(signal, isCancelled)
   }, [load])
+
+  const warehouseNames = useMemo(() => new Map(warehouses.map((w) => [w.id, w.name])), [warehouses])
+  const warehouseName = (id: string) => warehouseNames.get(id) ?? "未知仓库"
 
   const warehouseOptions = useMemo(() => {
     const set = new Set<string>()
@@ -97,7 +112,14 @@ export default function StockPage() {
     })
   }, [snapshots, products, q, warehouseFilter])
 
-  const columns: ColumnDef<StockSnapshot>[] = [
+  // Unit cost is hidden from roles without cost.view; unknown role hides nothing (the backend trims it).
+  const { known, can } = useRole()
+  const showCost = !known || can("cost.view")
+  const mayExport = !known || can("export.stock")
+  const mayAdjust = !known || can("stock.adjust")
+  const mayDraft = !known || can("bill.draft")
+
+  const allColumns: ColumnDef<StockSnapshot>[] = [
     {
       id: "product",
       header: "商品",
@@ -109,14 +131,14 @@ export default function StockPage() {
             className="font-medium hover:underline"
             onClick={(e) => e.stopPropagation()}
           >
-            {p?.name ?? `商品 ${shortId(row.original.product_id)}`}
+            {p?.name ?? "未知商品"}
           </Link>
         )
       },
     },
     {
       id: "sku",
-      header: "SKU",
+      header: "商品编码",
       cell: ({ row }) => (
         <span className="font-mono text-xs text-muted-foreground">
           {products.get(row.original.product_id)?.code ?? "—"}
@@ -127,9 +149,7 @@ export default function StockPage() {
       id: "warehouse",
       header: "仓库",
       cell: ({ row }) => (
-        <span className="font-mono text-xs text-muted-foreground">
-          {shortId(row.original.warehouse_id)}
-        </span>
+        <span className="text-muted-foreground">{warehouseName(row.original.warehouse_id)}</span>
       ),
     },
     {
@@ -175,6 +195,7 @@ export default function StockPage() {
       ),
     },
   ]
+  const columns = allColumns.filter((c) => showCost || c.id !== "unit_cost")
 
   const subtitle =
     filtered.length !== snapshots.length
@@ -188,18 +209,23 @@ export default function StockPage() {
         subtitle={subtitle}
         actions={
           <>
-            {snapshots.length === 0 ? (
+            {!mayExport ? null : snapshots.length === 0 ? (
               <span
                 title="暂无可导出数据"
                 aria-disabled="true"
                 className={buttonVariants({ variant: "outline", className: "pointer-events-none opacity-40" })}
               >
-                导出 CSV
+                导出表格
               </span>
             ) : (
-              <a href="/api/v1/exports/stock.csv" download className={buttonVariants({ variant: "outline" })}>
-                导出 CSV
+              <a href="/api/proxy/exports/stock.csv" download className={buttonVariants({ variant: "outline" })}>
+                导出表格
               </a>
+            )}
+            {mayAdjust && (
+              <Button variant="outline" onClick={() => setCountOpen(true)}>
+                盘点
+              </Button>
             )}
             <Button variant="outline" onClick={() => load()}>
               刷新
@@ -225,11 +251,21 @@ export default function StockPage() {
           <option value="">全部仓库</option>
           {warehouseOptions.map((id) => (
             <option key={id} value={id}>
-              仓库 {shortId(id)}
+              {warehouseName(id)}
             </option>
           ))}
         </select>
       </div>
+
+      <StockAdjustDialog
+        open={countOpen}
+        onOpenChange={setCountOpen}
+        tenantId={tenantId}
+        products={Array.from(products.values())}
+        snapshots={snapshots}
+        warehouses={warehouses}
+        onDone={() => load()}
+      />
 
       <DataTable
         columns={columns}
@@ -238,17 +274,40 @@ export default function StockPage() {
         error={error}
         getRowId={(s) => `${s.product_id}-${s.warehouse_id}`}
         onRowClick={(s) => router.push(`/stock/${s.product_id}`)}
+        mobileCard={(s) => {
+          const p = products.get(s.product_id)
+          const lowStock = Number(s.on_hand_qty ?? "0") <= 0
+          return (
+            <DataCard
+              title={p?.name ?? "未知商品"}
+              subtitle={p?.code ?? undefined}
+              aside={lowStock ? statusCell("低库存", "warn") : undefined}
+              fields={[
+                { label: "在手", value: formatDecimal(s.on_hand_qty) },
+                { label: "可用", value: formatDecimal(s.available_qty) },
+                { label: "仓库", value: warehouseName(s.warehouse_id) },
+                ...(showCost ? [{ label: "单位成本", value: formatCNY(s.unit_cost) }] : []),
+              ]}
+            />
+          )
+        }}
         animateRows
         skeletonRows={5}
         empty={
           snapshots.length === 0 ? (
             <EmptyState
               title="暂无库存记录"
-              description="完成一笔采购入库后这里会出现快照"
+              description={
+                mayDraft
+                  ? "新店建账请到「商品」页点「批量导入」，一次录入商品和期初库存；也可以完成一笔采购入库"
+                  : "还没有库存，等老板或店长录入后这里就会出现"
+              }
               action={
-                <Link href="/purchases/new" className="text-sm text-primary hover:underline">
-                  录入采购单
-                </Link>
+                mayDraft ? (
+                  <Link href="/purchases/new" className="text-sm text-primary hover:underline">
+                    录入采购单
+                  </Link>
+                ) : undefined
               }
             />
           ) : (

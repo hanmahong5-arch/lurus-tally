@@ -37,7 +37,7 @@ func TestError_MessageOnly_WhenNoInternalCause(t *testing.T) {
 // sentinel wrapped by Wrap.
 func TestError_IncludesCause_WhenInternalSet(t *testing.T) {
 	sentinel := errors.New("sentinel: connection refused")
-	e := httperr.Wrap(http.StatusServiceUnavailable, "service_unavailable", "a downstream service is temporarily unavailable", "retry shortly", sentinel)
+	e := httperr.Wrap(http.StatusServiceUnavailable, "service_unavailable", "系统暂时连不上，请稍后再试", "请稍后再试", sentinel)
 
 	got := e.Error()
 	if !strings.Contains(got, sentinel.Error()) {
@@ -123,24 +123,24 @@ func TestConstructors_TableDriven(t *testing.T) {
 			err:         httperr.Internal(errors.New("db down")),
 			wantStatus:  http.StatusInternalServerError,
 			wantCode:    "internal_error",
-			wantMessage: "an internal error occurred",
-			wantAction:  "retry shortly; contact support if it keeps happening",
+			wantMessage: "系统出了点问题，请稍后再试；一直不行请联系客服",
+			wantAction:  "请稍后再试，一直不行请联系客服",
 		},
 		{
 			name:        "Unavailable",
 			err:         httperr.Unavailable(errors.New("dep down")),
 			wantStatus:  http.StatusServiceUnavailable,
 			wantCode:    "service_unavailable",
-			wantMessage: "a downstream service is temporarily unavailable",
-			wantAction:  "retry shortly",
+			wantMessage: "系统暂时连不上，请稍后再试",
+			wantAction:  "请稍后再试",
 		},
 		{
 			name:        "BadGateway",
 			err:         httperr.BadGateway(errors.New("upstream garbage")),
 			wantStatus:  http.StatusBadGateway,
 			wantCode:    "bad_gateway",
-			wantMessage: "a downstream service returned an invalid response",
-			wantAction:  "retry shortly",
+			wantMessage: "系统返回了异常结果，请稍后再试",
+			wantAction:  "请稍后再试",
 		},
 	}
 
@@ -197,7 +197,7 @@ func TestWrite_CauseFallback_WhenInternalNil(t *testing.T) {
 	c, _ := gin.CreateTestContext(w)
 	c.Request = httptest.NewRequest(http.MethodPost, "/x", nil)
 
-	bare := httperr.New(http.StatusInternalServerError, "internal_error", "an internal error occurred", "")
+	bare := httperr.New(http.StatusInternalServerError, "internal_error", "系统出了点问题，请稍后再试；一直不行请联系客服", "")
 	if bare.Internal != nil {
 		t.Fatal("test setup: expected Internal to be nil for this branch")
 	}
@@ -206,7 +206,7 @@ func TestWrite_CauseFallback_WhenInternalNil(t *testing.T) {
 	if w.Code != http.StatusInternalServerError {
 		t.Fatalf("status: got %d, want 500", w.Code)
 	}
-	if !strings.Contains(w.Body.String(), "an internal error occurred") {
+	if !strings.Contains(w.Body.String(), "系统出了点问题，请稍后再试；一直不行请联系客服") {
 		t.Errorf("body = %s, want the safe static message", w.Body.String())
 	}
 }

@@ -14,7 +14,7 @@ import OnboardingWizard from "@/components/onboarding/OnboardingWizard"
 //   1. No profile → show persona picker form.
 //   2. submitProfile saves the choice → redirect to /setup?step=seed&persona=<x>.
 //   3. step=seed|replenish → render OnboardingWizard so the user can seed demo
-//      data and navigate to /replenish to generate their first PO.
+//      data and navigate to /replenish to generate their first purchase order.
 //   4. Already has profile + no step param → /dashboard.
 //
 // Server-side guards:
@@ -61,7 +61,7 @@ export default async function SetupPage({
               — 下面几步完成第一单
             </h1>
             <p className="text-sm text-muted-foreground">
-              全程不超过 10 分钟。示例数据之后可一键清除，不影响真实业务。
+              全程不超过 10 分钟。也可以跳过示例，直接录自己的货；示例数据随时可一键清除，不影响真实账目。
             </p>
           </div>
           <OnboardingWizard persona={activePersona} />
@@ -104,39 +104,52 @@ export default async function SetupPage({
           <p className="text-sm text-muted-foreground">Lurus Tally</p>
           <h1 className="text-3xl font-bold tracking-tight">欢迎，先告诉我们你的业务类型</h1>
           <p className="text-sm text-muted-foreground">
-            这一步决定库存计价方式、默认模块和数据看板布局。之后可在设置里调整。
+            这一步决定系统怎么给你算成本、默认打开哪些功能。选错了也没关系，之后可以联系我们调整。
           </p>
         </div>
 
-        {error ? <ErrorBanner>操作失败：{error}</ErrorBanner> : null}
+        <p className="rounded-md border border-border bg-muted/40 px-4 py-3 text-center text-sm text-muted-foreground">
+          如果是老板邀请你，请打开老板发的邀请链接，不要在这里开店；在这里开店会建一个只属于你自己的新店铺。
+        </p>
+
+        {error ? <ErrorBanner>{setupErrorText(error)}</ErrorBanner> : null}
 
         <form action={submitProfile} className="grid grid-cols-1 gap-4 md:grid-cols-3">
           <ProfileOption
             value="retail"
             title="零售 / 批发"
-            description="开店、批发、电商。库存按移动加权平均（WAC）计价；适合 SKU 流转快、利润看汇总的业务。"
-            highlights={["💵 即时收银（POS）", "📦 单一库存视图", "📊 销售毛利日报"]}
+            description="开店、批发、电商。成本按进货均价自动计算；适合品种多、周转快、只想看总利润的生意。"
+            highlights={["💵 即时收银", "📦 单一库存视图", "📊 销售毛利日报"]}
           />
           <ProfileOption
             value="cross_border"
             title="跨境贸易"
-            description="进出口、跨境电商。库存按 FIFO 批次计价；自动多币种、汇率、HS Code 支持。"
-            highlights={["🌐 多币种 + 汇率", "🚢 报关 / HS Code", "📈 批次成本可追溯"]}
+            description="进出口、跨境电商。成本按进货批次先进先出计算；支持多币种、汇率和海关编码。"
+            highlights={["🌐 多币种 + 汇率", "🚢 报关 / 海关编码", "📈 批次成本可追溯"]}
           />
           <ProfileOption
             value="horticulture"
             title="苗木 / 园林工程"
-            description="苗圃、园林公司、工程方。苗木字典、项目制核算、价格分级，内置 200+ 常用苗木品种。"
-            highlights={["🌿 苗木字典 + 价格历史", "🏗️ 项目制损益核算", "📸 现场拍照存档"]}
+            description="苗圃、园林公司、工程方。有苗木字典，送货单上能带规格，可以按株、棵、平方米计价。"
+            highlights={["🌿 苗木字典", "🚚 送货单带规格", "📏 按株 / 棵 / 平方米计价"]}
           />
         </form>
 
         <p className="text-center text-xs text-muted-foreground">
-          点击任一卡片下方的&ldquo;选这个&rdquo;按钮即可完成。混合模式（hybrid）由管理员后台分配。
+          点击任一卡片下方的&ldquo;选这个&rdquo;按钮即可完成。如果你的生意同时涉及几种类型，先选最主要的一种即可。
         </p>
       </div>
     </main>
   )
+}
+
+/** The error query value is a machine hint (or a raw server detail); show plain Chinese instead. */
+function setupErrorText(code: string): string {
+  if (code === "invalid") return "请先选择一种业务类型。"
+  if (code === "network") return "网络不通，没能保存，请检查网络后再试。"
+  // The server's own Chinese explanation is already written for the shop owner.
+  if (/[一-龥]/.test(code)) return code
+  return "保存没成功，请稍后再试一次。"
 }
 
 function ProfileOption({

@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -100,10 +101,29 @@ type DemoSaleBill struct {
 	OccurredAt  time.Time
 }
 
+// DemoSKU is the default SKU written for a demo product: sale / purchase price
+// and the shelf unit. The barcode is not here: like every other product it lives
+// in attributes.barcode, which the POS scanner, the product form and import
+// de-duplication read.
+type DemoSKU struct {
+	TenantID  uuid.UUID
+	ProductID uuid.UUID
+	UnitName  string
+	Retail    decimal.Decimal
+	Purchase  decimal.Decimal
+}
+
+// DemoSKUWriter persists a demo product's default SKU. Optional: without it the
+// seed still creates products and stock (prices stay blank). Satisfied by
+// *repoonboarding.Repo.
+type DemoSKUWriter interface {
+	InsertDemoSKU(ctx context.Context, in DemoSKU) error
+}
+
 // DemoDeleter is the narrow interface the clear use case needs to remove demo rows.
 // Satisfied by *repoonboarding.Repo.
 type DemoDeleter interface {
-	DeleteDemoProducts(ctx context.Context, tenantID uuid.UUID) error
+	ClearDemo(ctx context.Context, tenantID uuid.UUID) (*ClearResult, error)
 }
 
 // SeedDemoUseCase seeds a small, persona-specific demo catalogue, initial stock,
@@ -114,6 +134,13 @@ type SeedDemoUseCase struct {
 	products ProductCreator
 	stock    StockInitializer
 	sales    SalesRecorder
+	skus     DemoSKUWriter
+}
+
+// WithSKUWriter attaches the default-SKU writer (price, unit, barcode per demo product).
+func (uc *SeedDemoUseCase) WithSKUWriter(w DemoSKUWriter) *SeedDemoUseCase {
+	uc.skus = w
+	return uc
 }
 
 // NewSeedDemoUseCase wires the use case. All three deps are required.
@@ -136,6 +163,8 @@ type SeedResult struct {
 type demoSKU struct {
 	code      string
 	name      string
+	spec      string
+	unitName  string
 	brand     string
 	qtyOnHand decimal.Decimal
 	unitCost  decimal.Decimal
@@ -180,35 +209,38 @@ func demoCatalogue(p Persona) []demoSKU {
 	case PersonaRetail:
 		return []demoSKU{
 			{
-				code: "DEMO-RT-001", name: "保温杯 500ml 不锈钢", brand: "BrewKeep",
+				code: "DEMO-RT-001", name: "不锈钢螺丝 M6×30", spec: "100颗/盒", unitName: "盒", brand: "",
 				qtyOnHand: decimal.NewFromInt(60), unitCost: decimal.NewFromInt(28), salePrice: decimal.NewFromInt(59),
 				monthlySales: decimal.NewFromInt(72), lowStock: false,
+				attrs: map[string]string{"barcode": "6900000000011"},
 			},
 			{
-				code: "DEMO-RT-002", name: "帆布手提袋 大号", brand: "EcoBag",
+				code: "DEMO-RT-002", name: "活动扳手 10寸", spec: "镀铬", unitName: "把", brand: "",
 				qtyOnHand: decimal.NewFromInt(45), unitCost: decimal.NewFromInt(12), salePrice: decimal.NewFromInt(29),
 				monthlySales: decimal.NewFromInt(54), lowStock: false,
+				attrs: map[string]string{"barcode": "6900000000028"},
 			},
 			{
-				code: "DEMO-RT-003", name: "折叠雨伞 自动款", brand: "RainGuard",
+				code: "DEMO-RT-003", name: "PPR 水管 25mm", spec: "4米/根", unitName: "根", brand: "",
 				qtyOnHand: decimal.NewFromInt(5), unitCost: decimal.NewFromInt(18), salePrice: decimal.NewFromInt(45),
 				monthlySales: decimal.NewFromInt(66), lowStock: true, // high velocity vs stock → triggers alert
+				attrs: map[string]string{"barcode": "6900000000035"},
 			},
 		}
 	default: // horticulture and unknown personas — generic set
 		return []demoSKU{
 			{
-				code: "DEMO-HO-001", name: "红枫 Acer palmatum 3年苗", brand: "",
+				code: "DEMO-HO-001", name: "红枫 3年苗", spec: "胸径3cm 冠幅1.2m", unitName: "株", brand: "",
 				qtyOnHand: decimal.NewFromInt(30), unitCost: decimal.NewFromInt(25), salePrice: decimal.NewFromInt(68),
 				monthlySales: decimal.NewFromInt(36), lowStock: false,
 			},
 			{
-				code: "DEMO-HO-002", name: "桂花 Osmanthus fragrans 2年苗", brand: "",
+				code: "DEMO-HO-002", name: "桂花 2年苗", spec: "地径2cm 冠幅0.8m", unitName: "株", brand: "",
 				qtyOnHand: decimal.NewFromInt(20), unitCost: decimal.NewFromInt(18), salePrice: decimal.NewFromInt(48),
 				monthlySales: decimal.NewFromInt(24), lowStock: false,
 			},
 			{
-				code: "DEMO-HO-003", name: "紫荆 Cercis chinensis 1年苗", brand: "",
+				code: "DEMO-HO-003", name: "紫荆 1年苗", spec: "地径1cm 高0.6m", unitName: "株", brand: "",
 				qtyOnHand: decimal.NewFromInt(4), unitCost: decimal.NewFromInt(8), salePrice: decimal.NewFromInt(22),
 				monthlySales: decimal.NewFromInt(36), lowStock: true, // high velocity vs stock → triggers alert
 			},
@@ -246,6 +278,7 @@ func (uc *SeedDemoUseCase) Execute(ctx context.Context, in SeedInput) (*SeedResu
 			TenantID:   in.TenantID,
 			Code:       sku.code,
 			Name:       sku.name,
+			Spec:       sku.spec,
 			Brand:      sku.brand,
 			Remark:     demoRemark,
 			Attributes: attrsRaw,
@@ -259,6 +292,15 @@ func (uc *SeedDemoUseCase) Execute(ctx context.Context, in SeedInput) (*SeedResu
 			return nil, fmt.Errorf("seed demo: create product %s: %w", sku.code, perr)
 		}
 		created++
+
+		if uc.skus != nil {
+			if serr := uc.skus.InsertDemoSKU(ctx, DemoSKU{
+				TenantID: in.TenantID, ProductID: p.ID, UnitName: sku.unitName,
+				Retail: sku.salePrice, Purchase: sku.unitCost,
+			}); serr != nil {
+				return nil, fmt.Errorf("seed demo: write default SKU for %s: %w", sku.code, serr)
+			}
+		}
 
 		// Over-receive at −openingOffset: receive qtyOnHand + monthlySales so the
 		// trailing month of sales can be drawn down against real on-hand (the WAC
@@ -354,6 +396,48 @@ func salesSchedule(total decimal.Decimal, now time.Time) []demoSale {
 	return out
 }
 
+// ConvertedProduct is a demo product that an approved bill still uses, so
+// clearing turned it into a real product instead of deleting it.
+type ConvertedProduct struct {
+	ID   uuid.UUID `json:"id"`
+	Code string    `json:"code"`
+	Name string    `json:"name"`
+}
+
+// ClearResult reports what a clear-demo run did. Converted lists the demo
+// products kept as real products because approved bills reference them; their
+// stock and cost still carry demo figures until the owner counts them.
+type ClearResult struct {
+	ClearedProducts int                `json:"cleared_products"`
+	Converted       []ConvertedProduct `json:"converted_products"`
+	// Hint is non-empty when Converted is, telling the owner what to do next.
+	Hint string `json:"hint,omitempty"`
+}
+
+// ConvertedRemark is the product note a kept sample product carries after clear-demo.
+// The checklist reads it (repo/todo) so such a product does not count as the owner's own;
+// it sits in the owner-visible, editable note field, so the product list shows it and
+// editing the note replaces it.
+const ConvertedRemark = "示例转正"
+
+// ConvertedHint is the follow-up shown when demo products were kept as real ones.
+const ConvertedHint = "这些商品已经用在你的单据里，已转成真实商品保留。请用盘点核对它们的数量和进价。"
+
+// DemoInUseError reports that a demo product is referenced by bills the owner
+// keeps and could not be cleared or converted. Nothing has been changed when it
+// is returned. The Postgres repo converts such products instead, so it never
+// returns this; other DemoDeleter implementations may.
+type DemoInUseError struct {
+	// BillNos are the bill numbers (capped by the repo) that use a demo product.
+	BillNos []string
+	// Total is the real number of such bills, which may exceed len(BillNos).
+	Total int
+}
+
+func (e *DemoInUseError) Error() string {
+	return "demo products are used by bills: " + strings.Join(e.BillNos, ",")
+}
+
 // ClearDemoUseCase removes all demo-marked rows for a tenant.
 type ClearDemoUseCase struct {
 	repo DemoDeleter
@@ -364,13 +448,28 @@ func NewClearDemoUseCase(repo DemoDeleter) *ClearDemoUseCase {
 	return &ClearDemoUseCase{repo: repo}
 }
 
-// Execute deletes all products with remark='DEMO' for the tenant.
-// Associated stock_snapshot and stock_movement rows are cascade-deleted by FK.
-func (uc *ClearDemoUseCase) Execute(ctx context.Context, tenantID uuid.UUID) error {
+// Execute removes the tenant's demo products with their stock rows and the
+// demo / return bills hanging off them. A demo product that an approved bill the
+// owner keeps still uses is not deleted: it loses the demo marker and is listed
+// in ClearResult.Converted so the owner can check its quantity and cost.
+func (uc *ClearDemoUseCase) Execute(ctx context.Context, tenantID uuid.UUID) (*ClearResult, error) {
 	if tenantID == uuid.Nil {
-		return fmt.Errorf("clear demo: tenant_id required")
+		return nil, fmt.Errorf("clear demo: tenant_id required")
 	}
-	return uc.repo.DeleteDemoProducts(ctx, tenantID)
+	res, err := uc.repo.ClearDemo(ctx, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	if res == nil {
+		res = &ClearResult{}
+	}
+	if res.Converted == nil {
+		res.Converted = []ConvertedProduct{}
+	}
+	if len(res.Converted) > 0 && res.Hint == "" {
+		res.Hint = ConvertedHint
+	}
+	return res, nil
 }
 
 // marshalAttrs converts a string map to a JSON raw message.

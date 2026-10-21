@@ -249,9 +249,9 @@ func TestPostDraftBatch_CreatorID_UsesValidSub(t *testing.T) {
 	}
 }
 
-// TestPostDraftBatch_CreatorID_NonUUIDSubFallsBackToTenant verifies that a
-// present-but-non-UUID sub (malformed claim) is treated as uuid.Nil and falls
-// back to the tenant id — the same as an absent sub.
+// TestPostDraftBatch_CreatorID_NonUUIDSubMapsToDerivedID verifies that a
+// present-but-non-UUID sub (e.g. numeric Casdoor id) maps to a stable derived
+// id instead of collapsing to the tenant id.
 func TestPostDraftBatch_CreatorID_NonUUIDSubFallsBackToTenant(t *testing.T) {
 	tenantID := uuid.New()
 	batch := &stubBatchUC{}
@@ -267,8 +267,8 @@ func TestPostDraftBatch_CreatorID_NonUUIDSubFallsBackToTenant(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
 	}
-	if batch.gotCreator != tenantID {
-		t.Errorf("creator_id: got %v, want tenant fallback %v", batch.gotCreator, tenantID)
+	if batch.gotCreator == tenantID || batch.gotCreator == uuid.Nil {
+		t.Errorf("creator_id: got %v, want derived id distinct from tenant %v", batch.gotCreator, tenantID)
 	}
 }
 

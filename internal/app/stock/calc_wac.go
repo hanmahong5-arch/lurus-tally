@@ -42,7 +42,7 @@ func (w *WACCalculator) ValidateMovement(ctx context.Context, tx *sql.Tx, m *dom
 
 	switch m.Direction {
 	case domain.DirectionOut:
-		if m.QtyBase.GreaterThan(available) {
+		if m.QtyBase.GreaterThan(available) && !m.AllowNegative {
 			return &InsufficientStockError{ProductID: m.ProductID, Available: available, Requested: m.QtyBase}
 		}
 	case domain.DirectionAdjust:
@@ -76,7 +76,8 @@ func (w *WACCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domain
 		newQty = oldQty.Add(m.QtyBase)
 		if newQty.IsZero() {
 			newCost = decimal.Zero
-		} else if oldQty.IsZero() {
+		} else if !oldQty.IsPositive() {
+			// Empty (or oversold) stock: the receipt alone sets the cost.
 			newCost = inboundCost
 		} else {
 			numerator := oldQty.Mul(oldCost).Add(m.QtyBase.Mul(inboundCost))
@@ -85,11 +86,17 @@ func (w *WACCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domain
 		m.TotalCost = m.QtyBase.Mul(inboundCost)
 
 	case domain.DirectionOut:
-		if m.QtyBase.GreaterThan(oldQty) {
+		if m.QtyBase.GreaterThan(oldQty) && !m.AllowNegative {
 			return nil, &InsufficientStockError{ProductID: m.ProductID, Available: oldQty, Requested: m.QtyBase}
 		}
 		newQty = oldQty.Sub(m.QtyBase)
 		newCost = oldCost
+		if m.ExplicitCost {
+			// Goods leave at the caller's price: what stays is worth the old total less that.
+			newCost = costAfterExplicitOut(oldQty, oldCost, m.QtyBase, m.UnitCost)
+			m.TotalCost = m.QtyBase.Mul(m.UnitCost)
+			break
+		}
 		m.UnitCost = oldCost // out records the prevailing avg cost
 		m.TotalCost = m.QtyBase.Mul(oldCost)
 
@@ -99,6 +106,13 @@ func (w *WACCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domain
 			return nil, &InsufficientStockError{ProductID: m.ProductID, Available: oldQty, Requested: m.QtyBase.Neg()}
 		}
 		newCost = oldCost
+		if m.QtyBase.IsPositive() && m.UnitCost.IsPositive() {
+			// A count that brings stock in at a known price (opening balance) is valued
+			// like a receipt; without a price the average is left alone.
+			newCost = blendedCost(oldQty, oldCost, m.QtyBase, m.UnitCost)
+			m.TotalCost = m.QtyBase.Mul(m.UnitCost)
+			break
+		}
 		m.UnitCost = oldCost
 		m.TotalCost = m.QtyBase.Abs().Mul(oldCost)
 	}
@@ -121,6 +135,29 @@ func (w *WACCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domain
 	}
 
 	return newSnap, nil
+}
+
+// blendedCost is the weighted average after qty more units come in at cost.
+func blendedCost(oldQty, oldCost, qty, cost decimal.Decimal) decimal.Decimal {
+	newQty := oldQty.Add(qty)
+	if newQty.IsZero() {
+		return decimal.Zero
+	}
+	if oldQty.IsZero() {
+		return cost
+	}
+	return oldQty.Mul(oldCost).Add(qty.Mul(cost)).Div(newQty).Round(6)
+}
+
+// costAfterExplicitOut is the average cost of what stays after qty units leave at unitCost
+// rather than at the average. Never below zero; unchanged when nothing stays.
+func costAfterExplicitOut(oldQty, oldCost, qty, unitCost decimal.Decimal) decimal.Decimal {
+	left := oldQty.Sub(qty)
+	if !left.IsPositive() {
+		return oldCost
+	}
+	v := oldQty.Mul(oldCost).Sub(qty.Mul(unitCost)).Div(left).Round(6)
+	return decimal.Max(v, decimal.Zero)
 }
 
 // buildSnapshot constructs a Snapshot, reusing the existing ID when available.

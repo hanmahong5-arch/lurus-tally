@@ -265,17 +265,8 @@ func toResultDTO(r *appimporting.ImportResult) importResultDTO {
 	}
 }
 
-// actorID reads the OIDC subject from the request context. Returns uuid.Nil
-// when the subject is absent or not a UUID — the use case will apply a zero
-// creator_id in that case.
+// actorID maps the OIDC subject to a creator UUID (a non-UUID subject is hashed
+// to a stable id). Returns uuid.Nil only when the subject is absent (PAT path).
 func actorID(c *gin.Context) uuid.UUID {
-	sub := middleware.GetIDPSubject(c)
-	if sub == "" {
-		return uuid.Nil
-	}
-	id, err := uuid.Parse(sub)
-	if err != nil {
-		return uuid.Nil
-	}
-	return id
+	return middleware.ActorUUID(c)
 }

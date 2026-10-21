@@ -15,6 +15,7 @@ func TestPayment_PayType_Valid(t *testing.T) {
 		domain.PayTypeCard,
 		domain.PayTypeCredit,
 		domain.PayTypeTransfer,
+		domain.PayTypeBank,
 	}
 	for _, pt := range validTypes {
 		if err := pt.Validate(); err != nil {

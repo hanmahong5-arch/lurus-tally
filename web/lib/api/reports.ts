@@ -107,11 +107,64 @@ export function downloadCSV(rows: Record<string, unknown>[], filename: string): 
   const body = rows
     .map((r) => keys.map((k) => JSON.stringify(r[k] ?? "")).join(","))
     .join("\n")
-  const blob = new Blob([header + "\n" + body], { type: "text/csv;charset=utf-8;" })
+  const blob = new Blob(["\uFEFF" + header + "\n" + body], { type: "text/csv;charset=utf-8;" })
   const url = URL.createObjectURL(blob)
   const a = document.createElement("a")
   a.href = url
   a.download = filename
   a.click()
   URL.revokeObjectURL(url)
+}
+
+// ── Month-end reconciliation ─────────────────────────────────────────────────
+
+/** GET /reports/monthly?month=YYYY-MM — amounts are two-decimal strings. */
+export interface MonthlyReport {
+  month: string
+  date_from: string
+  date_to: string
+  net_sales: string
+  cost_of_goods: string
+  gross_profit: string
+  net_purchases: string
+  receipts: string
+  payments: string
+  receivable: string
+  payable: string
+  inventory_value: string
+}
+
+export async function fetchMonthly(month: string, signal?: AbortSignal): Promise<MonthlyReport> {
+  return apiFetch<MonthlyReport>(`/reports/monthly?month=${encodeURIComponent(month)}`, { signal })
+}
+
+const MONTH_RE = /^\d{4}-(0[1-9]|1[0-2])$/
+
+/** The requested month when it is a valid YYYY-MM no later than `current`, else `current`. */
+export function resolveMonth(raw: string | undefined, current: string): string {
+  return raw && MONTH_RE.test(raw) && raw <= current ? raw : current
+}
+
+/** The month before YYYY-MM (December rolls back a year). */
+export function previousMonth(ym: string): string {
+  const [y, m] = ym.split("-").map(Number)
+  return m === 1 ? `${y - 1}-12` : `${y}-${String(m - 1).padStart(2, "0")}`
+}
+
+/** CSV downloads for one month; the dates are inclusive days on the shop's calendar. */
+export function monthlyCsvLinks(r: Pick<MonthlyReport, "month" | "date_from" | "date_to">) {
+  // status=2 keeps drafts and cancelled bills out, so the file adds up to the net sales figure
+  const range = `date_from=${r.date_from}&date_to=${r.date_to}`
+  return {
+    bills: `/api/proxy/exports/bills.csv?${range}&status=2`,
+    payments: `/api/proxy/exports/payments.csv?${range}`,
+    // only the rows the monthly report counts, so each file adds up to its card
+    receipts: `/api/proxy/exports/payments.csv?${range}&direction=in&counted_only=1`,
+    paymentsOut: `/api/proxy/exports/payments.csv?${range}&direction=out&counted_only=1`,
+    // 月底应收 / 应付 are the totals of the ageing page, not a download
+    receivable: "/payments?tab=sales",
+    payable: "/payments?tab=purchases",
+    stock: "/api/proxy/exports/stock.csv",
+    summary: `/api/proxy/reports/monthly.csv?month=${r.month}`,
+  }
 }

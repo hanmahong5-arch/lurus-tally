@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
 import { useProfile } from "@/lib/profile"
+import { useRole } from "@/hooks/use-role"
 import {
   getRateOn,
   createRate,
@@ -81,6 +82,7 @@ function RateLineChart({ rates }: { rates: ExchangeRate[] }) {
 
 export default function ExchangeRatesPage() {
   const { profileType } = useProfile()
+  const { known, can } = useRole()
   const router = useRouter()
   const tenantId = useTenantId()
 
@@ -190,7 +192,7 @@ export default function ExchangeRatesPage() {
       <PageHeader
         title="汇率管理"
         subtitle="手工录入各外币对人民币汇率"
-        actions={<Button onClick={() => setShowModal(true)}>录入今日汇率</Button>}
+        actions={!known || can("catalog.write") ? <Button onClick={() => setShowModal(true)}>录入今日汇率</Button> : undefined}
       />
 
       <div className="space-y-8">

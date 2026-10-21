@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useState } from "react"
+import { Suspense, useCallback, useMemo, useState } from "react"
 import Link from "next/link"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
@@ -9,21 +9,37 @@ import {
   listPurchaseBills,
   cancelPurchaseBill,
   restorePurchaseBill,
+  billsExportUrl,
   type BillHead,
   type BillStatus,
+  type BillListSummary,
   BILL_STATUS_LABEL,
 } from "@/lib/api/purchase"
 import { BILL_STATUS_TONE } from "@/lib/status"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useTenantId } from "@/hooks/use-tenant-id"
+import { useRole } from "@/hooks/use-role"
+import {
+  BillListFilters,
+  BillSummaryBar,
+  PaymentTag,
+  InvoiceTag,
+  hasActiveBillFilters,
+  toBillFilterParams,
+  billRangeError,
+  useBillFilters,
+  type BillFilterState,
+} from "@/components/bill-list-filters"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable, currencyCell, statusCell } from "@/components/ui/data-table"
+import { DataCard } from "@/components/ui/data-card"
 import { Tabs, type TabItem } from "@/components/ui/tabs"
 import { Pagination } from "@/components/ui/pagination"
 import { buttonVariants } from "@/components/ui/button"
 import { EmptyState } from "@/components/ui/empty-state"
-import { formatDate } from "@/lib/format"
+import { formatCNY, formatDate } from "@/lib/format"
+import { extractApiError } from "@/lib/api/errors"
 
 const PAGE_SIZE = 20
 
@@ -34,62 +50,107 @@ const STATUS_TABS: TabItem<BillStatus | undefined>[] = [
   { label: "已取消", value: 9 },
 ]
 
-export default function PurchasesPage() {
+function PurchasesPageInner() {
   const router = useRouter()
+  const { filters, update, reset } = useBillFilters()
+  const status = filters.status
   const [bills, setBills] = useState<BillHead[]>([])
   const [total, setTotal] = useState(0)
+  const [summary, setSummary] = useState<BillListSummary | undefined>(undefined)
   const [page, setPage] = useState(1)
-  const [status, setStatus] = useState<BillStatus | undefined>(undefined)
+  const [reloadTick, setReloadTick] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const tenantId = useTenantId()
+  // Purchase lines are prices. Cost viewers get the whole list; a clerk gets "my drafts",
+  // products and quantities only (the backend narrows the read and drops every amount);
+  // a cashier gets nothing. An unknown role is not hidden; the backend decides.
+  const { known: roleKnown, can } = useRole()
+  const canList = !roleKnown || can("purchase.view")
+  const priceBlind = roleKnown && !can("cost.view")
+  const mayDraft = !roleKnown || can("bill.draft")
+  const mayCancel = !roleKnown || can("bill.cancel")
+  const mayExport = !roleKnown || can("report.view")
 
-  const load = useCallback(
-    (
-      p: number,
-      s: BillStatus | undefined,
-      signal?: AbortSignal,
-      isCancelled?: () => boolean,
-    ) => {
+  // Back/forward can swap the filters without going through the handlers; return to page 1 so we never land on an empty page.
+  const filterKey = JSON.stringify([filters, status])
+  const [seenFilterKey, setSeenFilterKey] = useState(filterKey)
+  if (seenFilterKey !== filterKey) {
+    setSeenFilterKey(filterKey)
+    setPage(1)
+  }
+
+  // Resolved filter params; keyed on the primitive values so a re-render within
+  // the same day does not refetch.
+  const { date_from, date_to, partner_id, payment_status, invoice_status, q, mine } = toBillFilterParams(filters)
+  const params = useMemo(
+    () => ({ date_from, date_to, partner_id, payment_status, invoice_status, q, mine }),
+    [date_from, date_to, partner_id, payment_status, invoice_status, q, mine],
+  )
+
+  useAbortableEffect(
+    (signal, isCancelled) => {
+      if (!roleKnown) return // 会话未回来前不发请求，角色确定后再取
+      if (!canList) {
+        setLoading(false)
+        return
+      }
+      const rangeError = priceBlind ? null : billRangeError(filters)
+      if (rangeError) {
+        setBills([])
+        setTotal(0)
+        setSummary(undefined)
+        setError(rangeError)
+        setLoading(false)
+        return
+      }
       setLoading(true)
       setError(null)
-      listPurchaseBills({ page: p, size: PAGE_SIZE, status: s, tenantId, signal, retry: 2 })
+      // A clerk's "my drafts" is not date-bound: the backend already pins creator and status, and the
+      // clerk has no filter bar to widen a default month.
+      const query = priceBlind ? { page, size: PAGE_SIZE } : { page, size: PAGE_SIZE, status, ...params }
+      listPurchaseBills({ ...query, tenantId, signal, retry: 2 })
         .then((res) => {
-          if (isCancelled?.()) return
+          if (isCancelled()) return
           setBills(res.items ?? [])
           setTotal(res.total)
+          setSummary(res.summary)
         })
         .catch((e) => {
-          if (isCancelled?.() || signal?.aborted) return
-          setError(String(e))
+          if (isCancelled() || signal.aborted) return
+          setError(extractApiError(e).message)
         })
         .finally(() => {
-          if (isCancelled?.()) return
+          if (isCancelled()) return
           setLoading(false)
         })
     },
-    [tenantId],
+    [tenantId, roleKnown, canList, priceBlind, page, status, params, reloadTick, filters.range, filters.from, filters.to],
   )
 
-  useAbortableEffect((signal, isCancelled) => {
-    load(1, undefined, signal, isCancelled)
-  }, [load])
+  const reload = useCallback(() => setReloadTick((n) => n + 1), [])
 
-  function handleTabChange(s: BillStatus | undefined) {
-    setStatus(s)
+  function handleFilterChange(patch: Partial<BillFilterState>) {
     setPage(1)
-    load(1, s)
+    // Settlement filters only apply to approved bills; drop a draft/cancelled tab the backend would reject.
+    if ((patch.payment || patch.invoice) && (status === 0 || status === 9)) patch = { ...patch, status: undefined }
+    update(patch)
   }
 
-  function handlePageChange(p: number) {
-    setPage(p)
-    load(p, status)
+  function handleClearFilters() {
+    setPage(1)
+    reset()
+  }
+
+  function handleTabChange(s: BillStatus | undefined) {
+    setPage(1)
+    update(s === 0 || s === 9 ? { status: s, payment: "", invoice: "" } : { status: s })
   }
 
   async function handleCancel(bill: BillHead) {
     try {
       await cancelPurchaseBill(bill.id, tenantId)
-      load(page, status)
+      reload()
 
       toast(`已取消采购单 ${bill.bill_no}`, {
         duration: 30_000,
@@ -99,47 +160,99 @@ export default function PurchasesPage() {
         },
       })
     } catch (e) {
-      toast.error("取消失败：" + String(e))
+      toast.error("取消失败：" + extractApiError(e).message)
     }
   }
 
   async function handleRestore(bill: BillHead) {
     try {
       await restorePurchaseBill(bill.id, tenantId)
-      load(page, status)
+      reload()
       router.refresh()
     } catch (e) {
-      toast.error("撤销失败：" + String(e))
+      toast.error("撤销失败：" + extractApiError(e).message)
     }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const exportDisabled = bills.length === 0 && !loading
+  const exportHref = billsExportUrl("purchase", { ...params, status })
+  const filtered = hasActiveBillFilters(filters) || status !== undefined
 
-  const columns: ColumnDef<BillHead>[] = [
+  const allColumns: ColumnDef<BillHead>[] = [
     {
       id: "bill_no",
       header: "单据号",
-      cell: ({ row }) => <span className="font-mono text-xs">{row.original.bill_no}</span>,
+      cell: ({ row }) => (
+        <>
+          <span className="font-mono text-xs">{row.original.bill_no}</span>
+          <span className="block text-xs text-muted-foreground md:hidden">
+            {formatDate(row.original.bill_date)}
+          </span>
+        </>
+      ),
+    },
+    {
+      id: "bill_date",
+      header: "日期",
+      meta: { headerClassName: "hidden md:table-cell", cellClassName: "hidden md:table-cell" },
+      cell: ({ row }) => (
+        <span className="text-muted-foreground">{formatDate(row.original.bill_date)}</span>
+      ),
+    },
+    {
+      id: "partner",
+      header: "供应商",
+      cell: ({ row }) => <span>{row.original.partner_name || "—"}</span>,
     },
     {
       id: "status",
       header: "状态",
+      meta: { headerClassName: "hidden md:table-cell", cellClassName: "hidden md:table-cell" },
       cell: ({ row }) =>
         statusCell(BILL_STATUS_LABEL[row.original.status], BILL_STATUS_TONE[row.original.status]),
     },
     {
       id: "total_amount",
-      header: "合计金额",
+      header: "合计",
       meta: { align: "right" },
       cell: ({ row }) => currencyCell(row.original.total_amount),
     },
     {
-      id: "bill_date",
-      header: "单据日期",
-      cell: ({ row }) => (
-        <span className="text-muted-foreground">{formatDate(row.original.bill_date)}</span>
-      ),
+      id: "paid_amount",
+      header: "已付/已冲抵",
+      meta: { align: "right", headerClassName: "hidden md:table-cell", cellClassName: "hidden md:table-cell" },
+      cell: ({ row }) => currencyCell(row.original.paid_amount ?? 0),
+    },
+    {
+      id: "unpaid_amount",
+      header: "未付",
+      meta: { align: "right" },
+      cell: ({ row }) => {
+        // Only an approved bill carries a real debt; drafts and cancelled bills show a dash.
+        const owed = row.original.status === 2 ? row.original.unpaid_amount : undefined
+        if (owed === undefined) return <span className="block text-right text-muted-foreground">—</span>
+        const outstanding = parseFloat(owed) > 0
+        return (
+          <span
+            className={`block text-right font-mono tabular-nums ${
+              outstanding ? "text-warning" : "text-success"
+            }`}
+          >
+            {formatCNY(outstanding ? owed : 0)}
+          </span>
+        )
+      },
+    },
+    {
+      id: "payment_status",
+      header: "付款",
+      cell: ({ row }) => <PaymentTag kind="purchase" status={row.original.payment_status} />,
+    },
+    {
+      id: "invoice_status",
+      header: "开票",
+      cell: ({ row }) => <InvoiceTag status={row.original.invoice_status} billStatus={row.original.status} />,
     },
     {
       id: "actions",
@@ -147,7 +260,7 @@ export default function PurchasesPage() {
       meta: { align: "right" },
       cell: ({ row }) => (
         <div className="flex justify-end gap-3">
-          {row.original.status === 0 && (
+          {row.original.status === 0 && mayCancel && (
             <button
               type="button"
               onClick={() => handleCancel(row.original)}
@@ -167,43 +280,113 @@ export default function PurchasesPage() {
     },
   ]
 
+  // A price-blind caller sees no money column; the backend does not send them anyway.
+  const MONEY_COLUMNS = ["total_amount", "paid_amount", "unpaid_amount", "payment_status", "invoice_status"]
+  // The status tag stays on a phone for a clerk: it is the only way to see whether the boss has approved.
+  const columns = priceBlind
+    ? allColumns
+        .filter((c) => !MONEY_COLUMNS.includes(c.id ?? ""))
+        .map((c) => (c.id === "status" ? { ...c, meta: undefined } : c))
+    : allColumns
+
+  const newBillButton = mayDraft ? (
+    <Link href="/purchases/new" className={buttonVariants()}>
+      + 新建采购单
+    </Link>
+  ) : undefined
+
+  if (!canList) {
+    return (
+      <PageContainer width="wide">
+        <PageHeader title="采购单管理" />
+        <EmptyState title="这里看不了采购单" description="采购单只有老板、店长、店员、财务能看" />
+      </PageContainer>
+    )
+  }
+
+  if (priceBlind) {
+    return (
+      <PageContainer width="wide">
+        <PageHeader title="我的采购单" subtitle="你建的草稿，以及最近 7 天已审核的单；价格和金额由老板或店长填写" actions={newBillButton} />
+        <DataTable
+          columns={columns}
+          data={bills}
+          loading={loading}
+          error={error}
+          getRowId={(b) => b.id}
+          mobileCard={(b) => (
+            <DataCard
+              title={<span className="font-mono text-xs">{b.bill_no}</span>}
+              subtitle={b.partner_name || "—"}
+              aside={statusCell(BILL_STATUS_LABEL[b.status], BILL_STATUS_TONE[b.status])}
+              fields={[
+                { label: "日期", value: formatDate(b.bill_date) },
+                ...(!priceBlind ? [
+                  { label: "合计", value: formatCNY(b.total_amount) },
+                  { label: "付款", value: <PaymentTag kind="purchase" status={b.payment_status} /> },
+                ] : []),
+              ]}
+              actions={
+                <>
+                  {b.status === 0 && mayCancel && (
+                    <button
+                      type="button"
+                      onClick={() => handleCancel(b)}
+                      className="text-xs text-destructive hover:underline"
+                    >
+                      取消
+                    </button>
+                  )}
+                  <Link href={`/purchases/${b.id}`} className="text-xs text-primary hover:underline">
+                    查看
+                  </Link>
+                </>
+              }
+            />
+          )}
+          animateRows
+          skeletonRows={5}
+          empty={
+            <EmptyState
+              title="还没有你建的采购草稿"
+              description={mayDraft ? "点右上角「新建采购单」，选好商品和数量保存即可" : undefined}
+            />
+          }
+        />
+        <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
+      </PageContainer>
+    )
+  }
+
   return (
     <PageContainer width="wide">
       <PageHeader
         title="采购单管理"
-        subtitle={`共 ${total} 条采购单`}
         actions={
           <>
-            {exportDisabled ? (
+            {!mayExport ? null : exportDisabled ? (
               <span
                 title="暂无可导出数据"
                 aria-disabled="true"
                 className={buttonVariants({ variant: "outline", className: "pointer-events-none opacity-40" })}
               >
-                导出 CSV
+                导出当前筛选
               </span>
             ) : (
-              <a
-                href="/api/v1/exports/bills.csv"
-                download
-                className={buttonVariants({ variant: "outline" })}
-              >
-                导出 CSV
+              <a href={exportHref} download className={buttonVariants({ variant: "outline" })}>
+                导出当前筛选
               </a>
             )}
-            <Link href="/purchases/new" className={buttonVariants()}>
-              + 新建采购单
-            </Link>
+            {newBillButton}
           </>
         }
       />
 
-      <Tabs
-        items={STATUS_TABS}
-        value={status}
-        onValueChange={handleTabChange}
-        className="mb-4"
-      />
+      <BillListFilters kind="purchase" filters={filters} onChange={handleFilterChange} />
+
+      <Tabs items={STATUS_TABS} value={status} onValueChange={handleTabChange} className="mb-4" />
+
+      <BillSummaryBar kind="purchase" summary={summary} total={total} />
 
       <DataTable
         columns={columns}
@@ -211,21 +394,71 @@ export default function PurchasesPage() {
         loading={loading}
         error={error}
         getRowId={(b) => b.id}
+        mobileCard={(b) => (
+          <DataCard
+            title={<span className="font-mono text-xs">{b.bill_no}</span>}
+            subtitle={b.partner_name || "—"}
+            aside={statusCell(BILL_STATUS_LABEL[b.status], BILL_STATUS_TONE[b.status])}
+            fields={[
+              { label: "日期", value: formatDate(b.bill_date) },
+              ...(!priceBlind ? [
+                { label: "合计", value: formatCNY(b.total_amount) },
+                { label: "付款", value: <PaymentTag kind="purchase" status={b.payment_status} /> },
+              ] : []),
+            ]}
+            actions={
+              <>
+                {b.status === 0 && mayCancel && (
+                  <button
+                    type="button"
+                    onClick={() => handleCancel(b)}
+                    className="text-xs text-destructive hover:underline"
+                  >
+                    取消
+                  </button>
+                )}
+                <Link href={`/purchases/${b.id}`} className="text-xs text-primary hover:underline">
+                  查看
+                </Link>
+              </>
+            }
+          />
+        )}
         animateRows
+        skeletonRows={5}
         empty={
           <EmptyState
-            title="暂无采购单"
-            description="创建第一笔采购单以开始入库"
+            title="这个时间段没有单据"
+            description={filtered ? "换个时间或条件再看看" : "创建第一笔采购单以开始入库"}
             action={
-              <Link href="/purchases/new" className="text-sm text-primary hover:underline">
-                立即新建
-              </Link>
+              <div className="flex items-center gap-4">
+                <button
+                  type="button"
+                  onClick={handleClearFilters}
+                  className="text-sm text-primary hover:underline"
+                >
+                  清除筛选
+                </button>
+                {!filtered && mayDraft && (
+                  <Link href="/purchases/new" className="text-sm text-primary hover:underline">
+                    立即新建
+                  </Link>
+                )}
+              </div>
             }
           />
         }
       />
 
-      <Pagination page={page} totalPages={totalPages} onPageChange={handlePageChange} />
+      <Pagination page={page} totalPages={totalPages} onPageChange={setPage} />
     </PageContainer>
+  )
+}
+
+export default function PurchasesPage() {
+  return (
+    <Suspense fallback={<div className="p-6 text-sm text-muted-foreground">加载中...</div>}>
+      <PurchasesPageInner />
+    </Suspense>
   )
 }

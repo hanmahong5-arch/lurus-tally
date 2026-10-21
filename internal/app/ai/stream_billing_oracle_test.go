@@ -63,7 +63,7 @@ func TestStreamChat_SimpleQA_BillsExactlyOnce(t *testing.T) {
 	llmgateway.SetUsageSink(sink)
 	usageBefore := sink.n.Load()
 
-	cli, err := llmclient.New(llmclient.Config{BaseURL: srv.URL, APIKey: "test-key"})
+	cli, err := llmclient.New(llmclient.Config{BaseURL: srv.URL, APIKey: "test-key", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("llmclient.New: %v", err)
 	}

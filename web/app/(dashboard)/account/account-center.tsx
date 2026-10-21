@@ -28,10 +28,20 @@ import {
   type AuditEntry,
 } from "@/lib/api/account-extra"
 import { formatCNY } from "@/lib/format"
+import { SEED_TRIAL } from "@/lib/billing/plans"
 import { useAccountDrawer } from "@/components/account/account-drawer-provider"
 import { cn } from "@/lib/utils"
+import { ClearDemoCard } from "@/components/onboarding/ClearDemoCard"
+import { getTodoSummary } from "@/lib/api/todo"
 import { SubscriptionPlansView } from "../subscription/plans-view"
 import ApiKeysPage from "../settings/api-keys/page"
+import { TeamTab } from "./team-tab"
+import { useRole, type Perm } from "@/hooks/use-role"
+import { extractApiError } from "@/lib/api/errors"
+import { ALL_DATA_EXPORT_URL } from "@/lib/api/export"
+import { profileTypeLabel, roleLabelFor } from "@/lib/roles"
+import { planLabel, subscriptionStatusLabel } from "@/lib/plan-labels"
+import { loadAccountSummary } from "@/components/account/load-summary"
 
 type TabKey =
   | "profile"
@@ -42,22 +52,26 @@ type TabKey =
   | "api-keys"
   | "team"
   | "notifications"
+  | "data"
 
 interface TabDef {
   key: TabKey
   label: string
   icon: string
+  /** Hidden from people whose role lacks this permission. */
+  perm?: Perm
 }
 
 const TABS: TabDef[] = [
   { key: "profile", label: "个人资料", icon: "👤" },
-  { key: "subscription", label: "订阅 & 计费", icon: "💳" },
-  { key: "wallet", label: "钱包流水", icon: "💰" },
+  { key: "subscription", label: "订阅 & 计费", icon: "💳", perm: "billing.manage" },
+  { key: "wallet", label: "钱包流水", icon: "💰", perm: "billing.manage" },
   { key: "security", label: "安全", icon: "🛡️" },
-  { key: "audit", label: "活动日志", icon: "📋" },
-  { key: "api-keys", label: "API 密钥", icon: "🔑" },
-  { key: "team", label: "团队成员", icon: "👥" },
+  { key: "audit", label: "活动日志", icon: "📋", perm: "settings.manage" },
+  { key: "api-keys", label: "接口密钥", icon: "🔑", perm: "token.manage" },
+  { key: "team", label: "团队成员", icon: "👥", perm: "team.manage" },
   { key: "notifications", label: "通知偏好", icon: "🔔" },
+  { key: "data", label: "示例数据", icon: "🧹", perm: "settings.manage" },
 ]
 
 function isTabKey(s: string | null): s is TabKey {
@@ -74,8 +88,17 @@ export function AccountCenter({ ssoConsoleURL }: { ssoConsoleURL: string }) {
   const params = useSearchParams()
   const { openDrawer } = useAccountDrawer()
 
+  // Billing is owner-only and the team page is for owner/manager. Until the
+  // session has told us the role nothing is hidden (the backend still decides).
+  const { known, can } = useRole()
+  const tabs = TABS.filter((t) => !t.perm || !known || can(t.perm))
+  // 受限标签在角色确定前不渲染，避免会话未回来时先发出会被拒绝的请求。
+  const pending = !known && TABS.find((t) => t.key === params.get("tab"))?.perm !== undefined
+
   const initial = params.get("tab")
-  const activeTab: TabKey = isTabKey(initial) ? initial : "profile"
+  const activeTab: TabKey = isTabKey(initial) && tabs.some((t) => t.key === initial) ? initial : "profile"
+  // Someone who opens a plan or wallet link without being the owner is told why, not bounced silently.
+  const billingBlocked = (initial === "subscription" || initial === "wallet") && activeTab === "profile"
 
   const setTab = useCallback(
     (next: TabKey) => {
@@ -96,7 +119,7 @@ export function AccountCenter({ ssoConsoleURL }: { ssoConsoleURL: string }) {
         >
           ← 返回摘要
         </button>
-        {TABS.map((t) => (
+        {tabs.map((t) => (
           <button
             type="button"
             key={t.key}
@@ -124,7 +147,7 @@ export function AccountCenter({ ssoConsoleURL }: { ssoConsoleURL: string }) {
             className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm"
             aria-label="选择标签"
           >
-            {TABS.map((t) => (
+            {tabs.map((t) => (
               <option key={t.key} value={t.key}>
                 {t.icon} {t.label}
               </option>
@@ -133,7 +156,16 @@ export function AccountCenter({ ssoConsoleURL }: { ssoConsoleURL: string }) {
         </div>
 
         <div className="mx-auto max-w-4xl">
-          <TabContent tab={activeTab} ssoConsoleURL={ssoConsoleURL} />
+          {billingBlocked ? (
+            <div className="px-6 py-6">
+              <h1 className="mb-2 text-xl font-semibold">订阅 & 计费</h1>
+              <p className="text-sm text-muted-foreground">套餐和付费只有老板能看。</p>
+            </div>
+          ) : pending ? (
+            <p className="px-6 py-6 text-sm text-muted-foreground">加载中…</p>
+          ) : (
+            <TabContent tab={activeTab} ssoConsoleURL={ssoConsoleURL} />
+          )}
         </div>
       </div>
     </div>
@@ -149,7 +181,9 @@ function TabContent({ tab, ssoConsoleURL }: { tab: TabKey; ssoConsoleURL: string
         <div className="px-6 py-6">
           <h1 className="mb-2 text-xl font-semibold">订阅 & 计费</h1>
           <p className="mb-6 text-sm text-muted-foreground">
-            升级套餐或一键续费，钱包余额可即时开通；支付宝 / 微信跳转支付。
+            {SEED_TRIAL
+              ? "试用期全部功能免费"
+              : "升级套餐或一键续费，钱包余额可即时开通；支付宝 / 微信跳转支付。"}
           </p>
           <SubscriptionPlansView />
         </div>
@@ -170,6 +204,8 @@ function TabContent({ tab, ssoConsoleURL }: { tab: TabKey; ssoConsoleURL: string
       return <TeamTab />
     case "notifications":
       return <NotificationsTab />
+    case "data":
+      return <DemoDataTab />
     default:
       return null
   }
@@ -184,17 +220,19 @@ function ProfileTab() {
   const [phone, setPhone] = useState("")
   const [avatarUrl, setAvatarUrl] = useState<string>("")
   const [uploading, setUploading] = useState(false)
+  const { known, can } = useRole()
+  const withBilling = can("billing.manage")
 
   const refresh = useCallback(() => {
-    Promise.all([fetchAccountSummary(), getProfile().catch(() => null)])
+    Promise.all([loadAccountSummary(withBilling), getProfile().catch(() => null)])
       .then(([s, p]) => {
         setSummary(s)
         setDisplayName(p?.display_name || s.identity.display_name || "")
         setPhone(p?.phone || "")
         setAvatarUrl(toProxyUrl(p?.avatar_url || ""))
       })
-      .catch((err: Error) => setError(err.message))
-  }, [])
+      .catch((err: unknown) => setError(extractApiError(err).message))
+  }, [withBilling])
 
   useAbortableEffect((_signal, isCancelled) => {
     if (isCancelled()) return
@@ -209,7 +247,7 @@ function ProfileTab() {
       setEditing(false)
       refresh()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(extractApiError(err).message)
     } finally {
       setSaving(false)
     }
@@ -228,7 +266,7 @@ function ProfileTab() {
       setAvatarUrl(toProxyUrl(avatar_url) + "?t=" + Date.now())
       toast.success("头像已更新")
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(extractApiError(err).message)
     } finally {
       setUploading(false)
       e.target.value = ""
@@ -239,7 +277,7 @@ function ProfileTab() {
     <div className="px-6 py-6">
       <h1 className="mb-2 text-xl font-semibold">个人资料</h1>
       <p className="mb-6 text-sm text-muted-foreground">
-        显示名 / 手机 / 头像可在此修改；邮箱和角色由 SSO 身份服务管理。
+        显示名 / 手机 / 头像可在此修改；邮箱和角色由登录服务管理。
       </p>
       {error && <ErrorBanner>加载失败：{error}</ErrorBanner>}
 
@@ -323,17 +361,34 @@ function ProfileTab() {
                 fallback="未填写"
               />
               <ProfileRow label="邮箱" value={summary.identity.email || "—"} />
-              <ProfileRow label="角色" value={summary.identity.role || "—"} />
-              <ProfileRow label="租户 ID" value={summary.identity.tenant_id || "—"} mono />
-              <ProfileRow label="用户 ID" value={summary.identity.user_id || "—"} mono />
+              <ProfileRow label="角色" value={roleLabelFor(summary.identity.role, summary.identity.is_owner)} />
               <ProfileRow
                 label="业务类型"
-                value={summary.identity.profile_type || "未设置"}
+                value={profileTypeLabel(summary.identity.profile_type)}
               />
             </dl>
           </div>
         </div>
       )}
+      {known && can("report.view") && <ExportAllCard />}
+    </div>
+  )
+}
+
+function ExportAllCard() {
+  return (
+    <div className="mt-6 max-w-2xl rounded-xl border border-border bg-card p-4" data-testid="export-all-card">
+      <h2 className="text-sm font-medium">导出全部数据</h2>
+      <p className="mt-1 text-sm text-muted-foreground">
+        包含商品、客户、供应商、库存、单据、收付款和发票，可用表格软件打开。
+      </p>
+      <a
+        href={ALL_DATA_EXPORT_URL}
+        download
+        className="mt-3 inline-block rounded-md border border-border bg-background px-3 py-1.5 text-sm hover:bg-muted"
+      >
+        下载全部数据
+      </a>
     </div>
   )
 }
@@ -386,7 +441,7 @@ function WalletTab() {
   useAbortableEffect((_signal, isCancelled) => {
     fetchAccountSummary()
       .then((s) => !isCancelled() && setSummary(s))
-      .catch((err: Error) => !isCancelled() && setError(err.message))
+      .catch((err: unknown) => !isCancelled() && setError(extractApiError(err).message))
   }, [])
 
   const wallet = summary?.billing?.wallet
@@ -397,7 +452,7 @@ function WalletTab() {
     <div className="px-6 py-6">
       <h1 className="mb-2 text-xl font-semibold">钱包流水</h1>
       <p className="mb-6 text-sm text-muted-foreground">
-        Tally 钱包由 lurus-platform 统一管理。明细流水 API 接入后将出现在下方。
+        钱包余额和充值由系统统一管理，明细流水上线后会显示在下方。
       </p>
       {error && (
         <p className="mb-4 rounded-md border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
@@ -413,23 +468,25 @@ function WalletTab() {
       )}
       {sub && (
         <p className="mt-4 text-xs text-muted-foreground">
-          当前套餐 <strong>{sub.plan_code}</strong>，状态 {sub.status}
+          当前套餐 <strong>{planLabel(sub.plan_code)}</strong>，状态 {subscriptionStatusLabel(sub.status)}
           {days !== null && (days >= 0 ? `，剩 ${days} 天` : "，已到期")}
-          。前往订阅页可一键续费或升级。
+          {SEED_TRIAL ? "。试用期全部功能免费。" : "。前往订阅页可一键续费或升级。"}
         </p>
       )}
-      <div className="mt-6">
-        <Link
-          href="/account?tab=subscription"
-          className="inline-flex rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted"
-        >
-          去订阅页 →
-        </Link>
-      </div>
+      {!SEED_TRIAL && (
+        <div className="mt-6">
+          <Link
+            href="/account?tab=subscription"
+            className="inline-flex rounded-md border border-border bg-card px-3 py-1.5 text-sm hover:bg-muted"
+          >
+            去订阅页 →
+          </Link>
+        </div>
+      )}
       <div className="mt-8">
         <EmptyState
           title="流水明细即将上线"
-          description="对账明细需要 platform-core 暴露 wallet/transactions 接口（Phase 3）。"
+          description="充值和消费的明细正在准备中，上线后会在这里显示。"
         />
       </div>
     </div>
@@ -475,11 +532,57 @@ const DEFAULT_PREFS: NotifPrefs = {
 }
 
 const NOTIF_ROWS: { key: keyof NotifPrefs; label: string; hint: string }[] = [
-  { key: "low_stock", label: "低库存预警", hint: "SKU 跌破安全库存时即时通知" },
+  { key: "low_stock", label: "低库存预警", hint: "商品库存跌破安全库存时即时通知" },
   { key: "bill_approved", label: "单据审核", hint: "采购 / 销售单据被审核或拒绝" },
   { key: "payment_received", label: "收款到账", hint: "客户付款到账事件" },
   { key: "weekly_digest", label: "周报", hint: "每周一早 9 点发送本店经营摘要" },
 ]
+
+/** Sample data left from the first-run wizard, with the one-click clear. */
+function DemoDataTab() {
+  // null = still loading; "unknown" = the read failed (never claim "no sample data" then).
+  const [hasDemo, setHasDemo] = useState<boolean | "unknown" | null>(null)
+  const [attempt, setAttempt] = useState(0)
+
+  useAbortableEffect((signal, isCancelled) => {
+    getTodoSummary({ signal })
+      .then((s) => {
+        if (isCancelled()) return
+        const unreadable = s.failed?.includes("onboarding") || s.onboarding === undefined
+        setHasDemo(unreadable ? "unknown" : s.onboarding?.has_demo === true)
+      })
+      .catch(() => !isCancelled() && setHasDemo("unknown"))
+  }, [attempt])
+
+  return (
+    <div className="px-6 py-6">
+      <h1 className="mb-2 text-xl font-semibold">示例数据</h1>
+      {hasDemo === null ? (
+        <p className="text-sm text-muted-foreground">正在查看…</p>
+      ) : hasDemo === "unknown" ? (
+        <div className="space-y-3">
+          <ErrorBanner>暂时查不到账里的示例情况，请稍后再试。</ErrorBanner>
+          <button
+            type="button"
+            className="rounded-md border border-border px-3 py-1.5 text-sm hover:bg-muted"
+            onClick={() => {
+              setHasDemo(null)
+              setAttempt((n) => n + 1)
+            }}
+          >
+            重试
+          </button>
+        </div>
+      ) : hasDemo ? (
+        <ClearDemoCard variant="panel" onCleared={() => setHasDemo(false)} />
+      ) : (
+        <p className="text-sm text-muted-foreground">
+          现在账里没有示例数据，所有数字都来自你自己录入的内容。
+        </p>
+      )}
+    </div>
+  )
+}
 
 function NotificationsTab() {
   const [prefs, setPrefs] = useState<NotifPrefs>(() => {
@@ -510,7 +613,7 @@ function NotificationsTab() {
     <div className="px-6 py-6">
       <h1 className="mb-2 text-xl font-semibold">通知偏好</h1>
       <p className="mb-6 text-sm text-muted-foreground">
-        当前为本地偏好（保存在浏览器）。后端通知服务接入后将与服务端同步。
+        当前为本地偏好（保存在浏览器）。通知功能上线后将与服务器同步。
       </p>
       <ul className="divide-y divide-border rounded-xl border border-border bg-card">
         {NOTIF_ROWS.map((row) => (
@@ -574,9 +677,9 @@ function SecurityTab({ ssoConsoleURL }: { ssoConsoleURL: string }) {
           if (isCancelled?.()) return
           setSessions(r.items ?? [])
         })
-        .catch((err: Error) => {
+        .catch((err: unknown) => {
           if (isCancelled?.() || signal?.aborted) return
-          setError(err.message)
+          setError(extractApiError(err).message)
         })
         .finally(() => {
           if (isCancelled?.()) return
@@ -606,7 +709,7 @@ function SecurityTab({ ssoConsoleURL }: { ssoConsoleURL: string }) {
       toast.success("已撤销")
       load()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : String(err))
+      toast.error(extractApiError(err).message)
     }
   }
 
@@ -618,18 +721,20 @@ function SecurityTab({ ssoConsoleURL }: { ssoConsoleURL: string }) {
       </p>
 
       <section className="mb-6 rounded-xl border border-border bg-card p-4">
-        <h2 className="mb-1 text-sm font-medium">密码 / 2FA</h2>
+        <h2 className="mb-1 text-sm font-medium">密码和两步验证</h2>
         <p className="mb-3 text-xs text-muted-foreground">
-          密码和两步验证由 SSO 身份服务统一管理。点击下方按钮在 SSO 控制台修改。
+          密码和两步验证由登录服务统一管理。点击下方按钮在登录服务控制台修改。
         </p>
-        <a
-          href={ssoConsoleURL}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted"
-        >
-          打开 SSO 控制台 →
-        </a>
+        {ssoConsoleURL ? (
+          <a
+            href={ssoConsoleURL}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex rounded-md border border-border bg-background px-3 py-1.5 text-xs hover:bg-muted"
+          >
+            打开登录服务控制台 →
+          </a>
+        ) : null}
       </section>
 
       <section>
@@ -676,8 +781,8 @@ const AUDIT_ACTION_LABEL: Record<string, string> = {
   "alert.overstock": "高库存预警",
   "stock.movement_recorded": "库存变动",
   "stock.snapshot_updated": "库存快照更新",
-  "ai.plan.executed": "AI 执行操作",
-  "ai.plan.failed": "AI 操作失败",
+  "ai.plan.executed": "自动执行的操作",
+  "ai.plan.failed": "自动操作失败",
 }
 
 function AuditTab() {
@@ -697,9 +802,9 @@ function AuditTab() {
         setItems(r.items ?? [])
         setTotal(r.total)
       })
-      .catch((err: Error) => {
+      .catch((err: unknown) => {
         if (isCancelled() || signal.aborted) return
-        setError(err.message)
+        setError(extractApiError(err).message)
       })
       .finally(() => {
         if (isCancelled()) return
@@ -733,11 +838,10 @@ function AuditTab() {
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0 flex-1">
                     <p className="text-sm font-medium">
-                      {AUDIT_ACTION_LABEL[e.action] ?? e.action}
+                      {AUDIT_ACTION_LABEL[e.action] ?? "其他操作"}
                     </p>
                     <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                      {e.actor_id || "system"}
-                      {e.target_kind && e.target_id ? ` · ${e.target_kind}/${e.target_id}` : ""}
+                      {e.actor_id ? "店内成员操作" : "系统自动记录"}
                     </p>
                   </div>
                   <span className="shrink-0 text-xs text-muted-foreground">
@@ -772,44 +876,6 @@ function AuditTab() {
           </div>
         </>
       )}
-    </div>
-  )
-}
-
-function TeamTab() {
-  const [summary, setSummary] = useState<AccountSummary | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useAbortableEffect((_signal, isCancelled) => {
-    fetchAccountSummary()
-      .then((s) => !isCancelled() && setSummary(s))
-      .catch((err: Error) => !isCancelled() && setError(err.message))
-  }, [])
-
-  return (
-    <div className="px-6 py-6">
-      <h1 className="mb-2 text-xl font-semibold">团队成员</h1>
-      <p className="mb-6 text-sm text-muted-foreground">
-        多成员协作 (邀请 / 角色管理) 由 platform-core 接管 — 接口对接中，当前仅显示自己。
-      </p>
-      {error && <ErrorBanner>{error}</ErrorBanner>}
-      {summary && (
-        <ul className="divide-y divide-border rounded-xl border border-border bg-card">
-          <li className="flex items-center justify-between gap-3 px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">
-                {summary.identity.display_name || "—"}
-                <span className="ml-2 inline-flex"><Badge tone="ok">你</Badge></span>
-              </p>
-              <p className="truncate text-xs text-muted-foreground">{summary.identity.email}</p>
-            </div>
-            <Badge tone="neutral">{summary.identity.role || "owner"}</Badge>
-          </li>
-        </ul>
-      )}
-      <p className="mt-4 text-xs text-muted-foreground">
-        邀请功能上线后会在此卡片下方出现 “+ 邀请成员” 按钮。
-      </p>
     </div>
   )
 }

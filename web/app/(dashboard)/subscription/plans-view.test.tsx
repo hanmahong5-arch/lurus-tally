@@ -13,6 +13,17 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest"
 import { render, screen, waitFor, fireEvent } from "@testing-library/react"
 
+const seed = vi.hoisted(() => ({ on: false }))
+vi.mock("@/lib/billing/plans", async (orig) => {
+  const actual = await orig<typeof import("@/lib/billing/plans")>()
+  return {
+    ...actual,
+    get SEED_TRIAL() {
+      return seed.on
+    },
+  }
+})
+
 vi.mock("@/lib/api/billing", () => ({
   BillingError: class BillingError extends Error {
     code: string
@@ -24,6 +35,7 @@ vi.mock("@/lib/api/billing", () => ({
     }
   },
   getBillingOverview: vi.fn(),
+  getSubscriptionState: vi.fn(() => Promise.resolve({ locked: false, refreshed: true })),
   getOrderStatus: vi.fn(),
   subscribe: vi.fn(),
 }))
@@ -32,7 +44,14 @@ vi.mock("qrcode.react", () => ({
   QRCodeSVG: ({ value }: { value: string }) => <svg data-testid="pay-qr" data-value={value} />,
 }))
 
-import { getBillingOverview, getOrderStatus, subscribe } from "@/lib/api/billing"
+import {
+  getBillingOverview,
+  getOrderStatus,
+  getSubscriptionState,
+  subscribe,
+  BillingError,
+} from "@/lib/api/billing"
+import * as plans from "@/lib/billing/plans"
 import { SubscriptionPlansView } from "./plans-view"
 
 const baseOverview = {
@@ -48,6 +67,7 @@ describe("SubscriptionPlansView — checkout redirect hand-off", () => {
   const originalLocation = window.location
 
   beforeEach(() => {
+    seed.on = false
     vi.clearAllMocks()
     // jsdom's window.location.assign is non-configurable via vi.spyOn; swap
     // the whole object out so we can observe navigation calls.
@@ -135,6 +155,111 @@ describe("SubscriptionPlansView — checkout redirect hand-off", () => {
     render(<SubscriptionPlansView />)
     await waitFor(() => expect(screen.getByText(/只有企业所有者可以变更/)).toBeInTheDocument())
     expect(screen.getByTestId("subscribe-pro")).toBeDisabled()
+  })
+
+  it("没有订阅时显示免费版，不写未开通", async () => {
+    vi.mocked(getBillingOverview).mockResolvedValue(baseOverview as never)
+    const { container } = render(<SubscriptionPlansView />)
+    await waitFor(() => expect(getBillingOverview).toHaveBeenCalled())
+    await waitFor(() => expect(container.textContent).toContain("免费版"))
+    expect(container.textContent).not.toContain("未开通")
+  })
+
+  it("套餐和状态一律显示中文，不露出英文代码", async () => {
+    vi.mocked(getBillingOverview).mockResolvedValue({
+      ...baseOverview,
+      subscription: { plan_code: "pro", status: "grace" },
+    } as never)
+    const { container } = render(<SubscriptionPlansView />)
+    await waitFor(() => expect(getBillingOverview).toHaveBeenCalled())
+    await waitFor(() => expect(container.textContent).toContain("专业版（宽限期内）"))
+    expect(container.textContent).not.toMatch(/grace|pro \(/)
+  })
+})
+
+describe("SubscriptionPlansView — 种子期", () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it("种子期没有订阅按钮和支付方式，出现免费试用横幅，全文无'回调'", async () => {
+    seed.on = true
+    vi.mocked(getBillingOverview).mockResolvedValue(baseOverview as never)
+    const { container } = render(<SubscriptionPlansView />)
+    await waitFor(() => expect(getBillingOverview).toHaveBeenCalled())
+    expect(screen.queryAllByTestId(/^subscribe-/)).toHaveLength(0)
+    expect(screen.queryByTestId("pm-alipay")).not.toBeInTheDocument()
+    expect(screen.queryByRole("button")).not.toBeInTheDocument()
+    expect(container.textContent).toContain("试用期全部功能免费，正式收费前会提前通知")
+    expect(container.textContent).not.toContain("回调")
+    expect(plans.TALLY_PLANS.length).toBeGreaterThan(0)
+  })
+
+  it("计费错误带英文 message 时显示中文通用文案", async () => {
+    seed.on = false
+    vi.mocked(getBillingOverview).mockResolvedValue(baseOverview as never)
+    vi.mocked(subscribe).mockRejectedValue(new BillingError("weird", "upstream exploded 500", 500))
+    const { container } = render(<SubscriptionPlansView />)
+    await waitFor(() => expect(getBillingOverview).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId("subscribe-pro"))
+    await waitFor(() => expect(container.textContent).toContain("订阅失败，请稍后再试。"))
+    expect(container.textContent).not.toContain("upstream exploded")
+  })
+
+  it("断网类计费错误显示网络提示，不显示订阅失败", async () => {
+    seed.on = false
+    vi.mocked(getBillingOverview).mockResolvedValue(baseOverview as never)
+    vi.mocked(subscribe).mockRejectedValue(new BillingError("network", "getBillingOverview: Failed to fetch", 0))
+    const { container } = render(<SubscriptionPlansView />)
+    await waitFor(() => expect(getBillingOverview).toHaveBeenCalled())
+    fireEvent.click(screen.getByTestId("subscribe-pro"))
+    await waitFor(() => expect(container.textContent).toContain("网络不通，请检查网络后再试"))
+    expect(container.textContent).not.toContain("订阅失败")
+  })
+
+  it("读概览失败只显示概览文案，不出现订阅失败，也不露英文", async () => {
+    seed.on = true
+    vi.mocked(getBillingOverview).mockRejectedValue(new BillingError("forbidden", "denied by upstream", 403))
+    const { container } = render(<SubscriptionPlansView />)
+    await waitFor(() => expect(container.textContent).toContain("暂时无法读取账户概览，请稍后再试"))
+    expect(container.textContent).not.toContain("订阅失败")
+    expect(container.textContent).not.toContain("denied")
+  })
+
+  it("读概览遇到断网显示网络提示", async () => {
+    seed.on = true
+    vi.mocked(getBillingOverview).mockRejectedValue(new BillingError("offline", "x", 0))
+    const { container } = render(<SubscriptionPlansView />)
+    await waitFor(() => expect(container.textContent).toContain("网络不通，请检查网络后再试"))
+    expect(container.textContent).not.toContain("订阅失败")
+  })
+
+  it("种子期当前套餐的卡片上有当前套餐标记", async () => {
+    seed.on = true
+    vi.mocked(getBillingOverview).mockResolvedValue({
+      ...baseOverview,
+      subscription: { plan_code: plans.TALLY_PLANS[0].code, status: "active" },
+    } as never)
+    render(<SubscriptionPlansView />)
+    expect(await screen.findByTestId(`current-plan-${plans.TALLY_PLANS[0].code}`)).toHaveTextContent("当前套餐")
+  })
+
+  it("种子期横幅只出现一次", async () => {
+    seed.on = true
+    vi.mocked(getBillingOverview).mockResolvedValue(baseOverview as never)
+    const { container } = render(<SubscriptionPlansView />)
+    await waitFor(() => expect(getBillingOverview).toHaveBeenCalled())
+    expect(container.textContent?.split("试用期全部功能免费").length).toBe(2)
+  })
+})
+
+describe("SubscriptionPlansView payment return", () => {
+  it("refreshes the subscription state once when returning with paid=1", async () => {
+    vi.mocked(getBillingOverview).mockResolvedValue(baseOverview as never)
+    window.history.pushState({}, "", "/subscription?paid=1")
+    render(<SubscriptionPlansView />)
+    await waitFor(() => expect(getSubscriptionState).toHaveBeenCalledWith({ refresh: true }))
+    window.history.pushState({}, "", "/")
   })
 })
 

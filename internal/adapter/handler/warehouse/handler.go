@@ -10,6 +10,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/planlimit"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/app/warehouse"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/warehouse"
@@ -147,6 +148,9 @@ func (h *Handler) Create(c *gin.Context) {
 		Remark:    req.Remark,
 	})
 	if err != nil {
+		if planlimit.Write(c, err) {
+			return
+		}
 		if errors.Is(err, appwarehouse.ErrDuplicateName) {
 			c.JSON(http.StatusConflict, gin.H{"error": "duplicate warehouse name"})
 			return

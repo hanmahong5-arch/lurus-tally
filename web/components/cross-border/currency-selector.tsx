@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react"
 import { getCurrencies, type Currency } from "@/lib/api/currency"
+import { extractApiError } from "@/lib/api/errors"
 
 interface CurrencySelectorProps {
   /** Currently selected currency code */
@@ -43,7 +44,7 @@ export function CurrencySelector({
       })
       .catch((err) => {
         if (!cancelled) {
-          setError(String(err))
+          setError(extractApiError(err).message)
           setLoading(false)
         }
       })

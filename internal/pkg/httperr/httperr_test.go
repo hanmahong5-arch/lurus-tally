@@ -171,3 +171,19 @@ func TestAsError_PreservesTypedError(t *testing.T) {
 		t.Errorf("unclassified should be 500, got %d", got.Status)
 	}
 }
+
+// 5xx bodies are shown to shop owners verbatim, so neither message nor action
+// may start with an ASCII letter.
+func TestGeneric5xx_ChineseCopy(t *testing.T) {
+	for name, e := range map[string]*httperr.Error{
+		"Internal":    httperr.Internal(errors.New("x")),
+		"Unavailable": httperr.Unavailable(errors.New("x")),
+		"BadGateway":  httperr.BadGateway(errors.New("x")),
+	} {
+		for field, s := range map[string]string{"message": e.Message, "action": e.Action} {
+			if s == "" || (s[0] >= 'A' && s[0] <= 'Z') || (s[0] >= 'a' && s[0] <= 'z') {
+				t.Errorf("%s %s = %q, want non-empty Chinese copy", name, field, s)
+			}
+		}
+	}
+}

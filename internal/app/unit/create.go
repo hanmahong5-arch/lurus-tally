@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/unit"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/codegen"
 )
 
 // Repository defines the persistence interface required by unit use cases.
@@ -20,21 +21,27 @@ type Repository interface {
 
 // CreateUseCase creates a tenant-custom unit.
 type CreateUseCase struct {
-	repo Repository
+	repo  Repository
+	codes codegen.Source
 }
 
 // NewCreateUseCase constructs the use case.
 func NewCreateUseCase(repo Repository) *CreateUseCase {
-	return &CreateUseCase{repo: repo}
+	return &CreateUseCase{repo: repo, codes: codegen.Default()}
+}
+
+// WithCodeSource replaces the clock/randomness used for generated codes (tests).
+func (uc *CreateUseCase) WithCodeSource(s codegen.Source) *CreateUseCase {
+	uc.codes = s
+	return uc
 }
 
 // Execute validates and persists the new unit.
+// An empty Code is server-assigned (U + yymmdd + 4 symbols, see codegen) and
+// regenerated on a unique violation; an explicit Code is used verbatim.
 func (uc *CreateUseCase) Execute(ctx context.Context, in domain.CreateInput) (*domain.UnitDef, error) {
 	if in.TenantID == uuid.Nil {
 		return nil, fmt.Errorf("create unit: tenant_id is required")
-	}
-	if in.Code == "" {
-		return nil, fmt.Errorf("create unit: code is required")
 	}
 	if in.Name == "" {
 		return nil, fmt.Errorf("create unit: name is required")
@@ -67,7 +74,11 @@ func (uc *CreateUseCase) Execute(ctx context.Context, in domain.CreateInput) (*d
 		UpdatedAt: now,
 	}
 
-	if err := uc.repo.Create(ctx, u); err != nil {
+	err := uc.codes.Create(codegen.PrefixUnit, in.Code, codegen.IsUniqueViolation, func(code string) error {
+		u.Code = code
+		return uc.repo.Create(ctx, u)
+	})
+	if err != nil {
 		return nil, fmt.Errorf("create unit: %w", err)
 	}
 	return u, nil

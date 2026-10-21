@@ -19,9 +19,11 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httpx"
@@ -49,7 +51,13 @@ func IsUnavailable(err error) bool {
 
 // Config holds the construction parameters for Client.
 type Config struct {
-	// BaseURL is the base URL of memorus, e.g. "http://memorus.lurus-system.svc:8880".
+	// BaseURL is the base URL of memorus and MUST include the "/api/v1" prefix,
+	// e.g. "http://memorus.lurus-system.svc:8880/api/v1" — every call below does
+	// baseURL+"/memories", while the server nests those routes under /api/v1
+	// (memorus-server/src/rest/mod.rs: Router::new().nest("/api/v1", api)).
+	// Omitting the prefix yields 404 on every call, and the failure is quiet:
+	// recall just returns nothing. The example here used to omit it (fixed
+	// 2026-09-07); repo .env.example has always had it right.
 	// Empty → New returns (nil, nil).
 	BaseURL string
 
@@ -75,6 +83,7 @@ func New(cfg Config) (*Client, error) {
 	if cfg.BaseURL == "" || cfg.APIKey == "" {
 		return nil, nil
 	}
+	warnIfBaseURLLooksPrefixless(cfg.BaseURL)
 	timeout := cfg.Timeout
 	if timeout == 0 {
 		timeout = defaultTimeout
@@ -243,6 +252,35 @@ func classifyStatus(code int) error {
 		return ErrNotFound
 	default:
 		return fmt.Errorf("%w: HTTP %d", ErrUnavailable, code)
+	}
+}
+
+// warnIfBaseURLLooksPrefixless shouts at startup when BaseURL carries no path
+// at all, e.g. "http://memorus:8880".
+//
+// Why a log and not an error: every call here does baseURL+"/memories" while
+// the server nests those routes under /api/v1, so a prefixless base means
+// every request 404s — and the failure is *silent*: recall simply returns
+// nothing and the assistant looks merely unhelpful. Failing startup instead
+// would be worse: memorus is an optional, degrade-gracefully dependency, and
+// an operator legitimately may front it at a custom path that rewrites the
+// prefix. So the rule is narrow — only "no path at all" is flagged, since that
+// case cannot be a working deployment.
+//
+// Deliberately does not guess a fix (no auto-appending "/api/v1"): silently
+// rewriting an operator's URL is how you get a second, harder bug.
+func warnIfBaseURLLooksPrefixless(raw string) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		slog.Error("memorus: MEMORUS_BASE_URL is not a valid URL; every memory call will fail",
+			"value", raw, "err", err)
+		return
+	}
+	if p := strings.Trim(u.Path, "/"); p == "" {
+		slog.Error("memorus: MEMORUS_BASE_URL has no path — it must include the API prefix, "+
+			"otherwise every call 404s and recall silently returns nothing",
+			"value", raw, "expected_suffix", "/api/v1",
+			"example", "http://host.docker.internal:8880/api/v1")
 	}
 }
 

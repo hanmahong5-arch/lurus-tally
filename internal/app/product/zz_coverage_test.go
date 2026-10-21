@@ -93,11 +93,6 @@ func TestCreateUseCase_Execute_ValidationErrors(t *testing.T) {
 			want: "create product: tenant_id is required",
 		},
 		{
-			name: "missing code",
-			in:   domain.CreateInput{TenantID: tenant, Code: "", Name: "n1"},
-			want: "create product: code is required",
-		},
-		{
 			name: "missing name",
 			in:   domain.CreateInput{TenantID: tenant, Code: "c1", Name: ""},
 			want: "create product: name is required",
@@ -422,7 +417,7 @@ func TestUpdateUseCase_Execute_AllFieldsAndPointerFields(t *testing.T) {
 	if got.DefaultUnitID != &unitID {
 		t.Fatalf("DefaultUnitID pointer not applied")
 	}
-	if string(got.Attributes) != `{"new":true}` {
+	if string(got.Attributes) != `{"new":true,"orig":true}` { // merged, not replaced
 		t.Fatalf("Attributes not applied, got %q", string(got.Attributes))
 	}
 }
@@ -498,8 +493,8 @@ func TestListUseCase_Execute_LimitClamping(t *testing.T) {
 		{"zero clamps to default 20", 0, 20},
 		{"negative clamps to default 20", -1, 20},
 		{"20 passes through unchanged", 20, 20},
-		{"200 passes through unchanged (upper boundary)", 200, 200},
-		{"201 clamps down to 200", 201, 200},
+		{"500 passes through unchanged (upper boundary)", 500, 500},
+		{"501 clamps down to 500", 501, 500},
 	}
 
 	for _, tc := range cases {

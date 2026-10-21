@@ -39,7 +39,7 @@ func (f fakeSessionRepo) List(ctx context.Context, tenantID uuid.UUID, userID st
 	}
 	return nil, nil
 }
-func (f fakeSessionRepo) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
+func (f fakeSessionRepo) Revoke(ctx context.Context, tenantID uuid.UUID, _ string, id uuid.UUID) error {
 	if f.revokeFn != nil {
 		return f.revokeFn(ctx, tenantID, id)
 	}
@@ -245,6 +245,7 @@ func TestRevokeSession_InvalidID(t *testing.T) {
 	h := New(nil, appacct.NewRevokeSession(fakeSessionRepo{}), nil, nil, nil, nil, nil)
 	c, w := newTestCtx(http.MethodDelete, "/account/sessions/not-a-uuid", nil)
 	c.Set(middleware.CtxKeyTenantID, uuid.New())
+	c.Set(middleware.CtxKeyIDPSubject, "u1")
 	c.Params = gin.Params{{Key: "id", Value: "not-a-uuid"}}
 
 	h.RevokeSession(c)
@@ -260,14 +261,20 @@ func TestRevokeSession_InvalidID(t *testing.T) {
 func TestRevokeSession_Success(t *testing.T) {
 	sessID := uuid.New()
 	var gotTenant, gotID uuid.UUID
-	repo := fakeSessionRepo{revokeFn: func(_ context.Context, tenantID, id uuid.UUID) error {
-		gotTenant, gotID = tenantID, id
-		return nil
-	}}
+	repo := fakeSessionRepo{
+		listFn: func(context.Context, uuid.UUID, string) ([]*domain.Session, error) {
+			return []*domain.Session{{ID: sessID, UserID: "u1"}}, nil
+		},
+		revokeFn: func(_ context.Context, tenantID, id uuid.UUID) error {
+			gotTenant, gotID = tenantID, id
+			return nil
+		},
+	}
 	h := New(nil, appacct.NewRevokeSession(repo), nil, nil, nil, nil, nil)
 	c, w := newTestCtx(http.MethodDelete, "/account/sessions/"+sessID.String(), nil)
 	tenant := uuid.New()
 	c.Set(middleware.CtxKeyTenantID, tenant)
+	c.Set(middleware.CtxKeyIDPSubject, "u1")
 	c.Params = gin.Params{{Key: "id", Value: sessID.String()}}
 
 	h.RevokeSession(c)
@@ -281,18 +288,66 @@ func TestRevokeSession_Success(t *testing.T) {
 }
 
 func TestRevokeSession_RepoError_Writes500(t *testing.T) {
-	repo := fakeSessionRepo{revokeFn: func(context.Context, uuid.UUID, uuid.UUID) error {
-		return errors.New("boom")
-	}}
+	sessID := uuid.New()
+	repo := fakeSessionRepo{
+		listFn: func(context.Context, uuid.UUID, string) ([]*domain.Session, error) {
+			return []*domain.Session{{ID: sessID, UserID: "u1"}}, nil
+		},
+		revokeFn: func(context.Context, uuid.UUID, uuid.UUID) error {
+			return errors.New("boom")
+		},
+	}
 	h := New(nil, appacct.NewRevokeSession(repo), nil, nil, nil, nil, nil)
-	c, w := newTestCtx(http.MethodDelete, "/account/sessions/"+uuid.New().String(), nil)
+	c, w := newTestCtx(http.MethodDelete, "/account/sessions/"+sessID.String(), nil)
 	c.Set(middleware.CtxKeyTenantID, uuid.New())
-	c.Params = gin.Params{{Key: "id", Value: uuid.New().String()}}
+	c.Set(middleware.CtxKeyIDPSubject, "u1")
+	c.Params = gin.Params{{Key: "id", Value: sessID.String()}}
 
 	h.RevokeSession(c)
 
 	if c.Writer.Status() != http.StatusInternalServerError {
 		t.Fatalf("status: got %d, want 500, body=%s", c.Writer.Status(), w.Body.String())
+	}
+}
+
+func TestRevokeSession_ForeignSessionIsNotRevoked(t *testing.T) {
+	mine, theirs := uuid.New(), uuid.New()
+	revoked := false
+	repo := fakeSessionRepo{
+		listFn: func(context.Context, uuid.UUID, string) ([]*domain.Session, error) {
+			return []*domain.Session{{ID: mine, UserID: "u1"}}, nil
+		},
+		revokeFn: func(context.Context, uuid.UUID, uuid.UUID) error {
+			revoked = true
+			return nil
+		},
+	}
+	h := New(nil, appacct.NewRevokeSession(repo), nil, nil, nil, nil, nil)
+	c, _ := newTestCtx(http.MethodDelete, "/account/sessions/"+theirs.String(), nil)
+	c.Set(middleware.CtxKeyTenantID, uuid.New())
+	c.Set(middleware.CtxKeyIDPSubject, "u1")
+	c.Params = gin.Params{{Key: "id", Value: theirs.String()}}
+
+	h.RevokeSession(c)
+
+	if c.Writer.Status() != http.StatusNoContent {
+		t.Fatalf("status: got %d, want 204", c.Writer.Status())
+	}
+	if revoked {
+		t.Fatal("another person's session must not be revoked")
+	}
+}
+
+func TestRevokeSession_NoSubjectIs401(t *testing.T) {
+	h := New(nil, appacct.NewRevokeSession(fakeSessionRepo{}), nil, nil, nil, nil, nil)
+	c, _ := newTestCtx(http.MethodDelete, "/account/sessions/"+uuid.New().String(), nil)
+	c.Set(middleware.CtxKeyTenantID, uuid.New())
+	c.Params = gin.Params{{Key: "id", Value: uuid.New().String()}}
+
+	h.RevokeSession(c)
+
+	if c.Writer.Status() != http.StatusUnauthorized {
+		t.Fatalf("status: got %d, want 401", c.Writer.Status())
 	}
 }
 

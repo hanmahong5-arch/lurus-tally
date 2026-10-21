@@ -18,9 +18,18 @@ export class ApiError extends Error {
   }
 }
 
-/** Thrown when the request never reached the server (DNS / offline / abort). */
+/**
+ * Thrown when the request never reached the server (DNS / offline / abort).
+ * `sent` is false only when the request provably never left the device (offline
+ * preflight, or the connection failed before any reply); true when it may have been
+ * delivered and only the reply was lost (cut-off body, gateway could not reach upstream).
+ */
 export class NetworkError extends Error {
-  constructor(public readonly kind: "offline" | "network", message: string) {
+  constructor(
+    public readonly kind: "offline" | "network",
+    message: string,
+    public readonly sent: boolean = true,
+  ) {
     super(message)
     this.name = "NetworkError"
   }
@@ -45,11 +54,14 @@ export class UnauthorizedError extends ApiError {
  */
 export interface DisplayError {
   message: string
+  /** Server-supplied "what to do next" sentence, when the body carries one. */
+  action?: string
   code?: string
   status?: number
 }
 
 const GENERIC_MESSAGE = "操作失败，请稍后重试。"
+const SERVER_FAULT_MESSAGE = "系统出了点问题，请稍后再试；一直不行请联系客服"
 
 /**
  * extractApiError normalizes any caught value into a {@link DisplayError} whose
@@ -62,9 +74,16 @@ export function extractApiError(err: unknown): DisplayError {
   if (err instanceof ApiError) {
     // Prefer a server-supplied human message from the JSON body, then the
     // ApiError's own message, then a generic fallback. Never the class name.
-    const body = (err.body ?? {}) as { detail?: string; message?: string; error?: string }
+    const body = (err.body ?? {}) as { detail?: string; message?: string; action?: string; error?: string }
     const message = body.detail ?? body.message ?? (err.message || GENERIC_MESSAGE)
-    return { message, code: err.code, status: err.status }
+    const action = typeof body.action === "string" && body.action ? body.action : undefined
+    // A 5xx that still carries an English sentence (a raw transport or driver
+    // message) must never reach the shop owner; swap it for the Chinese copy
+    // and drop the equally English action.
+    if (err.status >= 500 && /^[A-Za-z]/.test(message)) {
+      return { message: SERVER_FAULT_MESSAGE, code: err.code, status: err.status }
+    }
+    return { message, action, code: err.code, status: err.status }
   }
   if (err instanceof NetworkError) {
     const message =

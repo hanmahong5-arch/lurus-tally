@@ -4,6 +4,15 @@
 import { describe, it, expect, vi, beforeEach } from "vitest"
 import { render, screen, waitFor, fireEvent } from "@testing-library/react"
 
+// 当前登录人的店内角色，可按用例切换
+let mockRole: string | undefined = "owner"
+vi.mock("next-auth/react", () => ({
+  useSession: () => ({
+    data: mockRole ? { user: { role: mockRole, isOwner: mockRole === "owner" } } : null,
+    status: mockRole ? "authenticated" : "loading",
+  }),
+}))
+
 // Mock API module
 vi.mock("@/lib/api/nursery-dict", () => ({
   listNurseryDict: vi.fn(),
@@ -43,6 +52,7 @@ function makeItem(i: number): NurseryDictItem {
 describe("DictionaryPage", () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    mockRole = "owner"
   })
 
   it("TestDictionaryPage_Renders_SearchInputAndTable", async () => {
@@ -96,5 +106,42 @@ describe("DictionaryPage", () => {
     vi.mocked(listNurseryDict).mockResolvedValueOnce({ items: [], total: 0 })
     render(<DictionaryPage />)
     expect(screen.getByText(/新增苗木/)).toBeInTheDocument()
+  })
+
+  it("TestDictionaryPage_Finance_HidesWriteButtons", async () => {
+    mockRole = "finance"
+    vi.mocked(listNurseryDict).mockResolvedValueOnce({ items: [makeItem(1)], total: 1 })
+    render(<DictionaryPage />)
+    await waitFor(() => {
+      expect(screen.getByText("苗木1")).toBeInTheDocument()
+    })
+    expect(screen.queryByText(/新增苗木/)).not.toBeInTheDocument()
+    expect(screen.queryByText("默认单位")).not.toBeInTheDocument()
+    expect(screen.queryByText("编辑")).not.toBeInTheDocument()
+    expect(screen.queryByText("删除")).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText("苗木1"))
+    await waitFor(() => {
+      expect(screen.getByTestId("nursery-detail-drawer")).toBeInTheDocument()
+    })
+    expect(screen.queryByText("编辑")).not.toBeInTheDocument()
+    expect(screen.queryByText("删除")).not.toBeInTheDocument()
+  })
+
+  it("TestDictionaryPage_Finance_EmptyStateSaysWhoEntersData", async () => {
+    mockRole = "finance"
+    vi.mocked(listNurseryDict).mockResolvedValueOnce({ items: [], total: 0 })
+    render(<DictionaryPage />)
+    expect(await screen.findByText("由老板、店长或店员录入")).toBeInTheDocument()
+  })
+
+  it("TestDictionaryPage_Clerk_ShowsWriteButtons", async () => {
+    mockRole = "clerk"
+    vi.mocked(listNurseryDict).mockResolvedValueOnce({ items: [makeItem(1)], total: 1 })
+    render(<DictionaryPage />)
+    await waitFor(() => {
+      expect(screen.getByText("苗木1")).toBeInTheDocument()
+    })
+    expect(screen.getByText(/新增苗木/)).toBeInTheDocument()
+    expect(screen.getByText("编辑")).toBeInTheDocument()
   })
 })

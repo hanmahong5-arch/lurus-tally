@@ -1,7 +1,7 @@
 // Package alert provides kill-switch signal evaluation and breach notification
 // for the Tally V1.5 falsifiable hypothesis tracker.
 //
-// Three signals are monitored (see CLAUDE.md kill-switch section):
+// Three signals are monitored (see the project kill-switch doc):
 //   - KS1: onboarding completion rate for the first 10 customers (threshold ≥ 40%)
 //   - KS2: day-45 AI-suggested PO actual order rate (threshold ≥ 20%)
 //   - KS3: 90-day trial-to-paid conversion rate (threshold ≥ 30%)

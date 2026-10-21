@@ -11,8 +11,9 @@ import (
 
 // ListPurchasesOutput is returned by ListPurchasesUseCase.
 type ListPurchasesOutput struct {
-	Items []domain.BillHead
-	Total int64
+	Items   []domain.BillHead
+	Total   int64
+	Summary BillListSummary
 }
 
 // ListPurchasesUseCase lists purchase bills with pagination and optional filters.
@@ -33,6 +34,8 @@ func (uc *ListPurchasesUseCase) Execute(ctx context.Context, f BillListFilter) (
 	}
 	// Enforce purchase type.
 	f.BillType = domain.BillTypePurchase
+	// Inbound bills also hold sales returns; only purchases are payable to suppliers.
+	f.SubType = domain.BillSubTypePurchase
 
 	// Apply pagination defaults.
 	if f.Page <= 0 {
@@ -46,5 +49,9 @@ func (uc *ListPurchasesUseCase) Execute(ctx context.Context, f BillListFilter) (
 	if err != nil {
 		return nil, fmt.Errorf("list purchases: %w", err)
 	}
-	return &ListPurchasesOutput{Items: bills, Total: total}, nil
+	summary, err := uc.repo.SummarizeBills(ctx, f)
+	if err != nil {
+		return nil, fmt.Errorf("list purchases: summary: %w", err)
+	}
+	return &ListPurchasesOutput{Items: bills, Total: total, Summary: summary}, nil
 }

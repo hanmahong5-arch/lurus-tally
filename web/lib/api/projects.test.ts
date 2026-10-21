@@ -6,6 +6,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   listProjects,
   createProject,
+  updateProject,
+  getProject,
   deleteProject,
   restoreProject,
   type ProjectItem,
@@ -121,5 +123,79 @@ describe("restoreProject", () => {
     expect(callUrl).toContain("id1")
     expect(callUrl).toContain("restore")
     expect(callOptions.method).toBe("POST")
+  })
+})
+
+describe("projects wire mapping", () => {
+  const wireItem = {
+    id: "proj-1",
+    tenant_id: "tenant-1",
+    code: "P001",
+    name: "河道绿化",
+    customer_id: "cust-1",
+    contract_amount: "1200.50",
+    start_date: "2026-01-01",
+    end_date: "2026-06-30",
+    status: "active",
+    address: "",
+    manager: "",
+    remark: "",
+    created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  }
+
+  beforeEach(() => {
+    Object.defineProperty(window, "location", {
+      value: { origin: "http://localhost:3000" },
+      writable: true,
+    })
+  })
+  afterEach(() => vi.restoreAllMocks())
+
+  it("create sends snake_case body fields", async () => {
+    mockFetch(true, wireItem, 201)
+    await createProject({
+      code: "P001",
+      name: "河道绿化",
+      customerId: "cust-1",
+      contractAmount: "1200.50",
+      startDate: "2026-01-01",
+      endDate: "2026-06-30",
+      status: "active",
+      address: "",
+      manager: "",
+      remark: "",
+    })
+    const opts = vi.mocked(global.fetch).mock.calls[0][1] as RequestInit
+    const body = JSON.parse(String(opts.body))
+    expect(body.customer_id).toBe("cust-1")
+    expect(body.contract_amount).toBe("1200.50")
+    expect(body.start_date).toBe("2026-01-01")
+    expect(body.end_date).toBe("2026-06-30")
+    expect(body).not.toHaveProperty("customerId")
+    expect(body).not.toHaveProperty("contractAmount")
+  })
+
+  it("update sends snake_case body fields", async () => {
+    mockFetch(true, wireItem)
+    await updateProject("proj-1", { customerId: "cust-2" })
+    const opts = vi.mocked(global.fetch).mock.calls[0][1] as RequestInit
+    const body = JSON.parse(String(opts.body))
+    expect(body.customer_id).toBe("cust-2")
+    expect(body).not.toHaveProperty("customerId")
+  })
+
+  it("get/list map response back to camelCase", async () => {
+    mockFetch(true, wireItem)
+    const one = await getProject("proj-1")
+    expect(one.customerId).toBe("cust-1")
+    expect(one.contractAmount).toBe("1200.50")
+    expect(one.startDate).toBe("2026-01-01")
+    expect(one.tenantId).toBe("tenant-1")
+
+    mockFetch(true, { items: [wireItem], total: 1 })
+    const list = await listProjects({})
+    expect(list.items[0].customerId).toBe("cust-1")
+    expect(list.items[0].endDate).toBe("2026-06-30")
   })
 })

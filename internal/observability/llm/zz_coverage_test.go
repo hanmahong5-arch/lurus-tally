@@ -232,14 +232,14 @@ func TestNewOTelTracer_AllEnvSet_BuildsRealTracerAndSpans(t *testing.T) {
 	ctx := context.Background()
 
 	// Success path: End with nil error records output/token attributes.
-	span, spanCtx := tr.StartLLMSpan(ctx, "chat", "gpt-test", "hello, this is the <prompt> aBc123XYZ")
+	span, spanCtx := tr.StartLLMSpan(ctx, "chat", "test-model", "hello, this is the <prompt> aBc123XYZ")
 	if span == nil || spanCtx == nil {
 		t.Fatal("StartLLMSpan must return a non-nil span and context")
 	}
 	span.End("some <output> text", TokenCount{Prompt: 3, Completion: 2, Total: 5}, nil)
 
 	// Error path: End with non-nil error records error attributes instead.
-	span2, _ := tr.StartLLMSpan(ctx, "chat", "gpt-test", "prompt2")
+	span2, _ := tr.StartLLMSpan(ctx, "chat", "test-model", "prompt2")
 	span2.End("", TokenCount{}, errors.New("upstream 500"))
 
 	// AttachToolCall must not panic and should be safely nested under the

@@ -6,14 +6,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
+	"github.com/hanmahong5-arch/lurus-tally/internal/domain/team"
 )
 
 func init() {
@@ -268,5 +271,112 @@ func TestStockHandler_GetSnapshots_Returns200(t *testing.T) {
 	}
 	if len(items) != 1 {
 		t.Errorf("items count = %d, want 1", len(items))
+	}
+}
+
+type fakeNames map[uuid.UUID]string
+
+func (f fakeNames) ProductNames(_ context.Context, _ uuid.UUID, ids []uuid.UUID) (map[uuid.UUID]string, error) {
+	out := map[uuid.UUID]string{}
+	for _, id := range ids {
+		if n, ok := f[id]; ok {
+			out[id] = n
+		}
+	}
+	return out, nil
+}
+
+// A clerk counting a product with no price on file gets a 422 that names the product
+// and never asks them to type a price.
+func TestPostAdjustment_ClerkCostRequiredNamesProducts(t *testing.T) {
+	tid, p, wh := uuid.New(), uuid.New(), uuid.New()
+	body := `{"warehouse_id":"` + wh.String() + `","items":[{"product_id":"` + p.String() + `","counted_qty":"5"}]}`
+	c, w := newCtx(http.MethodPost, "/stock/adjustments", []byte(body), &tid, nil)
+	c.Set(middleware.CtxKeyShopRole, team.RoleClerk)
+	adjustHandler(&fakeStockRepo{}).WithProductNames(fakeNames{p: "红枫"}).PostAdjustment(c)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	got := decodeBody(t, w)
+	msg, _ := got["error"].(string)
+	if got["code"] != "cost_required" || !strings.Contains(msg, "红枫") || !strings.Contains(msg, "老板或店长") || strings.Contains(msg, "填写进货单价") {
+		t.Fatalf("body = %v", got)
+	}
+	names, _ := got["product_names"].([]any)
+	if len(names) != 1 || names[0] != "红枫" {
+		t.Fatalf("product_names = %v", got["product_names"])
+	}
+}
+
+// Two products sharing a name are told apart by id, so the screen can show each once.
+func TestPostAdjustment_ClerkCostRequiredReturnsProductsByID(t *testing.T) {
+	tid, p1, p2, wh := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	body := `{"warehouse_id":"` + wh.String() + `","items":[{"product_id":"` + p1.String() + `","counted_qty":"5"},{"product_id":"` + p2.String() + `","counted_qty":"6"}]}`
+	c, w := newCtx(http.MethodPost, "/stock/adjustments", []byte(body), &tid, nil)
+	c.Set(middleware.CtxKeyShopRole, team.RoleClerk)
+	adjustHandler(&fakeStockRepo{}).WithProductNames(fakeNames{p1: "红枫", p2: "红枫"}).PostAdjustment(c)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+	got := decodeBody(t, w)
+	prods, _ := got["products"].([]any)
+	if len(prods) != 2 {
+		t.Fatalf("products = %v", got["products"])
+	}
+	seen := map[string]bool{}
+	for _, x := range prods {
+		m, _ := x.(map[string]any)
+		if m["name"] != "红枫" {
+			t.Fatalf("product = %v", m)
+		}
+		id, _ := m["id"].(string)
+		seen[id] = true
+	}
+	if !seen[p1.String()] || !seen[p2.String()] {
+		t.Fatalf("ids = %v", seen)
+	}
+}
+
+// Someone who may see cost still gets the 400 that asks for a price.
+func TestPostAdjustment_ManagerCostRequiredStays400(t *testing.T) {
+	tid, p, wh := uuid.New(), uuid.New(), uuid.New()
+	body := `{"warehouse_id":"` + wh.String() + `","items":[{"product_id":"` + p.String() + `","counted_qty":"5"}]}`
+	c, w := newCtx(http.MethodPost, "/stock/adjustments", []byte(body), &tid, nil)
+	c.Set(middleware.CtxKeyShopRole, team.RoleManager)
+	adjustHandler(&fakeStockRepo{}).WithProductNames(fakeNames{p: "红枫"}).PostAdjustment(c)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestPostAdjustment_RecordsCountingPersonAsCreatedBy(t *testing.T) {
+	tid, p, wh, sub := uuid.New(), uuid.New(), uuid.New(), uuid.New()
+	newRepo := func() *fakeStockRepo {
+		return &fakeStockRepo{selectForUpdate: &domain.Snapshot{
+			ID: uuid.New(), TenantID: tid, ProductID: p, WarehouseID: wh,
+			OnHandQty: decimal.NewFromInt(10), UnitCost: decimal.NewFromInt(4),
+		}}
+	}
+	body := `{"warehouse_id":"` + wh.String() + `","items":[{"product_id":"` + p.String() + `","counted_qty":"7"}]}`
+
+	repo := newRepo()
+	c, w := newCtx(http.MethodPost, "/stock/adjustments", []byte(body), &tid, nil)
+	c.Set(middleware.CtxKeyIDPSubject, sub.String())
+	adjustHandler(repo).PostAdjustment(c)
+	if w.Code != http.StatusCreated || len(repo.movements) != 1 {
+		t.Fatalf("status = %d movements = %d body=%s", w.Code, len(repo.movements), w.Body.String())
+	}
+	if got := repo.movements[0].CreatedBy; got == nil || *got != sub {
+		t.Errorf("movement CreatedBy = %v, want %s", got, sub)
+	}
+
+	repo = newRepo()
+	c, w = newCtx(http.MethodPost, "/stock/adjustments", []byte(body), &tid, nil)
+	adjustHandler(repo).PostAdjustment(c)
+	if w.Code != http.StatusCreated || len(repo.movements) != 1 {
+		t.Fatalf("status = %d movements = %d body=%s", w.Code, len(repo.movements), w.Body.String())
+	}
+	if got := repo.movements[0].CreatedBy; got != nil {
+		t.Errorf("movement CreatedBy = %v, want nil without a subject", got)
 	}
 }

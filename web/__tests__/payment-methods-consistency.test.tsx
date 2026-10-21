@@ -20,6 +20,13 @@ import { readFileSync } from "node:fs"
 import path from "node:path"
 import { render, screen } from "@testing-library/react"
 
+// 这些用例守的是正式收费后的订阅路径；种子期（SEED_TRIAL=true）不显示订阅入口，
+// 由 app/pricing/page.test.tsx 与 plans-view.test.tsx 覆盖。
+vi.mock("@/lib/billing/plans", async (orig) => {
+  const actual = await orig<typeof import("@/lib/billing/plans")>()
+  return { ...actual, SEED_TRIAL: false }
+})
+
 vi.mock("@/lib/api/billing", () => ({
   BillingError: class BillingError extends Error {},
   getBillingOverview: vi.fn().mockResolvedValue(null),

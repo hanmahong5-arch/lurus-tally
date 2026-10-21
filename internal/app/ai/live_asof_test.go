@@ -24,11 +24,11 @@ import (
 // pass through parseAsOf's month-only rule. With the date: all dated cases
 // pass, and 「现在」 never calls the tool.
 //
-// Measured (deepseek-v4-flash, 3 runs): dated cases 3/15 → 14/15 (the miss
+// Measured (3 runs): dated cases 3/15 → 14/15 (the miss
 // read 上周三 as this week's Wednesday); 「李四现在怎么付款」 avoided the tool 2/3
 // → 0/3, calling it with today's date instead.
 //
-//	TALLY_LLM_LIVE=1 TALLY_LLM_KEY=sk-... TALLY_LLM_REPEAT=3 \
+//	TALLY_LLM_LIVE=1 TALLY_LLM_KEY=sk-... TALLY_LLM_MODEL=<model> TALLY_LLM_REPEAT=3 \
 //	  go test ./internal/app/ai/ -run TestLive_AsOfDates -v -count=1
 func TestLive_AsOfDates(t *testing.T) {
 	if os.Getenv("TALLY_LLM_LIVE") != "1" {
@@ -44,7 +44,7 @@ func TestLive_AsOfDates(t *testing.T) {
 	}
 	model := os.Getenv("TALLY_LLM_MODEL")
 	if model == "" {
-		model = "deepseek-v4-flash"
+		t.Fatal("TALLY_LLM_MODEL required")
 	}
 	repeat := 1
 	if v, err := strconv.Atoi(os.Getenv("TALLY_LLM_REPEAT")); err == nil && v > 0 {

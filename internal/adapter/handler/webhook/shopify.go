@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -20,6 +21,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
 )
 
@@ -114,6 +116,12 @@ func (h *Handler) ingest(ctx context.Context, tenantID uuid.UUID, fn func(contex
 //
 //	POST /webhooks/shopify/orders  — orders/create | orders/cancelled
 //	POST /webhooks/shopify/refunds — refunds/create
+//
+// Subscription lock exemption (deliberate, owner decision for the seed phase):
+// these routes sit on the root engine and are authenticated by HMAC only, so
+// the read-only guard of /api/v1 does not apply. A shop whose plan has lapsed
+// still ingests orders and refunds, to keep sales that already happened on the
+// storefront. Do not add the subscription guard here without revisiting that.
 func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.POST("/webhooks/shopify/orders", h.handleOrders)
 	r.POST("/webhooks/shopify/refunds", h.handleRefunds)
@@ -288,7 +296,26 @@ func (h *Handler) handleOrderCancelled(c *gin.Context, raw []byte, mapping *Shop
 			slog.String("shop", shopDomain),
 			slog.String("platform_order_no", orderNo),
 			slog.String("error", err.Error()))
+		if writeWarehouseRequired(c, err) {
+			return
+		}
+		if errors.Is(err, appbill.ErrInvalidBillStatus) || errors.Is(err, appbill.ErrValidation) {
+			// The order can never be reversed as sent; a 5xx would only make Shopify retry
+			// until it drops the subscription.
+			c.JSON(http.StatusOK, gin.H{"status": "cancel_skipped", "platform_order_no": orderNo})
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "cancel_error"})
+		return
+	}
+
+	if result.NothingToReverse {
+		h.log.Info("shopify webhook: order cancelled, nothing to reverse",
+			slog.String("platform_order_no", result.PlatformOrderNo))
+		c.JSON(http.StatusOK, gin.H{
+			"status":            "nothing_to_reverse",
+			"platform_order_no": result.PlatformOrderNo,
+		})
 		return
 	}
 
@@ -328,7 +355,21 @@ func (h *Handler) handleRefundCreate(c *gin.Context, raw []byte, mapping *ShopMa
 			slog.String("shop", shopDomain),
 			slog.String("platform_refund_id", req.PlatformRefundID),
 			slog.String("error", err.Error()))
+		if writeWarehouseRequired(c, err) {
+			return
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "refund_error"})
+		return
+	}
+
+	if result.NothingToReverse {
+		h.log.Info("shopify webhook: refund put no stock back",
+			slog.String("platform_refund_id", result.PlatformRefundID))
+		c.JSON(http.StatusOK, gin.H{
+			"status":             "nothing_to_reverse",
+			"platform_order_no":  result.PlatformOrderNo,
+			"platform_refund_id": result.PlatformRefundID,
+		})
 		return
 	}
 
@@ -451,12 +492,13 @@ func parseShopifyOrder(raw []byte, m *ShopMapping) (appimporting.SingleOrderRequ
 	}
 
 	return appimporting.SingleOrderRequest{
-		TenantID:        m.TenantID,
-		CreatorID:       m.CreatorID,
-		WarehouseID:     m.WarehouseID,
-		Platform:        appimporting.PlatformShopify,
-		PlatformOrderNo: orderNo,
-		Lines:           lines,
+		TenantID:           m.TenantID,
+		CreatorID:          m.CreatorID,
+		WarehouseID:        m.WarehouseID,
+		Platform:           appimporting.PlatformShopify,
+		PlatformOrderNo:    orderNo,
+		PlatformOrderAlias: strings.TrimSpace(o.ID.String()),
+		Lines:              lines,
 	}, nil
 }
 
@@ -529,4 +571,18 @@ func parseShopifyRefund(raw []byte, m *ShopMapping) (appimporting.RefundRequest,
 		RefundDate:       refundDate,
 		Lines:            lines,
 	}, nil
+}
+
+// writeWarehouseRequired answers 422 when a stock-returning event cannot be booked
+// because neither the bill nor the tenant names a warehouse. The wording matches
+// handler/bill so the owner sees one message wherever it surfaces.
+func writeWarehouseRequired(c *gin.Context, err error) bool {
+	if !errors.Is(err, appbill.ErrWarehouseRequired) {
+		return false
+	}
+	c.JSON(http.StatusUnprocessableEntity, gin.H{
+		"error":   "warehouse_required",
+		"message": "单据未指定仓库，且没有默认仓库。请在「仓库」中设置默认仓，或在单据上选择仓库",
+	})
+	return true
 }

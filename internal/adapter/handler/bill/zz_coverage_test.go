@@ -139,6 +139,10 @@ func (m *zzMockBillRepo) UpdateBill(_ context.Context, _ *sql.Tx, head *domain.B
 	return nil
 }
 
+func (m *zzMockBillRepo) SummarizeBills(_ context.Context, _ appbill.BillListFilter) (appbill.BillListSummary, error) {
+	return appbill.BillListSummary{}, nil
+}
+
 func (m *zzMockBillRepo) ListBills(_ context.Context, _ appbill.BillListFilter) ([]domain.BillHead, int64, error) {
 	if m.listErr != nil {
 		return nil, 0, m.listErr
@@ -164,6 +168,22 @@ func (m *zzMockBillRepo) ProductExists(_ context.Context, _, _ uuid.UUID) (bool,
 
 func (m *zzMockBillRepo) WarehouseExists(_ context.Context, _, _ uuid.UUID) (bool, error) {
 	return m.warehouseExists, m.warehouseExistsErr
+}
+
+func (m *zzMockBillRepo) PartnerExists(_ context.Context, _, _ uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+// zzDefaultWH is the tenant default warehouse these fixtures fall back to, so
+// bills seeded without a warehouse still approve.
+var zzDefaultWH = uuid.New()
+
+func (m *zzMockBillRepo) DefaultWarehouseID(_ context.Context, _ uuid.UUID) (uuid.UUID, bool, error) {
+	return zzDefaultWH, true, nil
+}
+
+func (m *zzMockBillRepo) SetBillWarehouse(_ context.Context, _ *sql.Tx, _, _, _ uuid.UUID) error {
+	return nil
 }
 
 func (m *zzMockBillRepo) UpdatePaidAmount(_ context.Context, _ *sql.Tx, _, billID uuid.UUID, paidAmount decimal.Decimal) error {
@@ -389,12 +409,18 @@ func TestZZ_ResolveCreatorID(t *testing.T) {
 			t.Errorf("got %v, want Nil", got)
 		}
 	})
-	t.Run("invalid uuid string falls back to Nil", func(t *testing.T) {
-		w := httptest.NewRecorder()
-		c, _ := gin.CreateTestContext(w)
-		c.Set(middleware.CtxKeyIDPSubject, "not-a-uuid")
-		if got := resolveCreatorID(c); got != uuid.Nil {
-			t.Errorf("got %v, want Nil", got)
+	t.Run("non-uuid subject maps to a stable derived id", func(t *testing.T) {
+		resolve := func(sub string) uuid.UUID {
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Set(middleware.CtxKeyIDPSubject, sub)
+			return resolveCreatorID(c)
+		}
+		a, b := resolve("312345678901234567"), resolve("312345678901234567")
+		if a == uuid.Nil || a != b {
+			t.Errorf("unstable derived id: %v %v", a, b)
+		}
+		if a == resolve("312345678901234568") {
+			t.Errorf("different subjects must not collide")
 		}
 	})
 	t.Run("valid uuid subject is trusted", func(t *testing.T) {
@@ -968,11 +994,11 @@ func TestZZ_Handler_List(t *testing.T) {
 		zzWantStatus(t, w, http.StatusOK)
 	})
 
-	t.Run("non-numeric status and invalid partner_id are ignored: 200", func(t *testing.T) {
+	t.Run("non-numeric status and invalid partner_id are rejected: 400", func(t *testing.T) {
 		repo := zzNewMockBillRepo()
 		r := zzNewRouter(zzNewPurchaseHandler(repo, &zzMockStockUC{}, &zzMockUnitRepo{}))
 		w := zzDoJSON(t, r, http.MethodGet, "/api/v1/purchase-bills?status=abc&partner_id=not-a-uuid", nil, uuid.New().String(), "")
-		zzWantStatus(t, w, http.StatusOK)
+		zzWantStatus(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("internal error returns 5xx", func(t *testing.T) {
@@ -1124,14 +1150,14 @@ func TestZZ_SaleHandler_Create(t *testing.T) {
 	})
 }
 
-func TestZZ_SaleHandler_Update_NotImplemented(t *testing.T) {
+func TestZZ_SaleHandler_Update_EmptyItemsRejected(t *testing.T) {
 	repo := zzNewMockBillRepo()
 	r := zzNewSaleRouter(zzNewSaleHandler(repo, &zzMockStockUC{}, &zzMockUnitRepo{}, &zzMockPaymentRecorder{}, &zzMockPaymentRepo{}))
 	w := zzDoJSON(t, r, http.MethodPut, "/api/v1/sale-bills/"+uuid.New().String(), map[string]any{}, uuid.New().String(), "")
-	zzWantStatus(t, w, http.StatusNotImplemented)
+	zzWantStatus(t, w, http.StatusBadRequest)
 	resp := zzDecodeJSON(t, w)
-	if resp["error"] != "not_implemented" {
-		t.Errorf("error = %v, want not_implemented", resp["error"])
+	if resp["error"] != "validation_error" {
+		t.Errorf("error = %v, want validation_error", resp["error"])
 	}
 }
 
@@ -1293,11 +1319,11 @@ func TestZZ_SaleHandler_List(t *testing.T) {
 		zzWantStatus(t, w, http.StatusOK)
 	})
 
-	t.Run("non-numeric status and invalid partner_id are ignored: 200", func(t *testing.T) {
+	t.Run("non-numeric status and invalid partner_id are rejected: 400", func(t *testing.T) {
 		repo := zzNewMockBillRepo()
 		r := zzNewSaleRouter(zzNewSaleHandler(repo, &zzMockStockUC{}, &zzMockUnitRepo{}, &zzMockPaymentRecorder{}, &zzMockPaymentRepo{}))
 		w := zzDoJSON(t, r, http.MethodGet, "/api/v1/sale-bills?status=abc&partner_id=not-a-uuid", nil, uuid.New().String(), "")
-		zzWantStatus(t, w, http.StatusOK)
+		zzWantStatus(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("internal error returns 5xx", func(t *testing.T) {
@@ -1337,7 +1363,7 @@ func TestZZ_SaleHandler_Get(t *testing.T) {
 		repo := zzNewMockBillRepo()
 		tenantID := uuid.New()
 		billID := uuid.New()
-		repo.bills[billID] = &domain.BillHead{ID: billID, TenantID: tenantID, Status: domain.StatusDraft, BillType: domain.BillTypeSale}
+		repo.bills[billID] = &domain.BillHead{ID: billID, TenantID: tenantID, Status: domain.StatusDraft, BillType: domain.BillTypeSale, SubType: domain.BillSubTypeSale}
 		repo.getBillItemsErr = errors.New("read failure")
 		r := zzNewSaleRouter(zzNewSaleHandler(repo, &zzMockStockUC{}, &zzMockUnitRepo{}, &zzMockPaymentRecorder{}, &zzMockPaymentRepo{}))
 		w := zzDoJSON(t, r, http.MethodGet, "/api/v1/sale-bills/"+billID.String(), nil, tenantID.String(), "")
@@ -1350,7 +1376,7 @@ func TestZZ_SaleHandler_Get(t *testing.T) {
 		repo := zzNewMockBillRepo()
 		tenantID := uuid.New()
 		billID := uuid.New()
-		repo.bills[billID] = &domain.BillHead{ID: billID, TenantID: tenantID, Status: domain.StatusDraft, BillType: domain.BillTypeSale}
+		repo.bills[billID] = &domain.BillHead{ID: billID, TenantID: tenantID, Status: domain.StatusDraft, BillType: domain.BillTypeSale, SubType: domain.BillSubTypeSale}
 		repo.items[billID] = []*domain.BillItem{}
 		payRepo := &zzMockPaymentRepo{listErr: errors.New("payments db down")}
 		r := zzNewSaleRouter(zzNewSaleHandler(repo, &zzMockStockUC{}, &zzMockUnitRepo{}, &zzMockPaymentRecorder{}, payRepo))
@@ -1431,19 +1457,11 @@ func TestZZ_SaleHandler_QuickCheckout(t *testing.T) {
 		}
 	})
 
-	// Documents current (TODO-marked) behaviour: an unparsable paid_amount does
-	// NOT surface as a 400 — it silently defaults to decimal.Zero. This test
-	// asserts that documented behaviour directly (hand-computed expectation),
-	// it does not read back the handler's own output as its oracle.
-	t.Run("unparsable paid_amount silently defaults to zero (documented TODO)", func(t *testing.T) {
+	// An unparsable paid_amount is rejected with 400 instead of silently being
+	// treated as zero (which would approve the bill without recording payment).
+	t.Run("unparsable paid_amount returns 400", func(t *testing.T) {
 		repo := zzNewMockBillRepo()
 		r := zzNewSaleRouter(zzNewSaleHandler(repo, &zzMockStockUC{}, &zzMockUnitRepo{}, &zzMockPaymentRecorder{}, &zzMockPaymentRepo{}))
-
-		qty := decimal.RequireFromString("10")
-		unitPrice := decimal.RequireFromString("9.99")
-		wantTotal := qty.Mul(unitPrice).Round(4)
-		wantReceivable := wantTotal // paid_amount defaults to zero, so receivable == total
-
 		body := map[string]any{
 			"paid_amount": "not-a-number",
 			"items": []map[string]any{
@@ -1451,14 +1469,7 @@ func TestZZ_SaleHandler_QuickCheckout(t *testing.T) {
 			},
 		}
 		w := zzDoJSON(t, r, http.MethodPost, "/api/v1/sale-bills/quick-checkout", body, uuid.New().String(), "")
-		zzWantStatus(t, w, http.StatusCreated)
-		resp := zzDecodeJSON(t, w)
-		if resp["total_amount"] != wantTotal.String() {
-			t.Errorf("total_amount = %v, want %v", resp["total_amount"], wantTotal.String())
-		}
-		if resp["receivable_amount"] != wantReceivable.String() {
-			t.Errorf("receivable_amount = %v, want %v (paid_amount should have defaulted to zero)", resp["receivable_amount"], wantReceivable.String())
-		}
+		zzWantStatus(t, w, http.StatusBadRequest)
 	})
 
 	t.Run("success returns 201", func(t *testing.T) {

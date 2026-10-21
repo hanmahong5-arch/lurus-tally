@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -68,11 +69,14 @@ type stubSalesRecorder struct{}
 
 func (s *stubSalesRecorder) RecordSale(_ context.Context, _ appob.DemoSaleRequest) error { return nil }
 
-type stubDemoDeleter struct{ called bool }
+type stubDemoDeleter struct {
+	called bool
+	res    *appob.ClearResult
+}
 
-func (s *stubDemoDeleter) DeleteDemoProducts(_ context.Context, _ uuid.UUID) error {
+func (s *stubDemoDeleter) ClearDemo(_ context.Context, _ uuid.UUID) (*appob.ClearResult, error) {
 	s.called = true
-	return nil
+	return s.res, nil
 }
 
 // --- helpers ---
@@ -182,7 +186,7 @@ func TestSeedDemoHandler_Retail_Returns200WithCount(t *testing.T) {
 	}
 }
 
-func TestClearDemoHandler_Success_Returns204(t *testing.T) {
+func TestClearDemoHandler_Success_Returns200(t *testing.T) {
 	seed, clear, del := seedClear()
 	r := buildRouter(seed, clear)
 
@@ -191,11 +195,39 @@ func TestClearDemoHandler_Success_Returns204(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusNoContent {
-		t.Errorf("want 204, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Errorf("want 200, got %d: %s", w.Code, w.Body.String())
 	}
 	if !del.called {
-		t.Error("want DeleteDemoProducts called, was not")
+		t.Error("want ClearDemo called, was not")
+	}
+	if !strings.Contains(w.Body.String(), `"converted_products":[]`) {
+		t.Errorf("body should carry an empty converted list: %s", w.Body.String())
+	}
+}
+
+// Demo products kept because approved bills use them are named, with the
+// stocktake follow-up.
+func TestClearDemoHandler_ConvertedProductsListed(t *testing.T) {
+	seed, clear, del := seedClear()
+	del.res = &appob.ClearResult{
+		ClearedProducts: 3,
+		Converted:       []appob.ConvertedProduct{{ID: uuid.New(), Code: "A1", Name: "示例红枫"}},
+	}
+	r := buildRouter(seed, clear)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/clear-demo", http.NoBody)
+	req.Header.Set("X-Tenant-ID", testTenantID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
+	}
+	for _, want := range []string{"示例红枫", "盘点", `"cleared_products":3`} {
+		if !strings.Contains(w.Body.String(), want) {
+			t.Errorf("body missing %q: %s", want, w.Body.String())
+		}
 	}
 }
 
@@ -210,5 +242,32 @@ func TestClearDemoHandler_MissingTenant_Returns401(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("want 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+type inUseDemoDeleter struct{}
+
+func (inUseDemoDeleter) ClearDemo(_ context.Context, _ uuid.UUID) (*appob.ClearResult, error) {
+	return nil, &appob.DemoInUseError{BillNos: []string{"XS-0001", "XS-0002"}}
+}
+
+// A demo product already used on a kept bill answers 409 and names the bills.
+func TestClearDemoHandler_InUse_Returns409WithBillNos(t *testing.T) {
+	seed, _, _ := seedClear()
+	r := buildRouter(seed, appob.NewClearDemoUseCase(inUseDemoDeleter{}))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/clear-demo", http.NoBody)
+	req.Header.Set("X-Tenant-ID", testTenantID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d: %s", w.Code, w.Body.String())
+	}
+	body := w.Body.String()
+	for _, want := range []string{"XS-0001", "XS-0002", "demo_in_use", "会一直算在报表里，请按下面的办法处理", "在商品页把这个示例商品删除（已审核的单据不受影响）"} {
+		if !bytes.Contains([]byte(body), []byte(want)) {
+			t.Errorf("body missing %q: %s", want, body)
+		}
 	}
 }

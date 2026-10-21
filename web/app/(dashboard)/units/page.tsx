@@ -6,6 +6,7 @@ import type { ColumnDef } from "@tanstack/react-table"
 
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useConfirm } from "@/hooks/useConfirm"
+import { useRole } from "@/hooks/use-role"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable } from "@/components/ui/data-table"
@@ -23,6 +24,7 @@ import {
   type UnitDef,
   type UnitType,
 } from "@/lib/api/units"
+import { extractApiError } from "@/lib/api/errors"
 
 const UNIT_TYPE_LABEL: Record<UnitType, string> = {
   count: "计数",
@@ -43,6 +45,9 @@ const SELECT_CLASS =
  * pricing and bill line items. System units (is_system=true) are immutable.
  */
 export default function UnitsPage() {
+  // 增删单位需要 product.write；角色未知时不遮挡，后端兜底。
+  const { known, can } = useRole()
+  const canEdit = !known || can("product.write")
   const [items, setItems] = useState<UnitDef[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -63,9 +68,9 @@ export default function UnitsPage() {
           if (isCancelled?.()) return
           setItems(res.items ?? [])
         })
-        .catch((e: Error) => {
+        .catch((e: unknown) => {
           if (isCancelled?.() || signal?.aborted) return
-          setError(e.message)
+          setError(extractApiError(e).message)
         })
         .finally(() => {
           if (isCancelled?.()) return
@@ -81,15 +86,15 @@ export default function UnitsPage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault()
-    if (!form.code.trim() || !form.name.trim()) {
-      setCreateError("代码和名称不能为空")
+    if (!form.name.trim()) {
+      setCreateError("名称不能为空")
       return
     }
     setCreating(true)
     setCreateError(null)
     try {
       await createUnit({
-        code: form.code.trim(),
+        code: form.code?.trim() || undefined,
         name: form.name.trim(),
         unit_type: form.unit_type,
       })
@@ -98,7 +103,7 @@ export default function UnitsPage() {
       setShowCreate(false)
       load()
     } catch (err) {
-      setCreateError(err instanceof Error ? err.message : String(err))
+      setCreateError(extractApiError(err).message)
     } finally {
       setCreating(false)
     }
@@ -122,11 +127,11 @@ export default function UnitsPage() {
       toast.success("已删除")
       load()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(extractApiError(err).message)
     }
   }
 
-  const columns: ColumnDef<UnitDef>[] = [
+  const allColumns: ColumnDef<UnitDef>[] = [
     {
       id: "code",
       header: "代码",
@@ -169,20 +174,24 @@ export default function UnitsPage() {
     },
   ]
 
+  const columns = allColumns.filter((c) => c.id !== "actions" || canEdit)
+
   return (
     <PageContainer width="default">
       <PageHeader
         title="单位"
         subtitle="商品和单据使用的计量单位 — 系统内置不可删，自定义可增删。"
         actions={
-          <Button
-            onClick={() => {
-              setShowCreate(true)
-              setCreateError(null)
-            }}
-          >
-            + 新建单位
-          </Button>
+          canEdit ? (
+            <Button
+              onClick={() => {
+                setShowCreate(true)
+                setCreateError(null)
+              }}
+            >
+              + 新建单位
+            </Button>
+          ) : undefined
         }
       />
 
@@ -191,14 +200,13 @@ export default function UnitsPage() {
           <h2 className="text-sm font-medium">新建单位</h2>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="space-y-1.5">
-              <Label htmlFor="unit-code">代码 *</Label>
+              <Label htmlFor="unit-code">代码</Label>
               <Input
                 id="unit-code"
-                required
                 maxLength={32}
                 value={form.code}
                 onChange={(e) => setForm({ ...form, code: e.target.value })}
-                placeholder="例如：carton"
+                placeholder="留空自动生成，如 carton"
               />
             </div>
             <div className="space-y-1.5">

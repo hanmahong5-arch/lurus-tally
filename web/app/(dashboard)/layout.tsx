@@ -6,7 +6,11 @@ import { ProfileProvider, type ProfileType } from "@/lib/profile"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { AccountDrawerProvider } from "@/components/account/account-drawer-provider"
 import { AccountDrawer } from "@/components/account/account-drawer"
+import { CashierModeContentGate, CashierModeProvider } from "@/components/cashier-mode-gate"
+import { SignOutWatcher } from "@/components/account/signout-watcher"
 import { RouteTransition } from "@/components/ui/route-transition"
+import { SubscriptionBanner } from "@/components/subscription-banner"
+import { WeChatOpenHint } from "@/components/wechat-open-hint"
 
 /**
  * Dashboard layout — wraps all routes in the (dashboard) group with a sidebar + header.
@@ -35,19 +39,27 @@ export default async function DashboardLayout({
     <UndoToastProvider>
       <ProfileProvider value={{ profileType }}>
         <AccountDrawerProvider>
+          <CashierModeProvider>
           {/* OfflineBanner: fixed top strip, shown only when navigator.onLine is false */}
           <OfflineBanner />
+          {/* Shared till: another tab signing out must not leave this back-office screen up for the next person */}
+          <SignOutWatcher />
           <div className="flex h-screen overflow-hidden">
             <DashboardSidebar />
             <main className="flex-1 overflow-y-auto">
+              <WeChatOpenHint />
+              <SubscriptionBanner />
               <MobileNav />
-              <RouteTransition>{children}</RouteTransition>
+              <CashierModeContentGate>
+                <RouteTransition>{children}</RouteTransition>
+              </CashierModeContentGate>
             </main>
             {/* AI assistant: ⌘K Command Palette + Cmd+J Drawer */}
             <GlobalAI />
             {/* Tier 2 account drawer — opened by sidebar AccountCard / palette */}
             <AccountDrawer />
           </div>
+          </CashierModeProvider>
         </AccountDrawerProvider>
       </ProfileProvider>
     </UndoToastProvider>

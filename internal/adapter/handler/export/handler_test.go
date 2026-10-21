@@ -13,6 +13,7 @@ import (
 
 	handlerexport "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/export"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
+	appexport "github.com/hanmahong5-arch/lurus-tally/internal/app/export"
 )
 
 func init() {
@@ -34,6 +35,10 @@ func (s *stubExporter) Execute(_ context.Context, _ uuid.UUID, w io.Writer) (int
 	return 1, err
 }
 
+func (s *stubExporter) ExecuteFiltered(ctx context.Context, tenantID uuid.UUID, _ appexport.BillsFilter, w io.Writer) (int, error) {
+	return s.Execute(ctx, tenantID, w)
+}
+
 // authMW injects tenantID into the Gin context.
 func authMW(tenantID uuid.UUID) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -42,7 +47,7 @@ func authMW(tenantID uuid.UUID) gin.HandlerFunc {
 	}
 }
 
-func buildEngine(bills, stock, payments handlerexport.Exporter, tenantID uuid.UUID, withAuth bool) *gin.Engine {
+func buildEngine(bills handlerexport.BillsExporter, stock, payments handlerexport.Exporter, tenantID uuid.UUID, withAuth bool) *gin.Engine {
 	r := gin.New()
 	api := r.Group("/api/v1")
 	if withAuth {
@@ -103,6 +108,9 @@ func TestExport_NoTenant_Returns401(t *testing.T) {
 		r.ServeHTTP(w, req)
 		if w.Code != http.StatusUnauthorized {
 			t.Errorf("path %s: want 401, got %d", path, w.Code)
+		}
+		if !strings.Contains(w.Body.String(), "请先登录") || strings.Contains(w.Body.String(), "tenant_id") {
+			t.Errorf("path %s: 401 must be plain Chinese: %s", path, w.Body.String())
 		}
 	}
 }

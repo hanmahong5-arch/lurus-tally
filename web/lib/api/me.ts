@@ -24,6 +24,8 @@ export interface MeResponse {
   is_owner: boolean
   profile_type: "" | "cross_border" | "retail" | "hybrid" | "horticulture"
   is_first_time: boolean
+  /** The name people know the shop by (print name, else the name given at setup). */
+  shop_name?: string
 }
 
 export type ProfileType = "cross_border" | "retail" | "horticulture"

@@ -276,7 +276,7 @@ func TestIdempotency_5xxNotCached(t *testing.T) {
 	}
 }
 
-func TestIdempotency_4xxIsCached(t *testing.T) {
+func TestIdempotency_4xxNotCached(t *testing.T) {
 	store := newMemStore()
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -296,14 +296,14 @@ func TestIdempotency_4xxIsCached(t *testing.T) {
 		req.Header.Set(middleware.HeaderIdempotencyKey, "k-bad")
 		r.ServeHTTP(w, req)
 	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Errorf("deterministic 4xx should be cached; ran %d times (want 1)", got)
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Errorf("4xx must not be cached so a corrected retry reaches the handler; ran %d times (want 2)", got)
 	}
 }
 
-// TestIdempotency_422IsCached verifies that a 422 (validation error) response is cached
-// — replaying the same bad payload should return the same error without re-running.
-func TestIdempotency_422IsCached(t *testing.T) {
+// TestIdempotency_422NotCached verifies that a 422 (validation error) response is NOT cached
+// — a corrected retry with the same key must reach the handler again.
+func TestIdempotency_422NotCached(t *testing.T) {
 	store := newMemStore()
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -326,8 +326,8 @@ func TestIdempotency_422IsCached(t *testing.T) {
 			t.Fatalf("call %d: expected 422, got %d", i, w.Code)
 		}
 	}
-	if got := atomic.LoadInt32(&calls); got != 1 {
-		t.Errorf("422 should be cached after first call; handler ran %d times (want 1)", got)
+	if got := atomic.LoadInt32(&calls); got != 3 {
+		t.Errorf("422 must not be cached; handler ran %d times (want 3)", got)
 	}
 }
 
@@ -467,5 +467,66 @@ func TestIdempotency_NilUUIDTenant_PassesThrough(t *testing.T) {
 	}
 	if got := atomic.LoadInt32(&calls); got != 2 {
 		t.Errorf("uuid.Nil tenant should not dedupe; got %d calls", got)
+	}
+}
+
+// TestIdempotency_SameKeyDifferentBody_Rejected: the same key with a different
+// payload (4 then 6) must not be replayed as the first result.
+func TestIdempotency_SameKeyDifferentBody_Rejected(t *testing.T) {
+	var calls int32
+	store := newMemStore()
+	r := newRouter(store, "tenant-a", &calls)
+
+	send := func(body string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		req, _ := http.NewRequest(http.MethodPost, "/things", strings.NewReader(body))
+		req.Header.Set(middleware.HeaderIdempotencyKey, "k-amt")
+		r.ServeHTTP(w, req)
+		return w
+	}
+	if w := send(`{"amount":"4"}`); w.Code != http.StatusCreated {
+		t.Fatalf("first: expected 201, got %d", w.Code)
+	}
+	w := send(`{"amount":"6"}`)
+	if w.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("second with different body: expected 422, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "idempotency_key_reused") {
+		t.Errorf("expected idempotency_key_reused, got %s", w.Body.String())
+	}
+	if got := atomic.LoadInt32(&calls); got != 1 {
+		t.Errorf("handler should have run once, ran %d", got)
+	}
+	// Same body still replays.
+	w = send(`{"amount":"4"}`)
+	if w.Code != http.StatusCreated || w.Header().Get(middleware.HeaderIdempotencyReplay) != "true" {
+		t.Errorf("identical body should replay, got %d", w.Code)
+	}
+}
+
+// A concurrent duplicate gets a 409 whose message is plain Chinese (it is
+// rendered verbatim by pages that do not special-case the code).
+func TestIdempotency_InFlight_MessageIsChinese(t *testing.T) {
+	var calls int32
+	store := newMemStore()
+	store.data["tally:idem:tenant-a:k1:lock"] = []byte("1")
+	r := newRouter(store, "tenant-a", &calls)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/things", nil)
+	req.Header.Set(middleware.HeaderIdempotencyKey, "k1")
+	r.ServeHTTP(w, req)
+
+	if w.Code != http.StatusConflict {
+		t.Fatalf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "idempotency_in_flight") {
+		t.Errorf("code missing: %s", w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "上一次提交还在处理，请稍等几秒再看结果") {
+		t.Errorf("message not the Chinese copy: %s", w.Body.String())
+	}
+	if atomic.LoadInt32(&calls) != 0 {
+		t.Error("handler must not run while the lock is held")
 	}
 }

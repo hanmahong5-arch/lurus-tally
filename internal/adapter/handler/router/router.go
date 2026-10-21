@@ -13,11 +13,13 @@ import (
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
+	handlercust "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/customer"
 	handlerdigest "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/digest"
 	handlerexport "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/export"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
 	handlerimporting "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/importing"
+	handlerinvoice "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/invoice"
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
 	handleronboarding "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/onboarding"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
@@ -28,6 +30,7 @@ import (
 	handlersearch "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/search"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlersupp "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/supplier"
+	handlerteam "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/team"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
 	handlerwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/warehouse"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
@@ -76,7 +79,7 @@ func notImplemented(c *gin.Context) {
 // The engine mode (release/debug) is controlled by GIN_MODE or gin.SetMode.
 //
 //nolint:cyclop // router wiring is intentionally long
-func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler, suph *handlersupp.Handler, wh *handlerwarehouse.Handler, exh *handlerexport.Handler, acct *handleracct.Handler, replh *handlerreplenish.Handler, reph *handlerreports.Handler, srch *handlersearch.Handler, imph *handlerimporting.Handler, digh *handlerdigest.Handler, onh *handleronboarding.Handler) *gin.Engine {
+func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, idempotencyMW gin.HandlerFunc, ph *handlerproduct.Handler, uh *handlerunit.Handler, ah *handlerAuth.Handler, pat *handlerAuth.PATHandler, sh *handlerstock.Handler, bh *handlerbill.Handler, ch *handlercurrency.Handler, saleh *handlerbill.SaleHandler, payh *handlerpayment.Handler, bilh *handlerbilling.Handler, aih *handlerai.Handler, dh *handlerhorticulture.DictHandler, projh *handlerproject.ProjectHandler, mh *handlermetrics.MetricsHandler, suph *handlersupp.Handler, wh *handlerwarehouse.Handler, exh *handlerexport.Handler, acct *handleracct.Handler, replh *handlerreplenish.Handler, reph *handlerreports.Handler, srch *handlersearch.Handler, imph *handlerimporting.Handler, digh *handlerdigest.Handler, onh *handleronboarding.Handler, custh *handlercust.Handler, invh *handlerinvoice.Handler, guards ...gin.HandlerFunc) *gin.Engine {
 	r := gin.New()
 	r.Use(gin.Recovery())
 	r.Use(middleware.RequestID())
@@ -111,6 +114,24 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 	if tenantDBMW != nil {
 		api.Use(tenantDBMW)
 	}
+	// Role gate: every route listed in permission.RoutePerm (audit, void, return,
+	// payments, billing, team, ...) needs the matching permission. The shop role
+	// is resolved together with the tenant pin (lifecycle wraps tenantDBMW with
+	// middleware.WithShopRole), so it runs after both and before any handler.
+	api.Use(middleware.EnforceRoutePerms())
+	// Lapsed plan => read-only shop (subscription guard injected by lifecycle).
+	for _, g := range guards {
+		if g != nil {
+			api.Use(g)
+		}
+	}
+	// Without cost.view the ⌘K search must not surface purchase bills (their
+	// numbers lead to documents the caller may not read).
+	api.Use(middleware.MarkCostHidden())
+	// The Monday card carries the estimated purchase amount (cost); trim it for
+	// roles without cost.view without touching that handler.
+	api.Use(middleware.TrimCostResponse("/api/v1/weekly-summary"))
+	api.Use(middleware.TrimTodoSummary("/api/v1/todo/summary"))
 	if idempotencyMW != nil {
 		api.Use(idempotencyMW)
 	}
@@ -130,6 +151,7 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 			api.GET("/me", notImplemented)
 			api.POST("/tenant/profile", notImplemented)
 			api.POST("/auth/logout", notImplemented)
+			handlerteam.RegisterNotConfigured(api, notImplemented)
 		}
 
 		// Personal Access Token CRUD (ADR-0011 Phase 2b).
@@ -149,6 +171,7 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 			products.PUT("/:id", productHandler(ph, (*handlerproduct.Handler).Update))
 			products.DELETE("/:id", productHandler(ph, (*handlerproduct.Handler).Delete))
 			products.POST("/:id/restore", productHandler(ph, (*handlerproduct.Handler).Restore))
+			products.GET("/:id/units", unitHandler(uh, (*handlerunit.Handler).ProductUnits))
 		}
 
 		units := api.Group("/units")
@@ -180,6 +203,8 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 			api.POST("/purchase-bills/:id/restore", notImplemented)
 			api.GET("/purchase-bills", notImplemented)
 			api.GET("/purchase-bills/:id", notImplemented)
+			api.GET("/receivables", notImplemented)
+			api.GET("/last-prices", notImplemented)
 		}
 
 		// Currency and exchange rate routes (Story 9.1).
@@ -226,11 +251,11 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 		if aih != nil {
 			aih.RegisterRoutes(api)
 		} else {
-			api.POST("/ai/chat", notImplemented)
-			api.GET("/ai/plans", notImplemented)
-			api.POST("/ai/plans/:plan_id/confirm", notImplemented)
-			api.POST("/ai/plans/:plan_id/cancel", notImplemented)
-			api.POST("/ai/plans/:plan_id/revert", notImplemented)
+			api.POST("/ai/chat", handlerai.NotConfigured)
+			api.GET("/ai/plans", handlerai.NotConfigured)
+			api.POST("/ai/plans/:plan_id/confirm", handlerai.NotConfigured)
+			api.POST("/ai/plans/:plan_id/cancel", handlerai.NotConfigured)
+			api.POST("/ai/plans/:plan_id/revert", handlerai.NotConfigured)
 		}
 
 		// Horticulture — nursery dictionary (Story 28.1).
@@ -269,6 +294,26 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 			api.POST("/suppliers/:id/restore", notImplemented)
 		}
 
+		// Customer list/get/create on tally.partner (partner_type='customer').
+		if custh != nil {
+			custh.RegisterRoutes(api)
+		} else {
+			api.GET("/customers", notImplemented)
+			api.POST("/customers", notImplemented)
+			api.GET("/customers/:id", notImplemented)
+		}
+
+		// Invoice registry: offline-issued tax invoices linked to approved bills.
+		if invh != nil {
+			invh.RegisterRoutes(api)
+		} else {
+			api.GET("/invoices", notImplemented)
+			api.POST("/invoices", notImplemented)
+			api.GET("/invoices/:id", notImplemented)
+			api.POST("/invoices/:id/void", notImplemented)
+			api.POST("/invoices/:id/red", notImplemented)
+		}
+
 		// Warehouse CRUD (W3.D1).
 		if wh != nil {
 			wh.RegisterRoutes(api)
@@ -289,6 +334,7 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 			api.GET("/exports/bills.csv", notImplemented)
 			api.GET("/exports/stock.csv", notImplemented)
 			api.GET("/exports/payments.csv", notImplemented)
+			api.GET("/exports/all.zip", notImplemented)
 		}
 
 		// Account-center (Phase 3). When acct is nil the routes return 501

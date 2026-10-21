@@ -69,11 +69,11 @@ func TestStockExport_ScanError_GenuineNullNumeric(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"code", "name", "warehouse", "qty", "cost"}
+	cols := []string{"code", "name", "warehouse", "qty", "cost", "value"}
 	// unit_cost NULL: driver returns nil for a Go `string` destination, which
 	// database/sql genuinely rejects ("converting NULL to string is
 	// unsupported") — this is a real Scan() failure, not a rows-iteration one.
-	rows := mock.NewRows(cols).AddRow("SKU1", "n", "w1", "1.0000", nil)
+	rows := mock.NewRows(cols).AddRow("SKU1", "n", "w1", "1.0000", nil, "0")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, stockRowLimit+1).
 		WillReturnRows(rows)
@@ -97,9 +97,9 @@ func TestBillsExport_ScanError_GenuineNullNumeric(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark"}
+	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark", "unpaid", "pay_state"}
 	// total_amount NULL: same genuine "converting NULL to string" Scan failure.
-	rows := mock.NewRows(cols).AddRow("B1", "t", int16(0), nil, "", "", nil, "1", "")
+	rows := mock.NewRows(cols).AddRow("B1", "t", int16(0), nil, "", "", nil, "1", "", "", "")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, billsRowLimit+1).
 		WillReturnRows(rows)
@@ -123,9 +123,9 @@ func TestPaymentsExport_ScanError_GenuineNullNumeric(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date"}
+	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date", "direction", "counted", "related_type"}
 	// amount NULL: same genuine "converting NULL to string" Scan failure.
-	rows := mock.NewRows(cols).AddRow("P1", "p1", nil, "cash", nil)
+	rows := mock.NewRows(cols).AddRow("P1", "p1", nil, "cash", nil, "out", true, "采购")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, paymentsRowLimit+1).
 		WillReturnRows(rows)
@@ -157,8 +157,8 @@ func TestStockExport_WriteRowError(t *testing.T) {
 	tenantID := uuid.New()
 
 	huge := strings.Repeat("x", 6000)
-	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost"}).
-		AddRow(huge, "n", "w1", "1", "1")
+	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost", "value"}).
+		AddRow(huge, "n", "w1", "1", "1", "0")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, stockRowLimit+1).
 		WillReturnRows(rows)
@@ -186,9 +186,9 @@ func TestBillsExport_WriteRowError(t *testing.T) {
 	tenantID := uuid.New()
 
 	huge := strings.Repeat("x", 6000)
-	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark"}
+	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark", "unpaid", "pay_state"}
 	rows := mock.NewRows(cols).
-		AddRow("B1", "t", int16(0), nil, "", "", "1", "1", huge)
+		AddRow("B1", "t", int16(0), nil, "", "", "1", "1", huge, "", "")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, billsRowLimit+1).
 		WillReturnRows(rows)
@@ -213,9 +213,9 @@ func TestPaymentsExport_WriteRowError(t *testing.T) {
 	tenantID := uuid.New()
 
 	huge := strings.Repeat("x", 6000)
-	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date"}
+	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date", "direction", "counted", "related_type"}
 	rows := mock.NewRows(cols).
-		AddRow(huge, "p1", "1", "cash", nil)
+		AddRow(huge, "p1", "1", "cash", nil, "out", true, "采购")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, paymentsRowLimit+1).
 		WillReturnRows(rows)
@@ -249,7 +249,7 @@ func TestStockExport_WriteTruncationTrailerError(t *testing.T) {
 
 	const rowLimit = 1
 	trailerMsg := fmt.Sprintf("数据超过 %d 行限制", rowLimit)
-	trailerRow := []string{"[截断]", trailerMsg, "", "", ""}
+	trailerRow := []string{"[截断]", trailerMsg, "", "", "", "", "", ""}
 	baseRowNoPad := []string{"P1", "n", "w1", "1", ""} // last field (cost) holds the padding
 
 	headerLen := csvBytesLen(t, stockHeader)
@@ -265,10 +265,10 @@ func TestStockExport_WriteTruncationTrailerError(t *testing.T) {
 	}
 	padded := strings.Repeat("p", padLen)
 
-	cols := []string{"code", "name", "warehouse", "qty", "cost"}
+	cols := []string{"code", "name", "warehouse", "qty", "cost", "value"}
 	rows := mock.NewRows(cols).
-		AddRow("P1", "n", "w1", "1", padded). // row 0: succeeds, fills buffer near-full
-		AddRow("P2", "n", "w2", "1", "1")     // extra (limit+1) row: scanned, then discarded for trailer
+		AddRow("P1", "n", "w1", "1", padded, "0"). // row 0: succeeds, fills buffer near-full
+		AddRow("P2", "n", "w2", "1", "1", "0")     // extra (limit+1) row: scanned, then discarded for trailer
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, rowLimit+1).
 		WillReturnRows(rows)
@@ -310,10 +310,10 @@ func TestBillsExport_WriteTruncationTrailerError(t *testing.T) {
 	}
 	padded := strings.Repeat("p", padLen)
 
-	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark"}
+	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark", "unpaid", "pay_state"}
 	rows := mock.NewRows(cols).
-		AddRow("B1", "t", int16(0), nil, "", "", "1", "1", padded).
-		AddRow("B2", "t", int16(0), nil, "", "", "1", "1", "")
+		AddRow("B1", "t", int16(0), nil, "", "", "1", "1", padded, "", "").
+		AddRow("B2", "t", int16(0), nil, "", "", "1", "1", "", "", "")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, rowLimit+1).
 		WillReturnRows(rows)
@@ -339,8 +339,8 @@ func TestPaymentsExport_WriteTruncationTrailerError(t *testing.T) {
 
 	const rowLimit = 1
 	trailerMsg := fmt.Sprintf("数据超过 %d 行限制", rowLimit)
-	trailerRow := []string{"[截断]", trailerMsg, "", "", ""}
-	baseRowNoPad := []string{"P1", "p1", "1", "cash", ""} // pay_type holds the padding
+	trailerRow := []string{"[截断]", trailerMsg, "", "", "", "", "", ""}
+	baseRowNoPad := []string{"P1", "p1", "1", "cash", "", "付", "是", "采购"} // pay_type holds the padding
 
 	headerLen := csvBytesLen(t, paymentsHeader)
 	baseLen := csvBytesLen(t, baseRowNoPad)
@@ -355,10 +355,10 @@ func TestPaymentsExport_WriteTruncationTrailerError(t *testing.T) {
 	}
 	padded := strings.Repeat("p", padLen)
 
-	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date"}
+	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date", "direction", "counted", "related_type"}
 	rows := mock.NewRows(cols).
-		AddRow("P1", "p1", "1", padded, nil).
-		AddRow("P2", "p1", "1", "cash", nil)
+		AddRow("P1", "p1", "1", padded, nil, "out", true, "采购").
+		AddRow("P2", "p1", "1", "cash", nil, "out", true, "采购")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, rowLimit+1).
 		WillReturnRows(rows)

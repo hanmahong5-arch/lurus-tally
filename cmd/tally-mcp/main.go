@@ -1,6 +1,6 @@
 // Command tally-mcp exposes Tally inventory data as an MCP (Model Context
-// Protocol) stdio server. AI agents (Claude Desktop, Cursor, OpenHuman, Cline,
-// Continue, …) can attach and query the user's inventory in natural language.
+// Protocol) stdio server. AI agents (desktop assistants, code editors, command-line agents,
+// …) can attach and query the user's inventory in natural language.
 //
 // V0 scope: read-only resources backed by the existing Tally REST API.
 // Auth: dev-mode X-Tenant-ID header; PAT (Personal Access Token) bearer is
@@ -12,7 +12,7 @@
 //	export TALLY_TENANT_ID=<uuid>
 //	go run ./cmd/tally-mcp
 //
-// Claude Desktop / OpenHuman config examples live in ADR-0011
+// Client config examples live in ADR-0011
 // (lurus/doc/decisions/0011-tally-mcp-server.md).
 package main
 

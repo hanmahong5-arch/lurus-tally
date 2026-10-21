@@ -2,6 +2,9 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
+
+	"github.com/google/uuid"
 
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
@@ -26,10 +29,40 @@ func (a importReturnCreator) Create(ctx context.Context, in appimporting.ReturnC
 			UnitPrice: it.UnitPrice,
 		}
 	}
+	warehouseID := in.WarehouseID
+	// A platform cancellation carries no lines: return the whole original sale, from
+	// the warehouse it shipped out of.
+	if len(items) == 0 {
+		if ref, ok := appbill.ParseOriginRef(in.Remark); ok && ref.BillID != uuid.Nil {
+			wh, cloned, err := a.uc.CloneOriginal(ctx, in.TenantID, ref.BillID)
+			if err != nil {
+				if errors.Is(err, appbill.ErrNothingToReverse) {
+					return nil, appimporting.ErrNothingToReverse
+				}
+				return nil, err
+			}
+			items = cloned
+			if warehouseID == nil {
+				warehouseID = wh
+			}
+		}
+	}
+	// A platform refund is capped to what the order still has left, so one that follows
+	// a cancellation (or the reverse) does not restock the same goods twice.
+	if len(in.Items) > 0 {
+		capped, err := a.uc.CapToRemaining(ctx, in.TenantID, in.Remark, items)
+		if err != nil {
+			if errors.Is(err, appbill.ErrNothingToReverse) {
+				return nil, appimporting.ErrNothingToReverse
+			}
+			return nil, err
+		}
+		items = capped
+	}
 	out, err := a.uc.Execute(ctx, appbill.CreateReturnRequest{
 		TenantID:    in.TenantID,
 		CreatorID:   in.CreatorID,
-		WarehouseID: in.WarehouseID,
+		WarehouseID: warehouseID,
 		BillDate:    in.BillDate,
 		Remark:      in.Remark,
 		Items:       items,
@@ -46,9 +79,13 @@ type importReturnApprover struct {
 }
 
 func (a importReturnApprover) Approve(ctx context.Context, in appimporting.ReturnApproverInput) error {
-	return a.uc.Execute(ctx, appbill.ApproveReturnRequest{
+	err := a.uc.Execute(ctx, appbill.ApproveReturnRequest{
 		TenantID:  in.TenantID,
 		BillID:    in.BillID,
 		CreatorID: in.CreatorID,
 	})
+	if errors.Is(err, appbill.ErrNothingToReverse) {
+		return appimporting.ErrNothingToReverse
+	}
+	return err
 }

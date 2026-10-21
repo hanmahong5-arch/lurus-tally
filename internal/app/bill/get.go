@@ -46,3 +46,19 @@ func (uc *GetPurchaseUseCase) Execute(ctx context.Context, tenantID, billID uuid
 
 	return &GetPurchaseOutput{Head: head, Items: items}, nil
 }
+
+// Head loads the bill head only, for callers that just need its type and status.
+// Returns ErrBillNotFound when the bill does not exist.
+func (uc *GetPurchaseUseCase) Head(ctx context.Context, tenantID, billID uuid.UUID) (*domain.BillHead, error) {
+	if tenantID == uuid.Nil {
+		return nil, fmt.Errorf("get purchase: tenant_id is required")
+	}
+	if billID == uuid.Nil {
+		return nil, fmt.Errorf("get purchase: bill_id is required")
+	}
+	head, err := uc.repo.GetBill(ctx, tenantID, billID)
+	if err != nil {
+		return nil, fmt.Errorf("get purchase: %w", err)
+	}
+	return head, nil
+}

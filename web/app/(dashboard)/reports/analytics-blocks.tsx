@@ -1,6 +1,8 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import { extractApiError } from "@/lib/api/errors"
+import { getTodoSummary } from "@/lib/api/todo"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card"
 import {
   fetchGrossMargin,
@@ -15,9 +17,25 @@ import {
   type SalesMetric,
 } from "@/lib/api/reports"
 
+/** The 「建议」buttons call the AI assistant, which answers 503 while it is switched off. */
+function useAiEnabled(): boolean {
+  const [enabled, setEnabled] = useState(false)
+  useEffect(() => {
+    const ctrl = new AbortController()
+    getTodoSummary({ signal: ctrl.signal })
+      .then((s) => {
+        if (!ctrl.signal.aborted) setEnabled(s?.ai_enabled === true)
+      })
+      .catch(() => {})
+    return () => ctrl.abort()
+  }, [])
+  return enabled
+}
+
 // ── Gross Margin Block ────────────────────────────────────────────────────────
 
 export function GrossMarginBlock() {
+  const aiEnabled = useAiEnabled()
   const [days, setDays] = useState(30)
   const [data, setData] = useState<GrossMarginResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -29,7 +47,7 @@ export function GrossMarginBlock() {
     setError(null)
     fetchGrossMargin(days, ac.signal)
       .then(setData)
-      .catch((e: Error) => { if (e.name !== "AbortError") setError(e.message) })
+      .catch((e: unknown) => { if ((e as Error)?.name !== "AbortError") setError(extractApiError(e).message) })
       .finally(() => setLoading(false))
     return () => ac.abort()
   }, [days])
@@ -37,10 +55,10 @@ export function GrossMarginBlock() {
   function handleExport() {
     if (!data) return
     const rows = [
-      ...data.top10.map((p) => ({ tier: "top10", name: p.name, avg_margin: p.avg_margin })),
-      ...data.bottom10.map((p) => ({ tier: "bottom10", name: p.name, avg_margin: p.avg_margin })),
+      ...data.top10.map((p) => ({ 类别: "毛利最高", 商品: p.name, 平均毛利率: p.avg_margin })),
+      ...data.bottom10.map((p) => ({ 类别: "毛利最低", 商品: p.name, 平均毛利率: p.avg_margin })),
     ]
-    downloadCSV(rows, `gross-margin-${days}d.csv`)
+    downloadCSV(rows, `毛利分析-近${days}天.csv`)
   }
 
   function fireCTA() {
@@ -56,7 +74,7 @@ export function GrossMarginBlock() {
       <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
         <div>
           <CardTitle className="text-base">毛利汇总</CardTitle>
-          <CardDescription>整体毛利率 + 高/低毛利 TOP10</CardDescription>
+          <CardDescription>整体毛利率 + 高/低毛利前 10 名</CardDescription>
         </div>
         <div className="flex items-center gap-2">
           <select
@@ -73,7 +91,7 @@ export function GrossMarginBlock() {
             disabled={!data}
             className="rounded-md border border-border bg-background px-2 py-1 text-xs hover:bg-muted/50 disabled:opacity-40"
           >
-            ↓ CSV
+            ↓ 导出表格
           </button>
         </div>
       </CardHeader>
@@ -107,12 +125,14 @@ export function GrossMarginBlock() {
                 </ul>
               </div>
             </div>
-            <button
-              onClick={fireCTA}
-              className="mt-2 w-full rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
-            >
-              建议调价 →
-            </button>
+            {aiEnabled && (
+              <button
+                onClick={fireCTA}
+                className="mt-2 w-full rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
+              >
+                建议调价 →
+              </button>
+            )}
           </div>
         )}
       </CardContent>
@@ -122,6 +142,8 @@ export function GrossMarginBlock() {
 
 // ── ABC Classification Block ──────────────────────────────────────────────────
 
+const TIER_LABELS: Record<string, string> = { a: "畅", b: "平", c: "滞" }
+
 const TIER_COLORS: Record<string, string> = {
   a: "bg-green-500",
   b: "bg-yellow-400",
@@ -129,6 +151,7 @@ const TIER_COLORS: Record<string, string> = {
 }
 
 export function ABCBlock() {
+  const aiEnabled = useAiEnabled()
   const [data, setData] = useState<ABCResult | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -139,7 +162,7 @@ export function ABCBlock() {
     setError(null)
     fetchABC(ac.signal)
       .then(setData)
-      .catch((e: Error) => { if (e.name !== "AbortError") setError(e.message) })
+      .catch((e: unknown) => { if ((e as Error)?.name !== "AbortError") setError(extractApiError(e).message) })
       .finally(() => setLoading(false))
     return () => ac.abort()
   }, [])
@@ -148,18 +171,18 @@ export function ABCBlock() {
     if (!data) return
     downloadCSV(
       [
-        { tier: "A", sku_count: data.a.sku_count, revenue_share: data.a.revenue_share },
-        { tier: "B", sku_count: data.b.sku_count, revenue_share: data.b.revenue_share },
-        { tier: "C", sku_count: data.c.sku_count, revenue_share: data.c.revenue_share },
+        { 分档: "畅销", 商品数: data.a.sku_count, 销售额占比: data.a.revenue_share },
+        { 分档: "平销", 商品数: data.b.sku_count, 销售额占比: data.b.revenue_share },
+        { 分档: "滞销", 商品数: data.c.sku_count, 销售额占比: data.c.revenue_share },
       ],
-      "abc-classification.csv",
+      "商品ABC分类.csv",
     )
   }
 
   function fireCTA() {
     window.dispatchEvent(
       new CustomEvent("tally:ai-query", {
-        detail: { query: "查看 A 类商品库存状态，判断是否需要补货" },
+        detail: { query: "查看畅销商品库存状态，判断是否需要补货" },
       }),
     )
   }
@@ -168,15 +191,15 @@ export function ABCBlock() {
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
         <div>
-          <CardTitle className="text-base">ABC 分类</CardTitle>
-          <CardDescription>按年销售额分层（A=前 80%，B=次 15%，C=末 5%）</CardDescription>
+          <CardTitle className="text-base">畅销 / 平销 / 滞销分档</CardTitle>
+          <CardDescription>按近一年销售额分档（畅销=前 80%，平销=次 15%，滞销=末 5%）</CardDescription>
         </div>
         <button
           onClick={handleExport}
           disabled={!data}
           className="rounded-md border border-border bg-background px-2 py-1 text-xs hover:bg-muted/50 disabled:opacity-40"
         >
-          ↓ CSV
+          ↓ 导出表格
         </button>
       </CardHeader>
       <CardContent>
@@ -191,11 +214,11 @@ export function ABCBlock() {
                   <span
                     className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold text-white ${TIER_COLORS[tier]}`}
                   >
-                    {tier.toUpperCase()}
+                    {TIER_LABELS[tier]}
                   </span>
                   <div className="flex-1">
                     <div className="flex justify-between text-sm">
-                      <span>{t.sku_count} 个 SKU</span>
+                      <span>{t.sku_count} 个商品</span>
                       <span className="tabular-nums font-medium">{t.revenue_share}</span>
                     </div>
                     <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-muted">
@@ -208,12 +231,14 @@ export function ABCBlock() {
                 </div>
               )
             })}
-            <button
-              onClick={fireCTA}
-              className="mt-2 w-full rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
-            >
-              A 类补货建议 →
-            </button>
+            {aiEnabled && (
+              <button
+                onClick={fireCTA}
+                className="mt-2 w-full rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
+              >
+                畅销品补货建议 →
+              </button>
+            )}
           </div>
         )}
       </CardContent>
@@ -224,6 +249,7 @@ export function ABCBlock() {
 // ── Dead Stock Block ──────────────────────────────────────────────────────────
 
 export function DeadStockBlock() {
+  const aiEnabled = useAiEnabled()
   const [days, setDays] = useState(90)
   const [data, setData] = useState<DeadStockResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -235,7 +261,7 @@ export function DeadStockBlock() {
     setError(null)
     fetchDeadStock(days, ac.signal)
       .then(setData)
-      .catch((e: Error) => { if (e.name !== "AbortError") setError(e.message) })
+      .catch((e: unknown) => { if ((e as Error)?.name !== "AbortError") setError(extractApiError(e).message) })
       .finally(() => setLoading(false))
     return () => ac.abort()
   }, [days])
@@ -244,13 +270,13 @@ export function DeadStockBlock() {
     if (!data) return
     downloadCSV(
       data.items.map((i) => ({
-        name: i.name,
-        code: i.code,
-        qty: i.qty,
-        value_cny: i.value_cny,
-        days_since_last_movement: i.days_since_last_movement,
+        商品: i.name,
+        编码: i.code,
+        库存数量: i.qty,
+        库存金额: i.value_cny,
+        未动销天数: i.days_since_last_movement,
       })),
-      `dead-stock-${days}d.csv`,
+      `滞销库存-${days}天以上.csv`,
     )
   }
 
@@ -287,7 +313,7 @@ export function DeadStockBlock() {
             disabled={!data}
             className="rounded-md border border-border bg-background px-2 py-1 text-xs hover:bg-muted/50 disabled:opacity-40"
           >
-            ↓ CSV
+            ↓ 导出表格
           </button>
         </div>
       </CardHeader>
@@ -318,15 +344,17 @@ export function DeadStockBlock() {
                 </ul>
                 {data.count > 8 && (
                   <p className="text-center text-xs text-muted-foreground">
-                    还有 {data.count - 8} 项，导出 CSV 查看全部
+                    还有 {data.count - 8} 项，导出表格查看全部
                   </p>
                 )}
-                <button
-                  onClick={fireCTA}
-                  className="mt-2 w-full rounded-md bg-orange-500/10 px-3 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-500/20 transition-colors dark:text-orange-400"
-                >
-                  建议清仓改价 →
-                </button>
+                {aiEnabled && (
+                  <button
+                    onClick={fireCTA}
+                    className="mt-2 w-full rounded-md bg-orange-500/10 px-3 py-1.5 text-xs font-medium text-orange-700 hover:bg-orange-500/20 transition-colors dark:text-orange-400"
+                  >
+                    建议清仓改价 →
+                  </button>
+                )}
               </>
             )}
           </div>
@@ -345,6 +373,7 @@ const METRIC_LABELS: Record<SalesMetric, string> = {
 }
 
 export function SalesTopBlock() {
+  const aiEnabled = useAiEnabled()
   const [metric, setMetric] = useState<SalesMetric>("revenue")
   const [days, setDays] = useState(7)
   const [data, setData] = useState<SalesTopResult | null>(null)
@@ -357,7 +386,7 @@ export function SalesTopBlock() {
     setError(null)
     fetchSalesTop(metric, days, 10, ac.signal)
       .then(setData)
-      .catch((e: Error) => { if (e.name !== "AbortError") setError(e.message) })
+      .catch((e: unknown) => { if ((e as Error)?.name !== "AbortError") setError(extractApiError(e).message) })
       .finally(() => setLoading(false))
     return () => ac.abort()
   }, [metric, days])
@@ -365,8 +394,8 @@ export function SalesTopBlock() {
   function handleExport() {
     if (!data) return
     downloadCSV(
-      data.top_products.map((p) => ({ rank: p.rank, name: p.name, [metric]: p.score })),
-      `sales-top-${metric}-${days}d.csv`,
+      data.top_products.map((p) => ({ 名次: p.rank, 商品: p.name, [METRIC_LABELS[metric]]: p.score })),
+      `销售排行-${METRIC_LABELS[metric]}-近${days}天.csv`,
     )
   }
 
@@ -385,7 +414,7 @@ export function SalesTopBlock() {
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-2 pb-2">
         <div>
-          <CardTitle className="text-base">销售 TopN</CardTitle>
+          <CardTitle className="text-base">销售排行</CardTitle>
           <CardDescription>指定指标 + 时间段内排名最高的商品</CardDescription>
         </div>
         <div className="flex items-center gap-2">
@@ -412,7 +441,7 @@ export function SalesTopBlock() {
             disabled={!data}
             className="rounded-md border border-border bg-background px-2 py-1 text-xs hover:bg-muted/50 disabled:opacity-40"
           >
-            ↓ CSV
+            ↓ 导出表格
           </button>
         </div>
       </CardHeader>
@@ -436,12 +465,14 @@ export function SalesTopBlock() {
                     </li>
                   ))}
                 </ol>
-                <button
-                  onClick={fireCTA}
-                  className="mt-2 w-full rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
-                >
-                  补货建议 →
-                </button>
+                {aiEnabled && (
+                  <button
+                    onClick={fireCTA}
+                    className="mt-2 w-full rounded-md bg-primary/10 px-3 py-1.5 text-xs font-medium text-primary hover:bg-primary/20 transition-colors"
+                  >
+                    补货建议 →
+                  </button>
+                )}
               </>
             )}
           </div>

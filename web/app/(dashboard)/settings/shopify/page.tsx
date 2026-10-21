@@ -23,7 +23,7 @@ import { ApiError } from "@/lib/api/errors"
  * ShopifyPage lets tenant admins self-service bind / unbind Shopify stores.
  *
  * Webhook URL to configure in Shopify Partner Dashboard:
- *   https://tally.lurus.cn/webhooks/shopify/orders
+ *   <NEXT_PUBLIC_TALLY_API_PUBLIC_URL 或当前 origin>/webhooks/shopify/orders
  * The signing secret must match SHOPIFY_WEBHOOK_SECRET in the backend env.
  */
 export default function ShopifyPage() {
@@ -36,6 +36,17 @@ export default function ShopifyPage() {
   const [binding, setBinding] = useState(false)
 
   const confirm = useConfirm()
+
+  // 公网地址来自 NEXT_PUBLIC_TALLY_API_PUBLIC_URL；缺省回落当前浏览器 origin。
+  // useEffect 里再取 origin，避免 SSR 与客户端首次渲染不一致。
+  const [webhookURL, setWebhookURL] = useState(
+    `${process.env.NEXT_PUBLIC_TALLY_API_PUBLIC_URL ?? ""}/webhooks/shopify/orders`,
+  )
+  useEffect(() => {
+    if (!process.env.NEXT_PUBLIC_TALLY_API_PUBLIC_URL) {
+      setWebhookURL(`${window.location.origin}/webhooks/shopify/orders`)
+    }
+  }, [])
 
   const reload = useCallback((signal?: AbortSignal) => {
     setLoading(true)
@@ -132,7 +143,7 @@ export default function ShopifyPage() {
           </li>
           <li>
             <code className="rounded bg-muted px-1 py-0.5 font-mono text-xs select-all">
-              https://tally.lurus.cn/webhooks/shopify/orders
+              {webhookURL}
             </code>
           </li>
           <li>

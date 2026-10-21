@@ -8,7 +8,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/hanmahong5-arch/lurus-tally/internal/app/entitlement"
+	appsku "github.com/hanmahong5-arch/lurus-tally/internal/app/sku"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/product"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/codegen"
 )
 
 // Repository defines the persistence interface required by product use cases.
@@ -24,27 +27,101 @@ type Repository interface {
 	Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.Product, error)
 }
 
+// SaveError is a create/update validation failure with a plain Chinese message.
+type SaveError struct{ Msg string }
+
+func (e *SaveError) Error() string { return e.Msg }
+
+// TxRunner runs fn atomically: repositories called with the context it passes
+// share one database transaction (commit on nil, rollback on error). nil means
+// "no transaction" and fn runs directly.
+type TxRunner interface {
+	InTx(ctx context.Context, fn func(ctx context.Context) error) error
+}
+
+func runAtomic(tx TxRunner, ctx context.Context, fn func(ctx context.Context) error) error {
+	if tx == nil {
+		return fn(ctx)
+	}
+	return tx.InTx(ctx, fn)
+}
+
 // CreateUseCase creates a new product in the catalogue.
 type CreateUseCase struct {
-	repo Repository
+	repo   Repository
+	codes  codegen.Source
+	prices appsku.DefaultSKUWriter
+	tx     TxRunner
+	guard  PlanGuard
+}
+
+// PlanGuard checks the plan's SKU limit before products are created.
+// *entitlement.Guard satisfies it; nil means no limit is applied.
+type PlanGuard interface {
+	Check(ctx context.Context, tenantID uuid.UUID, key string, delta int) error
+}
+
+// WithPlanGuard enables the max_skus plan check on single creates.
+func (uc *CreateUseCase) WithPlanGuard(g PlanGuard) *CreateUseCase {
+	uc.guard = g
+	return uc
 }
 
 // NewCreateUseCase constructs the use case with its required repository.
 func NewCreateUseCase(repo Repository) *CreateUseCase {
-	return &CreateUseCase{repo: repo}
+	return &CreateUseCase{repo: repo, codes: codegen.Default()}
 }
 
-// Execute validates the input and persists the new product.
+// WithCodeSource replaces the clock/randomness used for generated codes (tests).
+func (uc *CreateUseCase) WithCodeSource(s codegen.Source) *CreateUseCase {
+	uc.codes = s
+	return uc
+}
+
+// WithPriceWriter attaches the default-SKU price writer used by ExecuteWithPrices.
+func (uc *CreateUseCase) WithPriceWriter(w appsku.DefaultSKUWriter) *CreateUseCase {
+	uc.prices = w
+	return uc
+}
+
+// WithTx makes the product row and its default SKU commit (or roll back) together.
+func (uc *CreateUseCase) WithTx(tx TxRunner) *CreateUseCase {
+	uc.tx = tx
+	return uc
+}
+
+// ExecuteWithPrices creates the product and, when any price is given, upserts its
+// default SKU (retail / wholesale / purchase) in the same transaction. Prices are
+// validated before anything is written (failure is an *appsku.PriceError with a plain
+// Chinese message); blank prices leave the SKU absent so the POS falls back to manual entry.
+func (uc *CreateUseCase) ExecuteWithPrices(ctx context.Context, in domain.CreateInput, pi appsku.PriceInput) (*domain.Product, error) {
+	prices, err := appsku.ParsePrices(pi)
+	if err != nil {
+		return nil, err
+	}
+	return uc.create(ctx, in, prices)
+}
+
+// Execute validates the input and persists the new product (no prices).
+// An empty Code is server-assigned (P + yymmdd + 4 symbols, see codegen) and
+// regenerated on a unique violation; an explicit Code is used verbatim.
 // Returns the created product on success.
 func (uc *CreateUseCase) Execute(ctx context.Context, in domain.CreateInput) (*domain.Product, error) {
+	return uc.create(ctx, in, appsku.DefaultPrices{})
+}
+
+func (uc *CreateUseCase) create(ctx context.Context, in domain.CreateInput, prices appsku.DefaultPrices) (*domain.Product, error) {
 	if in.TenantID == uuid.Nil {
 		return nil, fmt.Errorf("create product: tenant_id is required")
 	}
-	if in.Code == "" {
-		return nil, fmt.Errorf("create product: code is required")
-	}
 	if in.Name == "" {
 		return nil, fmt.Errorf("create product: name is required")
+	}
+
+	if uc.guard != nil {
+		if err := uc.guard.Check(ctx, in.TenantID, entitlement.KeyMaxSKUs, 1); err != nil {
+			return nil, err
+		}
 	}
 
 	strategy := in.MeasurementStrategy
@@ -88,7 +165,23 @@ func (uc *CreateUseCase) Execute(ctx context.Context, in domain.CreateInput) (*d
 		UpdatedAt:           now,
 	}
 
-	if err := uc.repo.Create(ctx, p); err != nil {
+	// Each attempt is its own transaction: a unique violation aborts the tx, so the
+	// regenerated-code retry must start a fresh one.
+	err := uc.codes.Create(codegen.PrefixProduct, in.Code, codegen.IsUniqueViolation, func(code string) error {
+		p.Code = code
+		return runAtomic(uc.tx, ctx, func(ctx context.Context) error {
+			if err := uc.repo.Create(ctx, p); err != nil {
+				return err
+			}
+			if uc.prices != nil && !prices.IsEmpty() {
+				if err := uc.prices.UpsertDefaultSKU(ctx, p.TenantID, p.ID, prices); err != nil {
+					return fmt.Errorf("save prices: %w", err)
+				}
+			}
+			return nil
+		})
+	})
+	if err != nil {
 		return nil, fmt.Errorf("create product: %w", err)
 	}
 	return p, nil

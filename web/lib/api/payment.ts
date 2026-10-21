@@ -1,6 +1,6 @@
 /**
  * API wrapper for payment endpoints (Story 7.1).
- * Covers: record payment, list payments by bill.
+ * Covers: record payment (returns the saved payment), list payments by bill.
  */
 import { apiFetch } from "./client"
 import type { Payment } from "./sale"
@@ -31,10 +31,10 @@ export async function recordPayment(
 }
 
 export async function listPayments(billId: string, tenantId?: string): Promise<Payment[]> {
-  const result = await apiFetch<{ payments: Payment[] } | Payment[]>(
+  const result = await apiFetch<{ items: Payment[] } | Payment[]>(
     `/payments?bill_id=${encodeURIComponent(billId)}`,
     { tenantId },
   )
   if (Array.isArray(result)) return result
-  return (result as { payments: Payment[] }).payments ?? []
+  return result.items ?? []
 }

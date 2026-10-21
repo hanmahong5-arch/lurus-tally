@@ -73,8 +73,8 @@ func Internal(cause error) *Error {
 	return &Error{
 		Status:   http.StatusInternalServerError,
 		Code:     "internal_error",
-		Message:  "an internal error occurred",
-		Action:   "retry shortly; contact support if it keeps happening",
+		Message:  "系统出了点问题，请稍后再试；一直不行请联系客服",
+		Action:   "请稍后再试，一直不行请联系客服",
 		Internal: cause,
 	}
 }
@@ -84,8 +84,8 @@ func Unavailable(cause error) *Error {
 	return &Error{
 		Status:   http.StatusServiceUnavailable,
 		Code:     "service_unavailable",
-		Message:  "a downstream service is temporarily unavailable",
-		Action:   "retry shortly",
+		Message:  "系统暂时连不上，请稍后再试",
+		Action:   "请稍后再试",
 		Internal: cause,
 	}
 }
@@ -95,8 +95,8 @@ func BadGateway(cause error) *Error {
 	return &Error{
 		Status:   http.StatusBadGateway,
 		Code:     "bad_gateway",
-		Message:  "a downstream service returned an invalid response",
-		Action:   "retry shortly",
+		Message:  "系统返回了异常结果，请稍后再试",
+		Action:   "请稍后再试",
 		Internal: cause,
 	}
 }

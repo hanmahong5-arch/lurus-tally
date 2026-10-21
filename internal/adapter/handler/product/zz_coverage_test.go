@@ -215,9 +215,23 @@ func TestHandlerCreate_Cov(t *testing.T) {
 		{
 			name:       "use-case validation error -> 400 with err.Error(), not 500",
 			tenant:     covTenantStr,
-			body:       `{"code":"","name":"N"}`, // domain: code is required
+			body:       `{"code":"C1","name":""}`, // domain: name is required
 			wantStatus: http.StatusBadRequest,
-			wantBody:   "code is required",
+			wantBody:   "请填写商品名称",
+		},
+		{
+			name:       "empty code -> 201 with server-generated code",
+			tenant:     covTenantStr,
+			body:       `{"code":"","name":"Auto Code"}`,
+			wantStatus: http.StatusCreated,
+			wantBody:   `"code":"P`,
+		},
+		{
+			name:       "code omitted -> 201 with server-generated code",
+			tenant:     covTenantStr,
+			body:       `{"name":"Auto Code"}`,
+			wantStatus: http.StatusCreated,
+			wantBody:   `"code":"P`,
 		},
 		{
 			name:       "success -> 201",
@@ -469,8 +483,8 @@ func TestHandlerUpdate_Cov(t *testing.T) {
 		if w.Code != http.StatusBadRequest {
 			t.Fatalf("status = %d, want 400; body=%s", w.Code, w.Body.String())
 		}
-		if !strings.Contains(w.Body.String(), "invalid measurement_strategy") {
-			t.Errorf("body = %s, want 'invalid measurement_strategy'", w.Body.String())
+		if !strings.Contains(w.Body.String(), "商品信息填写有误") {
+			t.Errorf("body = %s, want '商品信息填写有误'", w.Body.String())
 		}
 	})
 

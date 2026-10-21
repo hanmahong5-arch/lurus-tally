@@ -3,7 +3,7 @@
 import { useRef, useState } from "react"
 import Link from "next/link"
 import { type AIPlan, type ConfirmPlanResult, confirmPlan, cancelPlan, revertPlan } from "@/lib/api/ai"
-import { ApiError } from "@/lib/api/errors"
+import { ApiError, extractApiError } from "@/lib/api/errors"
 import { cancelPurchaseBill } from "@/lib/api/purchase"
 import { globalUndoStack } from "@/lib/undo/undo-stack"
 import { trackEvent } from "@/lib/telemetry"
@@ -20,6 +20,25 @@ function planKind(type: string): "replenishment" | "movement" | "transfer" | "ot
     default:
       return "other"
   }
+}
+
+// DraftFlag is one deterministic-rule finding the backend attached to a draft
+// (quantity differs from what was said, far above recent orders, price far from
+// last time, lines not adding up to the stated total). `line` is the 0-based
+// sample row, or -1 for the whole document.
+interface DraftFlag {
+  line: number
+  code: string
+  message: string
+}
+
+function parseFlags(payload: AIPlan["payload"] | undefined): DraftFlag[] {
+  const raw = payload?.flags
+  if (!Array.isArray(raw)) return []
+  return raw.filter(
+    (f): f is DraftFlag =>
+      !!f && typeof f === "object" && typeof (f as DraftFlag).line === "number" && typeof (f as DraftFlag).message === "string",
+  )
 }
 
 interface PlanCardProps {
@@ -43,6 +62,11 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
   // Synchronous in-flight latch — prevents the extra-fast double click that fires
   // before React commits the "confirming" state and toggles the disabled prop.
   const inFlightRef = useRef(false)
+  // Flagged drafts need every flagged line ticked before "确认执行" unlocks.
+  const flags = parseFlags(plan.payload)
+  const [ticked, setTicked] = useState<Record<number, boolean>>({})
+  const flaggedLines = new Set(flags.filter((f) => f.line >= 0).map((f) => f.line))
+  const allTicked = flags.every((_, i) => ticked[i])
 
   // handleDismissFailed is used in the failed terminal branch to call cancelPlan
   // and remove the plan from the list (same semantics as handleCancel, but
@@ -112,12 +136,14 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
   }
 
   const handleConfirm = async () => {
+    if (!allTicked) return
     if (inFlightRef.current) return
     inFlightRef.current = true
     setStatus("confirming")
     setError(null)
     try {
-      const res = await confirmPlan(plan.id)
+      const acknowledged = flags.map((_, i) => i).filter((i) => ticked[i])
+      const res = await confirmPlan(plan.id, acknowledged)
       setResult(res)
       setOutcome("confirmed")
       trackEvent("plan_accept_rate", { plan_id: plan.id, kind: planKind(plan.type), accepted: "1" })
@@ -165,7 +191,7 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
         setOutcome("failed")
         setError(err.message)
       } else {
-        setError(err instanceof Error ? err.message : String(err))
+        setError(extractApiError(err).message)
       }
       setStatus("idle")
     } finally {
@@ -184,7 +210,7 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
       trackEvent("plan_accept_rate", { plan_id: plan.id, kind: planKind(plan.type), accepted: "0" })
       onCancelled?.()
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(extractApiError(err).message)
       setStatus("idle")
     } finally {
       inFlightRef.current = false
@@ -219,14 +245,19 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
               </tr>
             </thead>
             <tbody>
-              {plan.preview.sample_rows.slice(0, 5).map((row, i) => (
-                <tr key={i} className="border-t border-border">
+              {/* A flagged draft shows every row so no flagged line hides behind "...还有 N 条". */}
+              {plan.preview.sample_rows.slice(0, flags.length > 0 ? undefined : 5).map((row, i) => (
+                <tr
+                  key={i}
+                  className={`border-t border-border ${flaggedLines.has(i) ? "bg-destructive/10" : ""}`}
+                  data-testid={flaggedLines.has(i) ? "plan-row-flagged" : undefined}
+                >
                   <td className="px-2 py-1 text-foreground">{row.name}</td>
                   <td className="px-2 py-1 text-muted-foreground">{row.before}</td>
-                  <td className="px-2 py-1 text-foreground">{row.after}</td>
+                  <td className={`px-2 py-1 ${flaggedLines.has(i) ? "font-medium text-destructive" : "text-foreground"}`}>{row.after}</td>
                 </tr>
               ))}
-              {plan.preview.sample_rows.length > 5 && (
+              {flags.length === 0 && plan.preview.sample_rows.length > 5 && (
                 <tr className="border-t border-border">
                   <td colSpan={3} className="px-2 py-1 text-center text-muted-foreground">
                     ...还有 {plan.preview.sample_rows.length - 5} 条
@@ -235,6 +266,29 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
               )}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* Line-by-line confirmation for drafts the rules flagged */}
+      {flags.length > 0 && (
+        <div className="mb-3 rounded border border-destructive/40 bg-destructive/5 p-2" data-testid="plan-flags">
+          <p className="mb-1 text-xs font-medium text-destructive">下面几项可能有误，请逐项核对后打勾：</p>
+          <ul className="space-y-1">
+            {flags.map((f, i) => (
+              <li key={i}>
+                <label className="flex items-start gap-2 text-xs text-foreground">
+                  <input
+                    type="checkbox"
+                    checked={!!ticked[i]}
+                    onChange={(e) => setTicked((prev) => ({ ...prev, [i]: e.target.checked }))}
+                    data-testid="plan-flag-check"
+                    className="mt-0.5"
+                  />
+                  <span>{f.message}</span>
+                </label>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -249,7 +303,7 @@ export function PlanCard({ plan, onConfirmed, onCancelled }: PlanCardProps) {
       <div className="flex items-center gap-2">
         <button
           onClick={handleConfirm}
-          disabled={status !== "idle"}
+          disabled={status !== "idle" || !allTicked}
           data-testid="plan-confirm-btn"
           className="rounded bg-destructive px-3 py-1.5 text-xs font-medium text-destructive-foreground hover:bg-destructive/90 disabled:opacity-50"
         >

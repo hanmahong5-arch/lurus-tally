@@ -261,9 +261,9 @@ func TestImportOrders_CreatorIDFallback(t *testing.T) {
 			wantFn: func(uuid.UUID) uuid.UUID { return validSub },
 		},
 		{
-			name:   "non-uuid idp subject falls back to tenant id",
+			name:   "non-uuid idp subject maps to derived id",
 			idpSub: "not-a-uuid-subject",
-			wantFn: func(tenant uuid.UUID) uuid.UUID { return tenant },
+			wantFn: nil,
 		},
 	}
 
@@ -282,6 +282,12 @@ func TestImportOrders_CreatorIDFallback(t *testing.T) {
 
 			if rec.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200; body=%s", rec.Code, rec.Body.String())
+			}
+			if tc.wantFn == nil {
+				if uc.gotReq.CreatorID == tenant || uc.gotReq.CreatorID == uuid.Nil {
+					t.Fatalf("CreatorID = %s, want derived id distinct from tenant", uc.gotReq.CreatorID)
+				}
+				return
 			}
 			want := tc.wantFn(tenant)
 			if uc.gotReq.CreatorID != want {

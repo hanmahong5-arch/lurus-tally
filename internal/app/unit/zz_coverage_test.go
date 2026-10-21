@@ -80,11 +80,6 @@ func TestCreateUseCase_Execute_ValidationRejectsBeforeRepoCall(t *testing.T) {
 			wantErr: "tenant_id is required",
 		},
 		{
-			name:    "empty code",
-			in:      domain.CreateInput{TenantID: validTenant, Code: "", Name: "Piece", UnitType: domain.UnitTypeCount},
-			wantErr: "code is required",
-		},
-		{
 			name:    "empty name",
 			in:      domain.CreateInput{TenantID: validTenant, Code: "PCS", Name: "", UnitType: domain.UnitTypeCount},
 			wantErr: "name is required",

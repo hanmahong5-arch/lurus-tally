@@ -40,6 +40,8 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
   }
   const ct = req.headers.get("content-type")
   if (ct) headers.set("Content-Type", ct)
+  const ik = req.headers.get("idempotency-key")
+  if (ik) headers.set("Idempotency-Key", ik)
 
   const init: RequestInit = {
     method: req.method,
@@ -50,10 +52,25 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     init.body = await req.text()
   }
 
-  const upstream = await fetch(url, init)
+  let upstream: Response
+  try {
+    upstream = await fetch(url, init)
+  } catch {
+    // Backend unreachable / connection dropped: a recognisable 502 lets the
+    // browser treat it as a lost response (keep its Idempotency-Key).
+    return NextResponse.json({ error: "upstream_unreachable" }, { status: 502 })
+  }
   const respHeaders = new Headers()
   const upstreamCT = upstream.headers.get("content-type")
   if (upstreamCT) respHeaders.set("content-type", upstreamCT)
+  // Keep the download filename chosen by the backend (exports/*.csv).
+  const upstreamCD = upstream.headers.get("content-disposition")
+  if (upstreamCD) respHeaders.set("content-disposition", upstreamCD)
+
+  // Pass the backend request id through so the browser can attach it to
+  // web_error reports and support can correlate with backend logs.
+  const upstreamRID = upstream.headers.get("x-request-id")
+  if (upstreamRID) respHeaders.set("x-request-id", upstreamRID)
 
   return new NextResponse(upstream.body, {
     status: upstream.status,

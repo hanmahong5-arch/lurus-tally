@@ -12,10 +12,13 @@ import {
 import { ProductForm } from "@/components/product-form"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useTenantId } from "@/hooks/use-tenant-id"
+import { useRole } from "@/hooks/use-role"
+import { EmptyState } from "@/components/ui/empty-state"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { Skeleton } from "@/components/ui/skeleton"
+import { extractApiError } from "@/lib/api/errors"
 
 export default function ProductDetailPage() {
   const router = useRouter()
@@ -26,6 +29,7 @@ export default function ProductDetailPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const tenantId = useTenantId()
+  const { known, can } = useRole()
 
   const load = useCallback((signal: AbortSignal, isCancelled: () => boolean) => {
     if (!id) return
@@ -38,7 +42,7 @@ export default function ProductDetailPage() {
       })
       .catch((e) => {
         if (isCancelled() || signal.aborted) return
-        setError(String(e))
+        setError(extractApiError(e).message)
       })
       .finally(() => {
         if (isCancelled()) return
@@ -52,6 +56,15 @@ export default function ProductDetailPage() {
     await updateProduct(id, input, tenantId)
     router.push("/products")
     router.refresh()
+  }
+
+  if (known && !can("product.write")) {
+    return (
+      <PageContainer width="narrow">
+        <PageHeader title="编辑商品" />
+        <EmptyState title="你没有修改商品的权限" description="商品只有老板、店长、店员可以修改，请找老板或店长" />
+      </PageContainer>
+    )
   }
 
   if (loading) {

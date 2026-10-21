@@ -24,6 +24,13 @@ type EntitlementChecker interface {
 //   - entitlement absent → 403 feature_not_in_plan
 //   - granted / degraded → next (the checker fails open on platform outage)
 func RequireEntitlement(checker EntitlementChecker, key string) gin.HandlerFunc {
+	return RequireEntitlementCode(checker, key, "feature_not_in_plan")
+}
+
+// RequireEntitlementCode is RequireEntitlement with a caller-chosen stable
+// error code for the 403 body, so a client can key a friendly empty state off
+// it (the AI gate uses "ai_not_entitled").
+func RequireEntitlementCode(checker EntitlementChecker, key, code string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		allowed, err := checker.Has(c.Request.Context(), GetTenantID(c), key)
 		if err != nil {
@@ -35,8 +42,8 @@ func RequireEntitlement(checker EntitlementChecker, key string) gin.HandlerFunc 
 		}
 		if !allowed {
 			c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
-				"error":       "feature_not_in_plan",
-				"message":     "this feature requires a higher subscription plan",
+				"error":       code,
+				"message":     "当前套餐不包含此功能，请升级套餐",
 				"entitlement": key,
 			})
 			return

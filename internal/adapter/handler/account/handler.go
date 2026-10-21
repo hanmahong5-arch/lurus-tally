@@ -26,6 +26,10 @@ type Handler struct {
 	getProfile    *appacct.GetProfile
 	setAvatar     *appacct.SetAvatar
 	getAvatar     *appacct.GetAvatar
+	getPrint      *appacct.GetPrintSettings
+	putPrint      *appacct.PutPrintSettings
+	getCashier    *appacct.GetCashierMode
+	setCashier    *appacct.SetCashierMode
 }
 
 // New constructs a Handler from the wired use cases.
@@ -59,6 +63,15 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.PUT("/account/profile", h.UpdateProfile)
 	rg.POST("/account/avatar", h.UploadAvatar)
 	rg.GET("/account/avatar", h.DownloadAvatar)
+	if h.getPrint != nil && h.putPrint != nil {
+		rg.GET("/tenant/print-settings", h.GetPrintSettings)
+		rg.PUT("/tenant/print-settings", h.PutPrintSettings)
+	}
+	if h.getCashier != nil && h.setCashier != nil {
+		rg.GET("/tenant/cashier-mode", h.GetCashierMode)
+		rg.PUT("/tenant/cashier-mode", h.PutCashierMode)
+		rg.POST("/tenant/cashier-mode/verify", h.VerifyCashierPin)
+	}
 }
 
 // AvatarUploadMax bounds the multipart body to AvatarSizeMax + 16KB header
@@ -104,10 +117,12 @@ func (h *Handler) ListSessions(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"items": out})
 }
 
-// RevokeSession marks the targeted session row revoked.
+// RevokeSession marks the targeted session row revoked. Only the caller's own
+// sessions can be revoked; any other id is a silent no-op.
 func (h *Handler) RevokeSession(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
-	if tenantID == uuid.Nil {
+	userID := middleware.GetIDPSubject(c)
+	if tenantID == uuid.Nil || userID == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
 		return
 	}
@@ -116,7 +131,7 @@ func (h *Handler) RevokeSession(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "validation_error", "detail": "invalid id"})
 		return
 	}
-	if err := h.revokeSession.Execute(c.Request.Context(), tenantID, id); err != nil {
+	if err := h.revokeSession.Execute(c.Request.Context(), tenantID, userID, id); err != nil {
 		httperr.WriteInternal(c, err)
 		return
 	}

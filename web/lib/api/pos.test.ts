@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest"
 import {
   quickCheckout,
   listTodaySaleBills,
+  getPosSummary,
+  beijingToday,
   type QuickCheckoutRequest,
 } from "./pos"
 
@@ -137,5 +139,43 @@ describe("listTodaySaleBills", () => {
     const [url] = mockFetch.mock.calls[0]
     expect(url).toContain("date_from=")
     expect(url).toContain("date_to=")
+  })
+})
+
+describe("beijingToday", () => {
+  it("TestPosApi_BeijingToday_CutsAtBeijingMidnight: 23:30 UTC is already the next day in Beijing", () => {
+    expect(beijingToday(new Date("2026-10-09T23:30:00Z"))).toBe("2026-10-10")
+    expect(beijingToday(new Date("2026-10-09T15:59:00Z"))).toBe("2026-10-09")
+  })
+})
+
+describe("getPosSummary", () => {
+  it("TestPosApi_GetPosSummary_HitsEndpointWithDate", async () => {
+    const body = { date: "2026-10-10", count: 3, by_pay_type: [] }
+    mockFetch.mockReturnValue(makeOkResponse(body))
+    const result = await getPosSummary("2026-10-10")
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain("/sale-bills/pos-summary?date=2026-10-10")
+    expect(result.count).toBe(3)
+  })
+})
+
+describe("getPosSummary cashier", () => {
+  it("TestPosApi_GetPosSummary_SendsCashierKey", async () => {
+    mockFetch.mockReturnValue(makeOkResponse({ date: "2026-10-10", count: 1, by_pay_type: [] }))
+    await getPosSummary(undefined, undefined, undefined, false, "key-1")
+    const [url] = mockFetch.mock.calls[0]
+    expect(url).toContain("cashier=key-1")
+    expect(url).not.toContain("mine=")
+  })
+})
+
+describe("quickCheckout idempotency", () => {
+  it("TestPosApi_QuickCheckout_UsesGivenIdempotencyKey", async () => {
+    mockFetch.mockReturnValue(makeOkResponse({ bill_id: "b", bill_no: "n", total_amount: "1", receivable_amount: "0" }))
+    await quickCheckout(sampleRequest, undefined, "key-123")
+    const [, init] = mockFetch.mock.calls[0]
+    const headers = init?.headers as Record<string, string>
+    expect(headers["Idempotency-Key"]).toBe("key-123")
   })
 })

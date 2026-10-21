@@ -42,7 +42,7 @@ const AuditLogMax = 200
 type SessionRepo interface {
 	Upsert(ctx context.Context, s *domain.Session) error
 	List(ctx context.Context, tenantID uuid.UUID, userID string) ([]*domain.Session, error)
-	Revoke(ctx context.Context, tenantID uuid.UUID, id uuid.UUID) error
+	Revoke(ctx context.Context, tenantID uuid.UUID, userID string, id uuid.UUID) error
 	Touch(ctx context.Context, tenantID uuid.UUID, userID, userAgent string) error
 }
 
@@ -98,16 +98,26 @@ func (uc *ListSessions) Execute(ctx context.Context, tenantID uuid.UUID, userID 
 	return uc.repo.List(ctx, tenantID, userID)
 }
 
-// RevokeSession marks a session as revoked. Idempotent: revoking a missing
-// or already-revoked session returns nil.
+// RevokeSession marks one of the caller's own sessions as revoked. Idempotent:
+// revoking a missing, already-revoked or someone else's session returns nil
+// and touches nothing, so a session id never reveals whose it is.
 type RevokeSession struct{ repo SessionRepo }
 
 // NewRevokeSession constructs the use case.
 func NewRevokeSession(r SessionRepo) *RevokeSession { return &RevokeSession{repo: r} }
 
 // Execute revokes the session.
-func (uc *RevokeSession) Execute(ctx context.Context, tenantID, id uuid.UUID) error {
-	return uc.repo.Revoke(ctx, tenantID, id)
+func (uc *RevokeSession) Execute(ctx context.Context, tenantID uuid.UUID, userID string, id uuid.UUID) error {
+	own, err := uc.repo.List(ctx, tenantID, userID)
+	if err != nil {
+		return err
+	}
+	for _, s := range own {
+		if s.ID == id {
+			return uc.repo.Revoke(ctx, tenantID, userID, id)
+		}
+	}
+	return nil
 }
 
 // ---- Audit use cases -------------------------------------------------------

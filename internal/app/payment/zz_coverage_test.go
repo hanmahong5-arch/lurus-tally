@@ -316,7 +316,7 @@ func TestZZRecordPayment_OverPayBoundary(t *testing.T) {
 		if err == nil {
 			t.Fatal("expected over-payment error, got nil")
 		}
-		if !strings.Contains(err.Error(), "would exceed bill total") {
+		if !strings.Contains(err.Error(), "超过待") {
 			t.Errorf("error = %q, want over-payment message", err.Error())
 		}
 		if payRepo.recordCall {
@@ -390,8 +390,8 @@ func TestZZRecordPayment_PartnerID_NilWhenBillHasNone(t *testing.T) {
 	}
 }
 
-func TestZZRecordPayment_PayType_InvalidFallsBackToCash(t *testing.T) {
-	cases := []string{"", "bogus-pay-type", "BITCOIN"}
+func TestZZRecordPayment_PayType_EmptyFallsBackToCash(t *testing.T) {
+	cases := []string{""}
 	for _, pt := range cases {
 		t.Run(pt, func(t *testing.T) {
 			billRepo := &zzBillReader{bill: approvedBill(testBillID, decimal.NewFromFloat(100), nil)}
@@ -409,6 +409,21 @@ func TestZZRecordPayment_PayType_InvalidFallsBackToCash(t *testing.T) {
 				t.Errorf("PayType = %q, want fallback %q", payRepo.recorded.PayType, domainpayment.PayTypeCash)
 			}
 		})
+	}
+}
+
+func TestZZRecordPayment_PayType_UnknownRejected(t *testing.T) {
+	for _, pt := range []string{"bogus-pay-type", "BITCOIN"} {
+		billRepo := &zzBillReader{bill: approvedBill(testBillID, decimal.NewFromFloat(100), nil)}
+		payRepo := &zzPaymentRepo{sumVal: decimal.Zero}
+		uc := apppayment.NewRecordPaymentUseCase(billRepo, payRepo)
+		err := uc.Execute(context.Background(), apppayment.RecordPaymentRequest{
+			TenantID: testTenantID, BillID: testBillID, CreatorID: testCreatorID,
+			Amount: decimal.NewFromFloat(10), PayType: pt,
+		})
+		if !errors.Is(err, apppayment.ErrInvalidPayType) {
+			t.Errorf("pay_type %q: err = %v, want ErrInvalidPayType", pt, err)
+		}
 	}
 }
 
@@ -443,7 +458,7 @@ func TestZZRecordPayment_DraftBill_RejectedInsideTx(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for non-approved bill")
 	}
-	if !strings.Contains(err.Error(), "bill must be approved") {
+	if !errors.Is(err, apppayment.ErrBillNotApproved) {
 		t.Errorf("error = %q, want approved-status message", err.Error())
 	}
 	if billRepo.withTxCalls != 1 {

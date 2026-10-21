@@ -4,9 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react"
 
 import { MessageList, type UIMessage } from "@/components/ai-assistant/MessageList"
 import { streamChat, type AIPlan } from "@/lib/api/ai"
+import { AINotConfigured } from "@/components/ai-assistant/AINotConfigured"
+import { AI_NOT_ENTITLED_ERR, useAIAvailability } from "@/components/ai-assistant/ai-availability"
+import { AI_HISTORY_KEY } from "@/lib/device-keys"
 import { Button } from "@/components/ui/button"
 
-const STORAGE_KEY = "tally_ai_history"
+const STORAGE_KEY = AI_HISTORY_KEY
 const MAX_STORED_MESSAGES = 50
 
 function loadHistory(): UIMessage[] {
@@ -47,6 +50,10 @@ export function AIPage() {
   const [messages, setMessages] = useState<UIMessage[]>(loadHistory)
   const [input, setInput] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  // Probed once on mount (and flipped by a send that learns the assistant is
+  // not enabled): "未开通" shows the empty state and stops all sends.
+  const { availability, markUnavailable } = useAIAvailability()
+  const notConfigured = availability === "not_configured" || availability === "not_entitled"
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const cancelRef = useRef<(() => void) | null>(null)
@@ -62,7 +69,7 @@ export function AIPage() {
   const send = useCallback(
     (text: string) => {
       const q = text.trim()
-      if (!q || isLoading) return
+      if (!q || isLoading || notConfigured) return
 
       setInput("")
       const history = messages
@@ -114,9 +121,30 @@ export function AIPage() {
             return updated
           })
         },
+        onNotConfigured: () => {
+          setIsLoading(false)
+          cancelRef.current = null
+          markUnavailable("not_configured")
+          // Drop the unanswered turn (user message + empty assistant placeholder).
+          setMessages((prev) => {
+            const updated = prev.slice(0, -2)
+            saveHistory(updated)
+            return updated
+          })
+        },
         onError: (err) => {
           setIsLoading(false)
           cancelRef.current = null
+          if (err === AI_NOT_ENTITLED_ERR) {
+            // 403 from the plan gate: same empty state, not an error bubble.
+            markUnavailable("not_entitled")
+            setMessages((prev) => {
+              const updated = prev.slice(0, -2)
+              saveHistory(updated)
+              return updated
+            })
+            return
+          }
           setMessages((prev) => {
             const updated = [...prev]
             const last = updated[updated.length - 1]
@@ -134,7 +162,7 @@ export function AIPage() {
       })
       cancelRef.current = cancel
     },
-    [isLoading, messages],
+    [isLoading, notConfigured, messages, markUnavailable],
   )
 
   function handleKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -168,7 +196,7 @@ export function AIPage() {
 
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl">
-          <MessageList messages={messages} />
+          {notConfigured ? <AINotConfigured reason={availability === "not_entitled" ? "not_entitled" : "not_configured"} /> : <MessageList messages={messages} />}
           <div ref={messagesEndRef} />
         </div>
       </div>
@@ -200,10 +228,10 @@ export function AIPage() {
             onKeyDown={handleKey}
             rows={1}
             placeholder="问我关于库存、销售、客户的问题..."
-            disabled={isLoading}
+            disabled={isLoading || notConfigured}
             className="flex-1 resize-none rounded-lg border border-input bg-transparent px-3 py-2 text-sm transition-colors placeholder:text-muted-foreground/60 focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 focus:outline-none disabled:opacity-50"
           />
-          <Button type="button" size="lg" onClick={() => send(input)} disabled={isLoading || !input.trim()}>
+          <Button type="button" size="lg" onClick={() => send(input)} disabled={isLoading || notConfigured || !input.trim()}>
             {isLoading ? "..." : "发送"}
           </Button>
         </div>

@@ -57,7 +57,7 @@ func parseAssumptions(path string) ([]alert.Snapshot, error) {
 	}
 	defer func() { _ = f.Close() }()
 
-	// Kill-switch thresholds (matching CLAUDE.md definitions).
+	// Kill-switch thresholds (matching the project kill-switch definitions).
 	const (
 		thresholdKS1 = 0.40
 		thresholdKS2 = 0.20

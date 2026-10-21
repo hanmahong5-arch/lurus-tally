@@ -2,31 +2,23 @@
 
 import Link from "next/link"
 import { useEffect, useState } from "react"
-import { signOut } from "next-auth/react"
 
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useConfirm } from "@/hooks/useConfirm"
+import { roleLabel, useRole } from "@/hooks/use-role"
 import {
   computeStatusLight,
   daysUntilExpiry,
-  fetchAccountSummary,
   type AccountSummary,
 } from "@/lib/api/account"
+import { signOutForSwitch } from "./switch-user"
+import { loadAccountSummary } from "./load-summary"
 import { formatCNY } from "@/lib/format"
 import { useAccountDrawer } from "./account-drawer-provider"
 import { cn } from "@/lib/utils"
-
-// Hard-coded fallback labels for entitlements with known keys. Unknown keys are
-// rendered with their raw key as label (still useful) instead of being hidden,
-// because hiding silently makes "what am I paying for" invisible.
-const ENTITLEMENT_LABEL: Record<string, string> = {
-  sku_limit: "SKU 数",
-  monthly_bill_limit: "月单据数",
-  ai_call_limit: "AI 调用数",
-  warehouse_limit: "仓库数",
-  user_seat_limit: "成员席位",
-}
-
-const TOP_KEYS = ["sku_limit", "monthly_bill_limit", "ai_call_limit"] as const
+import { SEED_TRIAL } from "@/lib/billing/plans"
+import { InstallHint } from "@/components/install-hint"
+import { planLabel, subscriptionStatusLabel } from "@/lib/plan-labels"
 
 const STATUS_LIGHT_CLASS = {
   green: "bg-emerald-500",
@@ -36,7 +28,7 @@ const STATUS_LIGHT_CLASS = {
 
 /**
  * AccountDrawer — Tier 2 of the account center. A 400px right-side panel with
- * identity / subscription / wallet / quotas cards plus shortcuts. Every card
+ * identity / subscription / wallet cards plus shortcuts. Every card
  * is click-through to the matching Tier 3 tab at /account.
  *
  * Open/close state lives in AccountDrawerProvider so the sidebar card (Tier 1)
@@ -47,14 +39,18 @@ export function AccountDrawer() {
   const [summary, setSummary] = useState<AccountSummary | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+  // Plan and wallet belong to the owner; the others never request them.
+  const { role, known, can } = useRole()
+  const confirm = useConfirm()
+  const withBilling = can("billing.manage")
 
   // Refetch every time the drawer opens — billing state can change while the
   // user is on the page (e.g. plan switch in another tab).
   useAbortableEffect(
     (_signal, isCancelled) => {
-      if (!open) return
+      if (!open || !known) return
       setLoadError(null)
-      fetchAccountSummary()
+      loadAccountSummary(withBilling)
         .then((s) => {
           if (isCancelled()) return
           setSummary(s)
@@ -64,7 +60,7 @@ export function AccountDrawer() {
           setLoadError(err.message)
         })
     },
-    [open],
+    [open, known, withBilling],
   )
 
   // ESC closes.
@@ -130,15 +126,25 @@ export function AccountDrawer() {
           )}
           {summary && (
             <div className="space-y-4">
-              <IdentityCard summary={summary} onCopy={copyTenantId} copied={copied} />
-              <SubscriptionCard summary={summary} />
-              <WalletCard summary={summary} />
-              <EntitlementsCard summary={summary} />
+              <IdentityCard
+                summary={summary}
+                roleName={role ? roleLabel(role) : ""}
+                showBilling={withBilling}
+                onCopy={copyTenantId}
+                copied={copied}
+              />
+              {withBilling && (
+                <>
+                  <SubscriptionCard summary={summary} />
+                  <WalletCard summary={summary} />
+                </>
+              )}
             </div>
           )}
         </div>
 
         <footer className="space-y-2 border-t border-border px-4 py-3">
+          <InstallHint />
           <Link
             href="/account"
             onClick={closeDrawer}
@@ -148,7 +154,7 @@ export function AccountDrawer() {
           </Link>
           <button
             type="button"
-            onClick={() => signOut({ callbackUrl: "/login" })}
+            onClick={() => signOutForSwitch(confirm, role)}
             className="block w-full rounded-md border border-destructive/40 bg-destructive/5 px-3 py-2 text-center text-xs text-destructive hover:bg-destructive/10"
           >
             退出登录
@@ -161,29 +167,34 @@ export function AccountDrawer() {
 
 function IdentityCard({
   summary,
+  roleName,
+  showBilling,
   onCopy,
   copied,
 }: {
   summary: AccountSummary
+  roleName: string
+  showBilling: boolean
   onCopy: () => void
   copied: boolean
 }) {
   const { identity, billing } = summary
   const initial = (identity.display_name || identity.email || "?")[0]?.toUpperCase() ?? "?"
-  const tenantShort = identity.tenant_id ? identity.tenant_id.slice(0, 8) : "—"
   const light = computeStatusLight(billing)
   return (
     <div className="rounded-xl border border-border bg-card p-4">
       <div className="flex items-center gap-3">
         <div className="relative flex h-12 w-12 items-center justify-center rounded-full bg-muted text-base font-medium uppercase">
           {initial}
-          <span
-            className={cn(
-              "absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-background",
-              STATUS_LIGHT_CLASS[light],
-            )}
-            aria-hidden="true"
-          />
+          {showBilling && (
+            <span
+              className={cn(
+                "absolute -bottom-0.5 -right-0.5 h-3 w-3 rounded-full ring-2 ring-background",
+                STATUS_LIGHT_CLASS[light],
+              )}
+              aria-hidden="true"
+            />
+          )}
         </div>
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-medium">{identity.display_name || "未命名"}</div>
@@ -191,16 +202,18 @@ function IdentityCard({
         </div>
       </div>
       <div className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
-        <span>租户</span>
-        <code className="rounded bg-muted px-1.5 py-0.5 font-mono">{tenantShort}</code>
-        <button
-          type="button"
-          onClick={onCopy}
-          className="ml-auto rounded px-1.5 py-0.5 text-[10px] hover:bg-muted"
-          title={identity.tenant_id}
-        >
-          {copied ? "已复制" : "复制"}
-        </button>
+        <span>身份</span>
+        <span className="rounded bg-muted px-1.5 py-0.5">{roleName || "—"}</span>
+        {showBilling && (
+          <button
+            type="button"
+            onClick={onCopy}
+            className="ml-auto rounded px-1.5 py-0.5 text-[10px] hover:bg-muted"
+            title="复制店铺编号，联系客服时使用"
+          >
+            {copied ? "已复制" : "复制店铺编号"}
+          </button>
+        )}
       </div>
     </div>
   )
@@ -226,10 +239,10 @@ function SubscriptionCard({ summary }: { summary: AccountSummary }) {
         <div>
           <div className="text-xs text-muted-foreground">当前套餐</div>
           <div className="mt-1 flex items-center gap-2">
-            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium uppercase text-primary">
-              {sub?.plan_code ?? "free"}
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+              {planLabel(sub?.plan_code)}
             </span>
-            <span className="text-xs text-muted-foreground">{sub?.status ?? "未激活"}</span>
+            {sub && <span className="text-xs text-muted-foreground">{subscriptionStatusLabel(sub.status)}</span>}
           </div>
           <div className="mt-1 text-xs text-muted-foreground">{expiryLabel}</div>
         </div>
@@ -257,49 +270,10 @@ function WalletCard({ summary }: { summary: AccountSummary }) {
             冻结 {formatCNY(frozen)} · 总额 {formatCNY(total)}
           </div>
         </div>
-        <span className="rounded-md border border-border bg-background px-2 py-1 text-xs">充值 →</span>
+        {!SEED_TRIAL && (
+          <span className="rounded-md border border-border bg-background px-2 py-1 text-xs">充值 →</span>
+        )}
       </div>
-    </Link>
-  )
-}
-
-function EntitlementsCard({ summary }: { summary: AccountSummary }) {
-  const ent = summary.billing?.entitlements ?? {}
-  // Pick top 3 known keys that are actually present. Unknown keys → hide
-  // silently per design (the drawer is a summary, not an audit).
-  const rows = TOP_KEYS.map((key) => ({
-    key,
-    label: ENTITLEMENT_LABEL[key] ?? key,
-    value: ent[key],
-  })).filter((r) => r.value !== undefined)
-
-  if (rows.length === 0) {
-    return (
-      <Link
-        href="/account?tab=subscription"
-        className="block rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/50"
-      >
-        <div className="text-xs text-muted-foreground">配额</div>
-        <p className="mt-1 text-xs text-muted-foreground">
-          升级后可查看 SKU / 单据 / AI 调用配额。
-        </p>
-      </Link>
-    )
-  }
-  return (
-    <Link
-      href="/account?tab=subscription"
-      className="block rounded-xl border border-border bg-card p-4 transition-colors hover:bg-muted/50"
-    >
-      <div className="text-xs text-muted-foreground">配额</div>
-      <ul className="mt-2 space-y-1.5 text-xs">
-        {rows.map((r) => (
-          <li key={r.key} className="flex justify-between gap-2">
-            <span className="text-muted-foreground">{r.label}</span>
-            <span className="font-mono tabular-nums">{r.value}</span>
-          </li>
-        ))}
-      </ul>
     </Link>
   )
 }

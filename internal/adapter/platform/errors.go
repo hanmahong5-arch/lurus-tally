@@ -53,3 +53,6 @@ func IsCode(err error, code ErrCode) bool {
 	}
 	return pe.Code == code
 }
+
+// AuthRejected reports whether platform refused the service key (HTTP 401/403 class).
+func (e *Error) AuthRejected() bool { return e != nil && e.Code == ErrCodeUnauthorized }

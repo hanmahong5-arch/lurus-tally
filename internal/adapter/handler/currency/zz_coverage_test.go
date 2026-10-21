@@ -112,7 +112,7 @@ func TestZZ_ListCurrencies_UseCaseErr_Returns500(t *testing.T) {
 	if body["error"] != "internal_error" {
 		t.Errorf("error code = %v, want internal_error", body["error"])
 	}
-	if body["message"] != "an internal error occurred" {
+	if body["message"] != "系统出了点问题，请稍后再试；一直不行请联系客服" {
 		t.Errorf("message = %v, want generic safe message (cause must not leak)", body["message"])
 	}
 }
@@ -472,7 +472,7 @@ func TestZZ_CreateRate_UseCaseInternalErr_Returns500(t *testing.T) {
 	if resp["error"] != "internal_error" {
 		t.Errorf("error = %v, want internal_error", resp["error"])
 	}
-	if resp["message"] != "an internal error occurred" {
+	if resp["message"] != "系统出了点问题，请稍后再试；一直不行请联系客服" {
 		t.Errorf("message must be the generic safe message, got %v (cause must not leak)", resp["message"])
 	}
 }

@@ -171,6 +171,11 @@ func recallMemories(mc MemoryClient, ctx context.Context, userID, userMessage st
 	if mc == nil {
 		return userMessage, 0
 	}
+	// Memories are kept per shop and may hold purchase prices the owner said
+	// earlier; a caller without cost.view gets no recall at all.
+	if costHidden(ctx) {
+		return userMessage, 0
+	}
 	memories, err := mc.Search(ctx, userID, userMessage, memorySearchLimit)
 	countMemoryOp(memOpRecall, err)
 	if err != nil {

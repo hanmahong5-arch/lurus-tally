@@ -47,6 +47,10 @@ var _ appreplenish.SuggestionRepo = (*SQLSuggestionRepo)(nil)
 //   - low_safe_qty  from tally.stock_initial (minimum across warehouses)
 //   - unit_cost     from tally.stock_snapshot (avg across warehouses weighted by available_qty)
 //   - avg_daily_sales computed from tally.stock_movement direction='out' last 30 days
+//     (a sale movement whose bill was deleted, e.g. a cleared sample sale, is skipped;
+//     a sale's reference_id is a bill_item id for sample sales and a bill_head id for
+//     real ones, so the bill is resolved through the item first; purchase-return and
+//     stocktake-adjust outflows are not sales and are left out)
 //   - lead_time_days from tally.product (per-product; per-supplier refinement is deferred)
 //   - in_transit qty: open purchase drafts/submitted orders not yet approved (status IN 0,1)
 //   - supplier_id / supplier_name from the most recent approved purchase bill for the product
@@ -62,6 +66,14 @@ WITH velocity AS (
     FROM tally.stock_movement
     WHERE tenant_id  = $1
       AND direction  = 'out'
+      AND COALESCE(reference_type, '') NOT IN ('return', 'adjust')
+      AND (reference_type IS DISTINCT FROM 'sale' OR EXISTS (
+            SELECT 1 FROM tally.bill_head bh
+            WHERE bh.tenant_id = stock_movement.tenant_id
+              AND bh.id = COALESCE(
+                (SELECT bi.head_id FROM tally.bill_item bi
+                  WHERE bi.id = stock_movement.reference_id AND bi.tenant_id = stock_movement.tenant_id),
+                stock_movement.reference_id)))
       AND occurred_at >= now() - INTERVAL '30 days'
     GROUP BY product_id
 ),

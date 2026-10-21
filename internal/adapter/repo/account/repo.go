@@ -105,14 +105,14 @@ func (r *SessionRepo) List(ctx context.Context, tenantID uuid.UUID, userID strin
 	return out, nil
 }
 
-// Revoke marks the matching session row revoked. Idempotent: an unknown id
-// returns nil.
-func (r *SessionRepo) Revoke(ctx context.Context, tenantID, id uuid.UUID) error {
+// Revoke marks the matching session row revoked, only when it belongs to userID.
+// Idempotent: an unknown id returns nil.
+func (r *SessionRepo) Revoke(ctx context.Context, tenantID uuid.UUID, userID string, id uuid.UUID) error {
 	const q = `
 		UPDATE tally.user_session
 		SET revoked_at = COALESCE(revoked_at, now())
-		WHERE tenant_id = $1 AND id = $2`
-	if _, err := dbscope.From(ctx, r.db).ExecContext(ctx, q, tenantID, id); err != nil {
+		WHERE tenant_id = $1 AND user_id = $2 AND id = $3`
+	if _, err := dbscope.From(ctx, r.db).ExecContext(ctx, q, tenantID, userID, id); err != nil {
 		return fmt.Errorf("account repo: session revoke: %w", err)
 	}
 	return nil

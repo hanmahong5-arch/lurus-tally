@@ -16,7 +16,8 @@ export default function AccountPage() {
   // rather than hardcoding a host: a literal sent STAGE users to the PROD
   // console, and the literal in use was `auth.lurus.cn` — a 301 alias being
   // torn down 2026-08-19, after which the button would have led nowhere.
+  // SSO_CONSOLE_URL 优先，其次 OIDC_ISSUER，都没有则为空串（AccountCenter 隐藏链接）。
   // Server component, so the non-public env var is readable here and handed
   // to the client component as a prop.
-  return <AccountCenter ssoConsoleURL={process.env.OIDC_ISSUER || "https://identity.lurus.cn"} />
+  return <AccountCenter ssoConsoleURL={process.env.SSO_CONSOLE_URL || process.env.OIDC_ISSUER || ""} />
 }

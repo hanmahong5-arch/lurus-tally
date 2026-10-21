@@ -47,6 +47,14 @@ type RecordMovementRequest struct {
 	// UnitCost is the per-base-unit cost. Required for inbound movements.
 	UnitCost decimal.Decimal
 
+	// ExplicitCost makes an outbound movement leave at UnitCost (a purchase return goes back
+	// at the price it came in at) instead of the prevailing cost.
+	ExplicitCost bool
+
+	// AllowNegative lets an outbound movement push on-hand below zero (offline-till replay only).
+	// All other callers leave it false and keep the ErrInsufficientStock guard.
+	AllowNegative bool
+
 	// CostStrategy is "wac" or "fifo". The caller should read this from the product/profile.
 	// Empty string falls back to "wac".
 	CostStrategy string
@@ -144,6 +152,8 @@ func (uc *RecordMovementUseCase) Execute(ctx context.Context, req RecordMovement
 		Direction:     req.Direction,
 		QtyBase:       qtyBase,
 		UnitCost:      req.UnitCost,
+		ExplicitCost:  req.ExplicitCost,
+		AllowNegative: req.AllowNegative,
 		ReferenceType: req.ReferenceType,
 		ReferenceID:   req.ReferenceID,
 		OccurredAt:    occurredAt,
@@ -232,6 +242,8 @@ func (uc *RecordMovementUseCase) ExecuteInTx(ctx context.Context, tx *sql.Tx, re
 		Direction:     req.Direction,
 		QtyBase:       qtyBase,
 		UnitCost:      req.UnitCost,
+		ExplicitCost:  req.ExplicitCost,
+		AllowNegative: req.AllowNegative,
 		ReferenceType: req.ReferenceType,
 		ReferenceID:   req.ReferenceID,
 		OccurredAt:    occurredAt,

@@ -3,7 +3,7 @@
 package llmclient
 
 // Re-records testdata/recorded/ against the real gateway (a handful of short
-// requests on deepseek-v4-flash):
+// requests on test-model):
 //
 //	NEWAPI_BASE_URL=https://newapi.lurus.cn/v1 NEWAPI_API_KEY=... \
 //	  go test -tags=record -run TestRecordGateway ./internal/pkg/llmclient/

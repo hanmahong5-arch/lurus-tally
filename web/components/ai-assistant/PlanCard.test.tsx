@@ -101,7 +101,7 @@ describe("PlanCard", () => {
     fireEvent.click(screen.getByTestId("plan-confirm-btn"))
 
     await waitFor(() => {
-      expect(confirmPlan).toHaveBeenCalledWith("plan-123")
+      expect(confirmPlan).toHaveBeenCalledWith("plan-123", [])
     })
     await waitFor(() => {
       expect(onConfirmed).toHaveBeenCalled()
@@ -237,5 +237,64 @@ describe("PlanCard", () => {
     expect(screen.getByText(/库存写入失败/)).toBeInTheDocument()
     // Confirm button disappears after transition to failed state
     expect(screen.queryByTestId("plan-confirm-btn")).not.toBeInTheDocument()
+  })
+
+  it("TestPlanCard_FlaggedDraft_ConfirmLockedUntilEveryFlagTicked", async () => {
+    const { confirmPlan } = await import("@/lib/api/ai")
+    const plan = makePlan({
+      type: "create_purchase_draft",
+      payload: {
+        items: [],
+        require_line_confirm: true,
+        flags: [
+          { line: 0, code: "qty_mismatch", message: "「樱花」草稿数量是 20，和你说的不一致，请核对" },
+          { line: 1, code: "qty_over_hist", message: "「桃树」数量 100 超过近 90 天最大单量 10 的 3 倍，请核对" },
+        ],
+      },
+      preview: {
+        description: "Create purchase draft with 2 line items（2 项需要逐行核对）",
+        affected_count: 2,
+        sample_rows: [
+          { name: "樱花", before: "", after: "qty: 20.00  ⚠ 需核对" },
+          { name: "桃树", before: "", after: "qty: 100.00  ⚠ 需核对" },
+        ],
+      },
+    })
+    render(<PlanCard plan={plan} />)
+
+    expect(screen.getAllByTestId("plan-row-flagged")).toHaveLength(2)
+    const confirm = screen.getByTestId("plan-confirm-btn")
+    expect(confirm).toBeDisabled()
+
+    const checks = screen.getAllByTestId("plan-flag-check")
+    fireEvent.click(checks[0])
+    expect(confirm).toBeDisabled()
+    fireEvent.click(checks[1])
+    expect(confirm).not.toBeDisabled()
+
+    fireEvent.click(confirm)
+    await waitFor(() => expect(confirmPlan).toHaveBeenCalledTimes(1))
+    // The ticked flag indexes go to the server, which re-checks them.
+    expect(confirmPlan).toHaveBeenCalledWith("plan-123", [0, 1])
+  })
+
+  it("TestPlanCard_FlaggedDraft_ShowsAllRowsBeyondFive", () => {
+    const rows = Array.from({ length: 7 }, (_, i) => ({ name: `商品${i}`, before: "", after: "qty: 1.00" }))
+    render(
+      <PlanCard
+        plan={makePlan({
+          payload: { flags: [{ line: 6, code: "qty_mismatch", message: "第七行请核对" }] },
+          preview: { description: "d", affected_count: 7, sample_rows: rows },
+        })}
+      />,
+    )
+    expect(screen.getByText("商品6")).toBeInTheDocument()
+    expect(screen.queryByText(/还有 \d+ 条/)).not.toBeInTheDocument()
+  })
+
+  it("TestPlanCard_NoFlags_ConfirmEnabled", () => {
+    render(<PlanCard plan={makePlan()} />)
+    expect(screen.getByTestId("plan-confirm-btn")).not.toBeDisabled()
+    expect(screen.queryByTestId("plan-flags")).not.toBeInTheDocument()
   })
 })

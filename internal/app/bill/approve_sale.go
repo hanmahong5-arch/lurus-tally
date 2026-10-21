@@ -40,6 +40,15 @@ type ApproveSaleRequest struct {
 	CreatorID  uuid.UUID
 	PaidAmount decimal.Decimal
 	PayType    string
+	// PaymentRemark rides on the payment booked with the approval (e.g. cash tendered and change).
+	PaymentRemark string
+	// OccurredAt, when set, is the real time of the sale (offline replay): it dates the stock
+	// movements and the payment instead of the approval moment.
+	OccurredAt time.Time
+	// AllowNegative lets stock go below zero for this approval (offline-till replay only).
+	AllowNegative bool
+	// OnNegativeStock, when set, is called for every line whose stock ended up below zero.
+	OnNegativeStock func(productID uuid.UUID, onHandAfter decimal.Decimal)
 }
 
 // ApproveSaleUseCase approves a draft sale bill and records stock-out movements.
@@ -76,10 +85,18 @@ func (uc *ApproveSaleUseCase) Execute(ctx context.Context, req ApproveSaleReques
 		return fmt.Errorf("approve sale: bill_id is required")
 	}
 
-	// Pre-lock idempotency check: if already approved, return nil immediately.
+	if req.PaidAmount.IsNegative() {
+		return fmt.Errorf("approve sale: %w: paid_amount must be non-negative", ErrValidation)
+	}
+	if _, err := resolvePayType(req.PayType); err != nil {
+		return err
+	}
+
+	// Pre-lock idempotency check: if already approved, return nil immediately —
+	// unless a payment rides along, which would be silently dropped.
 	// The lock-and-recheck inside executeInTx still guards concurrent races.
 	if preFetch, err := uc.repo.GetBill(ctx, req.TenantID, req.BillID); err == nil && preFetch.Status == domain.StatusApproved {
-		return nil
+		return alreadyApprovedResult(req)
 	}
 
 	return uc.repo.WithTx(ctx, func(tx *sql.Tx) error {
@@ -91,6 +108,16 @@ func (uc *ApproveSaleUseCase) Execute(ctx context.Context, req ApproveSaleReques
 // Used by QuickCheckoutUseCase to compose create + approve + payment atomically.
 func (uc *ApproveSaleUseCase) ExecuteInTx(ctx context.Context, tx *sql.Tx, req ApproveSaleRequest) error {
 	return uc.executeInTx(ctx, tx, req)
+}
+
+// alreadyApprovedResult is the outcome of approving a bill that is already approved:
+// a plain repeat is idempotent, but a repeat carrying a payment is rejected because
+// that payment is not recorded here.
+func alreadyApprovedResult(req ApproveSaleRequest) error {
+	if req.PaidAmount.GreaterThan(decimal.Zero) {
+		return ErrBillAlreadyApproved
+	}
+	return nil
 }
 
 func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req ApproveSaleRequest) error {
@@ -107,7 +134,16 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 
 	// Idempotent: if concurrently approved between pre-lock check and lock acquisition, return nil.
 	if head.Status == domain.StatusApproved {
-		return nil
+		return alreadyApprovedResult(req)
+	}
+
+	// Payment checks run before any stock movement so a rejected request leaves
+	// no trace. Change (paid > total) is the caller's concern and is never booked.
+	if req.PaidAmount.IsNegative() {
+		return fmt.Errorf("approve sale: %w: paid_amount must be non-negative", ErrValidation)
+	}
+	if req.PaidAmount.GreaterThan(head.TotalAmount) {
+		return fmt.Errorf("approve sale: %w: paid %s, total %s", ErrPaidExceedsTotal, req.PaidAmount, head.TotalAmount)
 	}
 
 	if !head.Status.CanTransitionTo(domain.StatusApproved) {
@@ -119,9 +155,9 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 		return fmt.Errorf("approve sale: load items: %w", err)
 	}
 
-	warehouseID := uuid.Nil
-	if head.WarehouseID != nil {
-		warehouseID = *head.WarehouseID
+	warehouseID, err := resolveApprovalWarehouse(ctx, uc.repo, tx, head, req.TenantID, req.BillID)
+	if err != nil {
+		return fmt.Errorf("approve sale: %w", err)
 	}
 
 	// Record one stock-out movement per line item.
@@ -163,6 +199,8 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 			CostStrategy:  "wac",
 			ReferenceType: domainstock.RefSale,
 			ReferenceID:   &req.BillID,
+			OccurredAt:    req.OccurredAt,
+			AllowNegative: req.AllowNegative,
 		})
 		if err != nil {
 			var ise *appstock.InsufficientStockError
@@ -174,6 +212,10 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 			}
 			// Non-stock error (infra/programming fault) — short-circuit.
 			return fmt.Errorf("approve sale: record movement for item line_no=%d: %w", item.LineNo, err)
+		}
+
+		if req.AllowNegative && req.OnNegativeStock != nil && snap != nil && snap.OnHandQty.IsNegative() {
+			req.OnNegativeStock(item.ProductID, snap.OnHandQty)
 		}
 
 		// Persist the cost of goods sold onto the line so margin reports compare the
@@ -193,6 +235,10 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 
 	// Update bill status to approved.
 	now := time.Now().UTC()
+	payDate := now
+	if !req.OccurredAt.IsZero() {
+		payDate = req.OccurredAt.UTC()
+	}
 	if err := uc.repo.UpdateBillStatus(ctx, tx, req.TenantID, req.BillID, domain.StatusApproved, map[string]any{
 		"approved_at": now,
 		"approved_by": req.CreatorID,
@@ -214,30 +260,66 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 
 	// Write initial payment if paid_amount > 0.
 	if req.PaidAmount.GreaterThan(decimal.Zero) {
-		payType := domainpayment.PayType(req.PayType)
-		if err := payType.Validate(); err != nil {
-			payType = domainpayment.PayTypeCash // default fallback for invalid/empty
-		}
-		p := &domainpayment.Payment{
-			ID:        uuid.New(),
-			TenantID:  req.TenantID,
-			BillID:    req.BillID,
-			PayType:   payType,
-			Amount:    req.PaidAmount,
-			CreatorID: req.CreatorID,
-			PayDate:   now,
-		}
-		if head.PartnerID != nil {
-			p.PartnerID = head.PartnerID
-		}
-		if err := uc.paymentRepo.Record(ctx, tx, p); err != nil {
-			return fmt.Errorf("approve sale: record payment: %w", err)
-		}
-		// Update paid_amount on bill_head.
-		if err := uc.repo.UpdatePaidAmount(ctx, tx, req.TenantID, req.BillID, req.PaidAmount); err != nil {
-			return fmt.Errorf("approve sale: update paid_amount: %w", err)
+		if err := recordInitialPayment(ctx, tx, uc.repo, uc.paymentRepo, head, req.TenantID, req.BillID, req.CreatorID, req.PaidAmount, req.PayType, payDate, req.PaymentRemark); err != nil {
+			return fmt.Errorf("approve sale: %w", err)
 		}
 	}
 
+	return nil
+}
+
+// resolvePayType maps the request's payment method to a PayType: empty means "not
+// specified" and books as cash, an unknown value is rejected with ErrInvalidPayMethod.
+func resolvePayType(method string) (domainpayment.PayType, error) {
+	if method == "" {
+		return domainpayment.PayTypeCash, nil
+	}
+	pt := domainpayment.PayType(method)
+	if err := pt.Validate(); err != nil {
+		return "", fmt.Errorf("%w: %q", ErrInvalidPayMethod, method)
+	}
+	return pt, nil
+}
+
+// checkSettlementMethod rejects "credit" as the method of money actually received or paid:
+// credit is a promise to pay later. A zero amount (a credit sale at the counter) is fine.
+func checkSettlementMethod(method string, amount decimal.Decimal) error {
+	if amount.IsPositive() && method == string(domainpayment.PayTypeCredit) {
+		return fmt.Errorf("%w: %q", ErrInvalidPayMethod, method)
+	}
+	return nil
+}
+
+// recordInitialPayment books the payment that rides along with an approval and lifts
+// bill_head.paid_amount to it, inside the approval transaction. Shared by sale and
+// purchase approval so both write the same payment_head shape.
+func recordInitialPayment(ctx context.Context, tx *sql.Tx, repo BillRepo, rec PaymentRecorder,
+	head *domain.BillHead, tenantID, billID, creatorID uuid.UUID, amount decimal.Decimal, method string, now time.Time, remark string) error {
+	payType, err := resolvePayType(method)
+	if err != nil {
+		return err
+	}
+	if err := checkSettlementMethod(method, amount); err != nil {
+		return err
+	}
+	p := &domainpayment.Payment{
+		ID:        uuid.New(),
+		TenantID:  tenantID,
+		BillID:    billID,
+		PayType:   payType,
+		Amount:    amount,
+		CreatorID: creatorID,
+		PayDate:   now,
+		Remark:    remark,
+	}
+	if head.PartnerID != nil {
+		p.PartnerID = head.PartnerID
+	}
+	if err := rec.Record(ctx, tx, p); err != nil {
+		return fmt.Errorf("record payment: %w", err)
+	}
+	if err := repo.UpdatePaidAmount(ctx, tx, tenantID, billID, amount); err != nil {
+		return fmt.Errorf("update paid_amount: %w", err)
+	}
 	return nil
 }

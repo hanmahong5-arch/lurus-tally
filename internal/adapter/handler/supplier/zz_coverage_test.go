@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -335,10 +336,14 @@ func TestHandler_Create_OptionalFieldsEmpty_OmittedFromJSON(t *testing.T) {
 		t.Fatalf("status = %d, want 201; body=%s", w.Code, w.Body.String())
 	}
 	m := decodeMap(t, w)
-	for _, key := range []string{"code", "contact", "phone", "email", "address", "remark"} {
+	for _, key := range []string{"contact", "phone", "email", "address", "remark"} {
 		if _, present := m[key]; present {
 			t.Errorf("expected omitempty field %q to be absent, got %v", key, m[key])
 		}
+	}
+	// An omitted code is server-generated (S + yymmdd + 4 symbols), never absent.
+	if code, _ := m["code"].(string); !regexp.MustCompile(`^S\d{6}[2-9A-HJ-NP-Z]{4}$`).MatchString(code) {
+		t.Errorf("code = %v, want a generated S-prefixed code", m["code"])
 	}
 }
 

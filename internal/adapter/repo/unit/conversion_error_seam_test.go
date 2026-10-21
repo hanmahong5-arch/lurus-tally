@@ -12,29 +12,13 @@ import (
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 )
 
-// TestGetConversionFactor_MissingPair_ErrorUnrecognisedByHandler
+// TestGetConversionFactor_NonBaseUnitWithoutRow_MatchesHandlerSentinel
 //
 // 防的业务事故：用户在采购单/销售单某一行上选了一个该商品没有配置换算关系的单位
-// （比如商品按"棵"建档，行上却选了"箱"）。审核时用户看到的是
-// "服务器内部错误 500"，而不是本该出现的"该单位不适用于此商品，请检查单位配置"。
-// 后果：用户不知道该改哪一行，只能反复重试；客服拿到的截图是一个 500，
-// 定位要翻服务端日志；而且 500 会污染错误率告警，把一个用户输入问题伪装成故障。
-//
-// 根因是一条"假件比生产件更宽容"的缝：
-//   - handler/bill/handler.go:211 靠 errors.Is(err, appbill.ErrInvalidUnitForProduct)
-//     把这种情况映射成 422 + 可读文案；
-//   - 单测里的 mockProductUnitRepo 直接返回 appbill.ErrInvalidUnitForProduct，所以永远走 422；
-//   - 生产用的 repo/unit 却在 repo.go:141 自建了一个哨兵
-//     `fmt.Errorf("unit: unit_id is not valid for this product")` —— 没有 %w，
-//     不 wrap 任何东西，因此 errors.Is 恒为 false，真实请求一律落到 500 分支。
-//     （repo.go:120 的文档注释写的是"Returns appbill.ErrInvalidUnitForProduct"，与实现不符。）
-//
-// 本用例绕开假件，直接驱动生产 repo：用 sqlmock 造出"product_unit 里查不到这一对"
-// 的场景（空结果集 → sql.ErrNoRows），看它吐出来的错误能不能被 handler 认出来。
-//
-// ⚠️ characterization（现状钉桩）用例：断言的是缺陷现状。把 repo 的哨兵改成
-// wrap 住 appbill.ErrInvalidUnitForProduct 之后本用例会失败，届时把断言反过来即可。
-func TestGetConversionFactor_MissingPair_ErrorUnrecognisedByHandler(t *testing.T) {
+// （比如商品按"棵"建档，行上却选了"箱"）。审核时必须得到 422 invalid_unit_for_product
+// 和可读文案，而不是"服务器内部错误 500"。handler 靠
+// errors.Is(err, appbill.ErrInvalidUnitForProduct) 分类，所以生产 repo 返回的错误必须能被它命中。
+func TestGetConversionFactor_NonBaseUnitWithoutRow_MatchesHandlerSentinel(t *testing.T) {
 	db, mock, err := sqlmock.New()
 	if err != nil {
 		t.Fatalf("sqlmock.New: %v", err)
@@ -44,33 +28,59 @@ func TestGetConversionFactor_MissingPair_ErrorUnrecognisedByHandler(t *testing.T
 	productID := uuid.New()
 	unitID := uuid.New()
 
-	// product_unit 里没有这一对 → 空结果集 → Scan 返回 sql.ErrNoRows，
-	// 正是 repo.go:128 那条分支的触发条件。
 	mock.ExpectQuery("SELECT conversion_factor FROM tally.product_unit").
 		WithArgs(productID, unitID).
 		WillReturnRows(sqlmock.NewRows([]string{"conversion_factor"}))
+	mock.ExpectQuery("SELECT EXISTS").
+		WithArgs(productID, unitID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(false))
 
 	repo := repounit.New(db)
 	factor, err := repo.GetConversionFactor(context.Background(), productID, unitID)
 
-	if err == nil {
-		t.Fatalf("查不到换算关系却没有报错，返回 factor=%s —— 这会让审核按 0 或 1 结转", factor)
+	if !errors.Is(err, appbill.ErrInvalidUnitForProduct) {
+		t.Fatalf("err = %v, want errors.Is ErrInvalidUnitForProduct", err)
 	}
 	if !factor.IsZero() {
 		t.Fatalf("出错时应返回零值，got %s", factor)
 	}
-
-	// 核心断言：handler 的分类判据在生产错误上失效。
-	if errors.Is(err, appbill.ErrInvalidUnitForProduct) {
-		t.Fatalf("缺陷已修复：生产 repo 的错误现在能被 handler 认出来了。"+
-			"请把本 characterization 用例改成正向断言（必须 errors.Is 成立）。err=%v", err)
-	}
-
-	t.Logf("生产 repo 返回：%q；handler 的 errors.Is(err, ErrInvalidUnitForProduct) = false"+
-		" ⇒ 走 httperr.WriteInternal ⇒ 用户看到 500 而不是 422", err.Error())
-
 	if err := mock.ExpectationsWereMet(); err != nil {
-		t.Fatalf("sqlmock 期望未满足（说明查询没按预期发出）：%v", err)
+		t.Fatalf("sqlmock 期望未满足：%v", err)
+	}
+}
+
+// TestGetConversionFactor_BaseUnitWithoutRow_ReturnsOne
+//
+// 防的业务事故：商品的基本单位（建档时选的单位）没有 product_unit 记录，
+// 网页端建单行上选了它，审核却失败。基本单位换算系数恒为 1，不需要记录。
+func TestGetConversionFactor_BaseUnitWithoutRow_ReturnsOne(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	productID := uuid.New()
+	unitID := uuid.New()
+
+	mock.ExpectQuery("SELECT conversion_factor FROM tally.product_unit").
+		WithArgs(productID, unitID).
+		WillReturnRows(sqlmock.NewRows([]string{"conversion_factor"}))
+	mock.ExpectQuery("SELECT EXISTS").
+		WithArgs(productID, unitID).
+		WillReturnRows(sqlmock.NewRows([]string{"exists"}).AddRow(true))
+
+	repo := repounit.New(db)
+	factor, err := repo.GetConversionFactor(context.Background(), productID, unitID)
+
+	if err != nil {
+		t.Fatalf("GetConversionFactor: %v", err)
+	}
+	if factor.String() != "1" {
+		t.Fatalf("factor = %s, want 1", factor)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Fatalf("sqlmock 期望未满足：%v", err)
 	}
 }
 

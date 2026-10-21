@@ -10,12 +10,20 @@ export interface ConfirmDialogOptions {
   cancelText?: string
   /** Render the confirm button in destructive styling. */
   danger?: boolean
+  /**
+   * Ask useConfirm to tell the cancel button (false) apart from a plain close
+   * with Esc / backdrop (null). Off: both resolve false.
+   */
+  distinguishDismiss?: boolean
 }
 
 interface ConfirmDialogProps extends ConfirmDialogOptions {
   open: boolean
   onConfirm: () => void
+  /** The cancel button was clicked. */
   onCancel: () => void
+  /** Closed without choosing (Esc, backdrop); falls back to onCancel. */
+  onDismiss?: () => void
 }
 
 /**
@@ -33,12 +41,13 @@ export function ConfirmDialog({
   danger = false,
   onConfirm,
   onCancel,
+  onDismiss,
 }: ConfirmDialogProps) {
   return (
     <Modal
       open={open}
       onOpenChange={(next) => {
-        if (!next) onCancel()
+        if (!next) (onDismiss ?? onCancel)()
       }}
       title={title}
       description={body}

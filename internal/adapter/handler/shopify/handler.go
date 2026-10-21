@@ -89,15 +89,12 @@ func (h *Handler) Bind(c *gin.Context) {
 		return
 	}
 
-	// actor: the OIDC subject is resolved to a UUID by the main-line wire
-	// (user_identity_mapping lookup). We reuse the tenant UUID as creator_id
-	// fallback so that the record is always non-null, even in test environments
-	// where the sub → UUID lookup is not yet wired.
-	creatorID := tenantID
-	if sub := middleware.GetIDPSubject(c); sub != "" {
-		if parsed, err := uuid.Parse(sub); err == nil {
-			creatorID = parsed
-		}
+	// actor: a non-UUID subject is hashed to a stable id by ActorUUID. PAT auth
+	// carries no subject, so the tenant id stands in as creator_id to keep the
+	// record non-null.
+	creatorID := middleware.ActorUUID(c)
+	if creatorID == uuid.Nil {
+		creatorID = tenantID
 	}
 
 	var req bindRequest

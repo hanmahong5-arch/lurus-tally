@@ -141,7 +141,7 @@ func TestRedactJSON_SecretFields(t *testing.T) {
 		},
 		{
 			name:    "api_key field",
-			in:      `{"api_key":"sk-abc123xyz789","model":"gpt"}`,
+			in:      `{"api_key":"sk-abc123xyz789","model":"test-model"}`,
 			contain: `"<redacted>"`,
 			absent:  "sk-abc123xyz789",
 		},

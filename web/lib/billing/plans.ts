@@ -1,6 +1,8 @@
 /**
  * Tally subscription plan catalog.
  *
+ * 数字真源见 docs/pricing.md（建议值，待负责人裁决；平台种子需经改价迁移同步）。
+ *
  * Source of truth for pricing lives in lurus-platform's identity.product_plans
  * table (seeded by migration 025_seed_tally_product, product id `tally` —
  * lurus-platform api/ontology.yaml; the seed's `lurus-tally` was renamed by
@@ -24,9 +26,12 @@ export interface TallyPlan {
   /** Marketing tagline shown under the plan title. */
   tagline: string
   features: string[]
-  /** Human-readable summary of the included caps. */
+  /** Numeric caps kept for type compatibility only: the backend enforces none of them, so no page may show them. */
   caps: { skus: number; users: number; warehouses: number }
 }
+
+/** 种子期：全部功能免费试用，不开放付费入口。正式收费时改为 false。 */
+export const SEED_TRIAL = true
 
 export const TALLY_PLANS: readonly TallyPlan[] = [
   {
@@ -34,50 +39,50 @@ export const TALLY_PLANS: readonly TallyPlan[] = [
     name: "免费版",
     cycle: "forever",
     priceCNY: 0,
-    tagline: "个体试用 · 单仓库 · 50 个 SKU",
-    features: ["商品/库存/采购/销售基础流程", "单用户", "基础报表"],
-    caps: { skus: 50, users: 1, warehouses: 1 },
+    tagline: "个体试用 · 基础开单记账",
+    features: ["商品/库存/采购/销售基础流程"],
+    caps: { skus: 300, users: 1, warehouses: 1 },
   },
   {
     code: "pro",
     name: "专业版",
     cycle: "monthly",
-    priceCNY: 199,
+    priceCNY: 58,
     highlight: true,
-    tagline: "中小企业刚需档 · AI 助手 · 多仓库",
-    features: ["AI 进货建议 / 自然语言查询", "高级报表与导出", "5 用户 · 3 仓库 · 2000 SKU"],
-    caps: { skus: 2000, users: 5, warehouses: 3 },
+    tagline: "中小店铺刚需档",
+    features: ["免费版全部功能"],
+    caps: { skus: 5000, users: 5, warehouses: 3 },
   },
   {
     code: "pro_yearly",
     name: "专业版（年付）",
     cycle: "yearly",
-    priceCNY: 1990,
-    tagline: "年付立省 2 个月",
-    features: ["专业版全部能力", "5 用户 · 3 仓库 · 2000 SKU", "年付返还到钱包余额"],
-    caps: { skus: 2000, users: 5, warehouses: 3 },
+    priceCNY: 588,
+    tagline: "年付约省 2 个月",
+    features: ["专业版全部能力", "按年付费，比月付约省 2 个月"],
+    caps: { skus: 5000, users: 5, warehouses: 3 },
   },
   {
     code: "enterprise",
     name: "企业版",
     cycle: "monthly",
-    priceCNY: 599,
-    tagline: "无上限 + 专属支持 · 多组织协同",
-    features: ["不限 SKU / 用户 / 仓库", "高级报表 + 自定义看板", "1 对 1 客服 · 优先 SLA"],
+    priceCNY: 198,
+    tagline: "专属支持 · 优先响应",
+    features: ["专业版全部能力", "1 对 1 客服 · 优先响应"],
     caps: { skus: -1, users: -1, warehouses: -1 },
   },
   {
     code: "enterprise_yearly",
     name: "企业版（年付）",
     cycle: "yearly",
-    priceCNY: 5990,
+    priceCNY: 1980,
     tagline: "企业版年付 · 再省 2 个月",
-    features: ["企业版全部能力", "包含年度对账与发票"],
+    features: ["企业版全部能力", "年付更优惠"],
     caps: { skus: -1, users: -1, warehouses: -1 },
   },
 ] as const
 
-/** Format an integer CNY price as "¥199" / "免费". */
+/** Format an integer CNY price as "¥58" / "免费". */
 export function formatPriceCNY(amount: number): string {
   if (amount === 0) return "免费"
   return `¥${amount.toLocaleString("zh-CN")}`

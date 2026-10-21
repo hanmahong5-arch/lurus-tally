@@ -8,6 +8,7 @@ import {
   useMemo,
 } from "react"
 import { useRouter } from "next/navigation"
+import { roleCan, useRole } from "@/hooks/use-role"
 import { useGlobalShortcut } from "@/hooks/useGlobalShortcut"
 import { useFocusTrap } from "@/hooks/useFocusTrap"
 import {
@@ -27,7 +28,7 @@ const AI_TRIGGER_MIN_CHARS = 1
 // Starter questions shown in the empty ⌘K AI state — one keystroke to a live
 // natural-language query. Tapping (or Enter) sends straight to the AI drawer.
 const AI_STARTERS = [
-  "上月哪些 SKU 滞销?",
+  "上月哪些商品滞销?",
   "帮我算 A 仓补货",
   "这个月卖得最好的 5 个商品",
   "毛利最低的商品有哪些?",
@@ -39,6 +40,8 @@ const ENTITY_SEARCH_DEBOUNCE_MS = 150
 interface PaletteProps {
   /** Called when the user selects an AI query — opens the AI drawer. */
   onAIQuery?: (query: string) => void
+  /** false when the shop has no assistant: no 「问 AI」 row, starters or footer hint. */
+  aiEnabled?: boolean
 }
 
 /**
@@ -50,7 +53,7 @@ interface PaletteProps {
  * Keyboard nav: arrow keys to move selection, Enter to activate,
  * Escape to close. Tab on a long query enters AI mode.
  */
-export function CommandPalette({ onAIQuery }: PaletteProps) {
+export function CommandPalette({ onAIQuery, aiEnabled = true }: PaletteProps) {
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const [selectedIdx, setSelectedIdx] = useState(0)
@@ -66,6 +69,10 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
   const abortRef = useRef<AbortController | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
   const router = useRouter()
+  // Entries the person's role cannot use are left out. Until the session has
+  // told us the role nothing is hidden (the backend still decides).
+  const { role, known } = useRole()
+  const aiAllowed = aiEnabled && (!known || roleCan(role, "ai.use"))
 
   // Tab/Shift+Tab cycles within the panel while open — this is a hand-rolled
   // aria-modal panel (not built on Base UI Dialog), so without this Tab would
@@ -136,7 +143,9 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
   )
 
   const staticItems = useMemo((): PaletteAction[] => {
-    const base: PaletteAction[] = [...PAGE_ACTIONS, ...QUICK_ACTIONS]
+    const base: PaletteAction[] = [...PAGE_ACTIONS, ...QUICK_ACTIONS].filter(
+      (a) => !a.perm || !known || roleCan(role, a.perm)
+    )
     if (!query) return base
 
     const q = query.toLowerCase()
@@ -145,20 +154,22 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
         a.label.toLowerCase().includes(q) ||
         a.id.toLowerCase().includes(q)
     )
-  }, [query])
+  }, [query, known, role])
 
   // Ordering: AI ask (primary) → entities → static pages/actions. When the
   // query is empty we surface tappable AI starter questions so ⌘K lands on a
   // "just ask" screen rather than a blank search.
   const allItems = useMemo((): PaletteAction[] => {
     if (query.length >= AI_TRIGGER_MIN_CHARS) {
-      return [AI_ASK_ACTION(query), ...entityActions, ...staticItems]
+      return aiAllowed
+        ? [AI_ASK_ACTION(query), ...entityActions, ...staticItems]
+        : [...entityActions, ...staticItems]
     }
-    const starters: PaletteAction[] = aiMode
+    const starters: PaletteAction[] = aiMode && aiAllowed
       ? AI_STARTERS.map((s) => ({ id: `ai-starter-${s}`, label: s, group: "actions" as const, icon: "✨" }))
       : []
     return [...starters, ...entityActions, ...staticItems]
-  }, [query, aiMode, entityActions, staticItems])
+  }, [query, aiMode, aiAllowed, entityActions, staticItems])
 
   // Fire first-render latency telemetry once entity results appear.
   useEffect(() => {
@@ -287,7 +298,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
         {/* Search input */}
         <div className="flex items-center border-b border-border px-3">
           <span className="mr-2 text-muted-foreground" aria-hidden="true">
-            {aiMode ? "✨" : "⌘"}
+            {aiMode && aiAllowed ? "✨" : "⌘"}
           </span>
           <input
             ref={inputRef}
@@ -298,7 +309,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
               setSelectedIdx(0)
             }}
             onKeyDown={handleKeyDown}
-            placeholder={aiMode ? "问 AI:上月哪些 SKU 滞销? / 帮我算 A 仓补货" : "搜索页面、实体、操作..."}
+            placeholder={aiMode && aiAllowed ? "问 AI:上月哪些商品滞销? / 帮我算 A 仓补货" : "搜索页面、实体、操作..."}
             data-testid="palette-input"
             className="flex-1 bg-transparent py-3 text-sm text-foreground placeholder:text-muted-foreground/60 focus:outline-none"
             aria-autocomplete="list"
@@ -306,7 +317,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
             aria-expanded={true}
             aria-controls="palette-listbox"
           />
-          {aiMode && (
+          {aiMode && aiAllowed && (
             <span
               className="ml-2 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-medium text-primary"
               title="⌘K 已进入 AI 提问态 — 直接输入问题回车即可"
@@ -384,7 +395,7 @@ export function CommandPalette({ onAIQuery }: PaletteProps) {
 
         {/* Footer */}
         <div className="flex gap-3 border-t border-border px-3 py-2 text-[10px] text-muted-foreground">
-          <span><kbd className="font-mono">↵</kbd> 问 AI</span>
+          {aiAllowed && <span><kbd className="font-mono">↵</kbd> 问 AI</span>}
           <span><kbd className="font-mono">↑↓</kbd> 选页面/实体</span>
           <span><kbd className="font-mono">Esc</kbd> 关闭</span>
         </div>

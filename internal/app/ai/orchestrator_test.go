@@ -608,3 +608,69 @@ func TestToolDefs_AllToolsHaveRequiredFields(t *testing.T) {
 		t.Error("remember_customer_fact must not be a Registry tool")
 	}
 }
+
+func flaggedPlan(tenantID, planID uuid.UUID, flags interface{}) *domainai.Plan {
+	return &domainai.Plan{
+		ID:        planID,
+		TenantID:  tenantID,
+		Type:      domainai.PlanTypeCreatePurchase,
+		Status:    domainai.PlanStatusPending,
+		Payload:   map[string]interface{}{"require_line_confirm": true, "flags": flags},
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(30 * time.Minute),
+	}
+}
+
+// TestOrchestrator_ConfirmPlan_RequireLineConfirm: a flagged draft cannot be
+// confirmed without acknowledging every flag, whatever the client does; the
+// plan stays pending when refused. The same plan read back from the store as
+// JSON (numbers as float64) is held to the same rule.
+func TestOrchestrator_ConfirmPlan_RequireLineConfirm(t *testing.T) {
+	inMemory := []map[string]interface{}{
+		{"line": 0, "code": "qty_mismatch", "message": "a"},
+		{"line": 1, "code": "qty_mismatch", "message": "b"},
+	}
+	fromJSON := []interface{}{
+		map[string]interface{}{"line": float64(0), "code": "qty_mismatch", "message": "a"},
+		map[string]interface{}{"line": float64(1), "code": "qty_mismatch", "message": "b"},
+	}
+	for name, flags := range map[string]interface{}{"in-memory": inMemory, "json": fromJSON} {
+		t.Run(name, func(t *testing.T) {
+			store := newMockPlanStore()
+			tenantID, planID := uuid.New(), uuid.New()
+			_ = store.SavePlan(context.Background(), flaggedPlan(tenantID, planID, flags))
+			o := appai.NewOrchestrator(nil, nil, store, "")
+			ctx := context.Background()
+
+			if _, _, err := o.ConfirmPlan(ctx, tenantID, tenantID, planID); !errors.Is(err, appai.ErrLineConfirmRequired) {
+				t.Fatalf("no ack: err=%v, want ErrLineConfirmRequired", err)
+			}
+			if _, _, err := o.ConfirmPlanAck(ctx, tenantID, tenantID, planID, []int{}); !errors.Is(err, appai.ErrLineConfirmRequired) {
+				t.Fatalf("empty ack: err=%v, want ErrLineConfirmRequired", err)
+			}
+			if _, _, err := o.ConfirmPlanAck(ctx, tenantID, tenantID, planID, []int{0}); !errors.Is(err, appai.ErrLineConfirmRequired) {
+				t.Fatalf("partial ack: err=%v, want ErrLineConfirmRequired", err)
+			}
+			if p, _ := store.GetPlan(ctx, tenantID, planID); p.Status != domainai.PlanStatusPending {
+				t.Fatalf("refused confirm must leave the plan pending, got %s", p.Status)
+			}
+			plan, _, err := o.ConfirmPlanAck(ctx, tenantID, tenantID, planID, []int{1, 0})
+			if err != nil || plan.Status != domainai.PlanStatusConfirmed {
+				t.Fatalf("full ack: plan=%+v err=%v", plan, err)
+			}
+		})
+	}
+}
+
+// A plan carrying no flags confirms exactly as before, with no ack.
+func TestOrchestrator_ConfirmPlan_UnflaggedNeedsNoAck(t *testing.T) {
+	store := newMockPlanStore()
+	tenantID, planID := uuid.New(), uuid.New()
+	p := flaggedPlan(tenantID, planID, nil)
+	p.Payload = map[string]interface{}{}
+	_ = store.SavePlan(context.Background(), p)
+	o := appai.NewOrchestrator(nil, nil, store, "")
+	if _, _, err := o.ConfirmPlan(context.Background(), tenantID, tenantID, planID); err != nil {
+		t.Fatalf("unflagged plan: %v", err)
+	}
+}

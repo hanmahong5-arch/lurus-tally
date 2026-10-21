@@ -10,10 +10,10 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
-
-	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 )
 
 // productID is tally's identifier in the platform product registry. Canonical
@@ -47,6 +47,10 @@ type Service struct {
 	tenants  TenantResolver
 	platform EntitlementsPort
 	log      *slog.Logger
+
+	// limits caches the parsed quota limits per tenant (see Limit).
+	limits sync.Map // uuid.UUID -> limitEntry
+	now    func() time.Time
 }
 
 // NewService constructs a Service. log may be nil (falls back to slog default).
@@ -54,7 +58,7 @@ func NewService(tenants TenantResolver, platform EntitlementsPort, log *slog.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{tenants: tenants, platform: platform, log: log}
+	return &Service{tenants: tenants, platform: platform, log: log, now: time.Now}
 }
 
 // Has reports whether the calling tenant's plan grants a truthy entitlement for
@@ -85,7 +89,7 @@ func (s *Service) Has(ctx context.Context, tenantID uuid.UUID, key string) (bool
 	}
 	ents, err := s.platform.GetEntitlements(ctx, accountID, productID)
 	if err != nil {
-		if platformclient.IsCode(err, platformclient.ErrCodeUnauthorized) {
+		if keyRejected(err) {
 			// Platform rejected tally's service key (placeholder secret,
 			// rotated or under-scoped key). That is a standing misconfiguration,
 			// not a blip: failing open here would hand every tenant the paid
@@ -110,4 +114,13 @@ func truthy(v string) bool {
 	default:
 		return true
 	}
+}
+
+// keyRejected reports whether err says the platform refused tally's service key.
+// It is duck-typed (platform's *Error implements AuthRejected) so this package
+// need not import the platform adapter, which would form an import cycle
+// through app/team.
+func keyRejected(err error) bool {
+	var ar interface{ AuthRejected() bool }
+	return errors.As(err, &ar) && ar.AuthRejected()
 }

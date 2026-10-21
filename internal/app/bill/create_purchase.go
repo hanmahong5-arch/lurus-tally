@@ -86,7 +86,7 @@ func (uc *CreatePurchaseDraftUseCase) Execute(ctx context.Context, req CreatePur
 		if it.UnitPrice.IsNegative() {
 			return nil, fmt.Errorf("%w: item unit_price must be non-negative", ErrValidation)
 		}
-		lineAmt := it.Qty.Mul(it.UnitPrice).Round(4)
+		lineAmt := it.Qty.Mul(it.UnitPrice).Round(2)
 		subtotal = subtotal.Add(lineAmt)
 
 		bi := &domain.BillItem{
@@ -112,7 +112,7 @@ func (uc *CreatePurchaseDraftUseCase) Execute(ctx context.Context, req CreatePur
 	shippingFee := req.ShippingFee
 	taxAmount := req.TaxAmount
 	// totalInOrigCurrency is the sum in the original currency (before conversion).
-	totalInOrigCurrency := subtotal.Add(shippingFee).Add(taxAmount).Round(4)
+	totalInOrigCurrency := subtotal.Add(shippingFee).Add(taxAmount).Round(2)
 
 	// Resolve multi-currency fields.
 	currency := req.Currency
@@ -136,7 +136,7 @@ func (uc *CreatePurchaseDraftUseCase) Execute(ctx context.Context, req CreatePur
 		// amountLocal = original-currency total (snapshot)
 		amountLocal = totalInOrigCurrency
 		// totalAmount = CNY equivalent (report basis)
-		totalAmountCNY = amountLocal.Mul(exchangeRate).Round(4)
+		totalAmountCNY = amountLocal.Mul(exchangeRate).Round(2)
 	}
 
 	// Reject any product/warehouse reference outside this tenant before opening
@@ -147,6 +147,9 @@ func (uc *CreatePurchaseDraftUseCase) Execute(ctx context.Context, req CreatePur
 		productIDs = append(productIDs, it.ProductID)
 	}
 	if err := validateRefs(ctx, uc.repo, req.TenantID, productIDs, req.WarehouseID); err != nil {
+		return nil, err
+	}
+	if err := validatePartner(ctx, uc.repo, req.TenantID, req.PartnerID); err != nil {
 		return nil, err
 	}
 

@@ -7,6 +7,7 @@ import {
   type NurseryDictItem,
   type NurseryType,
 } from "@/lib/api/nursery-dict"
+import { formSaveError } from "@/lib/form-error"
 
 const ALL_TYPES: { value: NurseryType; label: string }[] = [
   { value: "tree", label: "乔木" },
@@ -132,7 +133,7 @@ export default function NurseryDictForm({
       }
       onSuccess(item)
     } catch (e) {
-      setSubmitError(String(e))
+      setSubmitError(formSaveError(e, "苗木字典里已经有这个名字了"))
     } finally {
       setSubmitting(false)
     }
@@ -165,7 +166,7 @@ export default function NurseryDictForm({
           className="w-full rounded-md border border-input bg-background px-3 py-1.5 text-sm outline-none focus:ring-2 focus:ring-ring"
           value={latinName}
           onChange={(e) => setLatinName(e.target.value)}
-          placeholder="e.g. Acer palmatum"
+          placeholder="例如：Acer palmatum"
         />
       </div>
 

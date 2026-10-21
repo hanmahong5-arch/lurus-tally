@@ -8,20 +8,31 @@ import (
 
 	"github.com/google/uuid"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/project"
+	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/codegen"
 )
 
 // CreateUseCase creates a new project.
 type CreateUseCase struct {
-	repo Repository
+	repo  Repository
+	codes codegen.Source
 }
 
 // NewCreateUseCase constructs a CreateUseCase.
 func NewCreateUseCase(repo Repository) *CreateUseCase {
-	return &CreateUseCase{repo: repo}
+	return &CreateUseCase{repo: repo, codes: codegen.Default()}
+}
+
+// WithCodeSource replaces the clock/randomness used for generated codes (tests).
+func (uc *CreateUseCase) WithCodeSource(s codegen.Source) *CreateUseCase {
+	uc.codes = s
+	return uc
 }
 
 // Execute validates the input and creates a new Project.
 // Defaults Status to StatusActive if empty.
+// An empty Code is server-assigned (PJ + yymmdd + 4 symbols, see codegen) and
+// redrawn on ErrDuplicateCode; the domain invariant "a project has a code" is
+// unchanged, so Validate runs once the code is in place.
 // Returns ErrDuplicateCode if a duplicate code exists for the tenant.
 func (uc *CreateUseCase) Execute(ctx context.Context, in domain.CreateInput) (*domain.Project, error) {
 	status := in.Status
@@ -45,14 +56,22 @@ func (uc *CreateUseCase) Execute(ctx context.Context, in domain.CreateInput) (*d
 		CreatedAt:      now,
 		UpdatedAt:      now,
 	}
-	if err := p.Validate(); err != nil {
-		return nil, fmt.Errorf("project create validate: %w", err)
-	}
-	if err := uc.repo.Create(ctx, p); err != nil {
-		if errors.Is(err, ErrDuplicateCode) {
-			return nil, ErrDuplicateCode
+	isDup := func(err error) bool { return errors.Is(err, ErrDuplicateCode) }
+	err := uc.codes.Create(codegen.PrefixProject, in.Code, isDup, func(code string) error {
+		p.Code = code
+		if err := p.Validate(); err != nil {
+			return fmt.Errorf("project create validate: %w", err)
 		}
-		return nil, fmt.Errorf("project create: %w", err)
+		if err := uc.repo.Create(ctx, p); err != nil {
+			if errors.Is(err, ErrDuplicateCode) {
+				return ErrDuplicateCode
+			}
+			return fmt.Errorf("project create: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
 	}
 	return p, nil
 }

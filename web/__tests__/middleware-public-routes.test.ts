@@ -84,6 +84,14 @@ describe("middleware.ts matcher — public vs protected routes", () => {
     expect(isIntercepted("/setup")).toBe(true)
   })
 
+  it("PWA assets stay public so the app is installable, while app pages stay gated", () => {
+    const isIntercepted = buildIsIntercepted()
+    expect(isIntercepted("/manifest.webmanifest")).toBe(false)
+    expect(isIntercepted("/sw.js")).toBe(false)
+    expect(isIntercepted("/icons/icon-192.png")).toBe(false)
+    expect(isIntercepted("/dashboard")).toBe(true)
+  })
+
   it("KNOWN GAP (documented, not a pass/fail guard on 'good' behaviour): the negative lookahead is a literal prefix match, not a path-segment boundary — any future route whose first segment starts with the literal text 'login'/'pricing'/'api'/'_next'/'favicon.ico' silently becomes public. No such route exists today, but adding e.g. /pricing-experiment or /apiaries later would ship it unauthenticated with zero test failures elsewhere.", () => {
     const isIntercepted = buildIsIntercepted()
     expect(isIntercepted("/pricing-internal-admin")).toBe(false)

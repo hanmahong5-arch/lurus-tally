@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 
 	handlerreports "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/reports"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
+	apprep "github.com/hanmahong5-arch/lurus-tally/internal/app/report"
 	appreports "github.com/hanmahong5-arch/lurus-tally/internal/app/reports"
 )
 
@@ -189,5 +191,74 @@ func TestReportsHandler_NoTenantID_Returns401(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("no tenant status = %d, want 401; body: %s", w.Code, w.Body.String())
+	}
+}
+
+// monthlyStubRepo is a Repo that also serves the month-end figures.
+type monthlyStubRepo struct {
+	stubRepo
+	gotFrom, gotTo time.Time
+}
+
+func (m *monthlyStubRepo) MonthlyFigures(_ context.Context, _ uuid.UUID, from, to time.Time) (apprep.Figures, error) {
+	m.gotFrom, m.gotTo = from, to
+	return apprep.Figures{
+		Sales: dec("1000"), SaleReturns: dec("100"), CostOfGoods: dec("500"),
+		Purchases: dec("300"), Receivable: dec("42"),
+	}, nil
+}
+
+func TestMonthlyHandler_ReturnsNetFigures(t *testing.T) {
+	repo := &monthlyStubRepo{}
+	r := buildRouter(repo)
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/reports/monthly?month=2026-09", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d; body: %s", w.Code, w.Body.String())
+	}
+	var got map[string]string
+	if err := json.Unmarshal(w.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if got["net_sales"] != "900.00" || got["gross_profit"] != "400.00" || got["receivable"] != "42.00" {
+		t.Errorf("body = %v", got)
+	}
+	if got["date_from"] != "2026-09-01" || got["date_to"] != "2026-09-30" {
+		t.Errorf("range = %s..%s", got["date_from"], got["date_to"])
+	}
+}
+
+func TestMonthlyHandler_BadMonthIs400InChinese(t *testing.T) {
+	r := buildRouter(&monthlyStubRepo{})
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/reports/monthly?month=2026-13", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d", w.Code)
+	}
+	var got map[string]string
+	_ = json.Unmarshal(w.Body.Bytes(), &got)
+	if got["message"] == "" || got["message"][0] < 0x80 {
+		t.Errorf("message = %q, want Chinese", got["message"])
+	}
+}
+
+func TestMonthlyCSV_HasBOMAndRows(t *testing.T) {
+	r := buildRouter(&monthlyStubRepo{})
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/reports/monthly.csv?month=2026-09", nil)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d", w.Code)
+	}
+	b := w.Body.String()
+	if len(b) < 3 || b[:3] != "\xef\xbb\xbf" {
+		t.Errorf("missing BOM")
+	}
+	for _, want := range []string{"净销售额,900.00", "毛利,400.00", "月底应收,42.00", "当前库存金额（导出时）"} {
+		if !strings.Contains(b, want) {
+			t.Errorf("csv lacks %q: %s", want, b)
+		}
 	}
 }

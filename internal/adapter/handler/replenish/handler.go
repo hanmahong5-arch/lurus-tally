@@ -151,7 +151,8 @@ func (h *Handler) GetSuggestions(c *gin.Context) {
 		items = append(items, resp)
 	}
 
-	c.JSON(http.StatusOK, gin.H{
+	// Estimated amount and last purchase price are cost: trimmed without cost.view.
+	middleware.JSONTrimmed(c, http.StatusOK, gin.H{
 		"items": items,
 		"count": len(items),
 		"weeks": weeks,
@@ -318,21 +319,9 @@ func (h *Handler) GetScorecard(c *gin.Context) {
 
 // resolveCreatorID reads the creator UUID from the OIDC subject injected by
 // AuthMiddleware. The X-User-ID header fallback was removed (UAT-3 Bug 2)
-// because clients could spoof bill_head.creator_id by setting it. Returns
-// uuid.Nil when no sub is present — the use case validates non-nil and
-// rejects gracefully.
+// because clients could spoof bill_head.creator_id by setting it. A non-UUID
+// subject is hashed to a stable id; returns uuid.Nil only when no sub is
+// present (PAT path), which the caller replaces with the tenant id.
 func resolveCreatorID(c *gin.Context) uuid.UUID {
-	sub, exists := c.Get(middleware.CtxKeyIDPSubject)
-	if !exists {
-		return uuid.Nil
-	}
-	s, ok := sub.(string)
-	if !ok {
-		return uuid.Nil
-	}
-	id, err := uuid.Parse(s)
-	if err != nil {
-		return uuid.Nil
-	}
-	return id
+	return middleware.ActorUUID(c)
 }

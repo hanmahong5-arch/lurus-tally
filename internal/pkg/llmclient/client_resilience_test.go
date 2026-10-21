@@ -19,7 +19,7 @@ func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 
 func newTestClient(t *testing.T, rt http.RoundTripper) *Client {
 	t.Helper()
-	c, err := New(Config{BaseURL: "http://test.local/v1", APIKey: "k"})
+	c, err := New(Config{BaseURL: "http://test.local/v1", APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -100,7 +100,7 @@ func TestDoStream_RecordsUsage(t *testing.T) {
 	outBefore := sumTokens(t, tenant, "out")
 
 	var got string
-	err := c.Stream(ctx, "deepseek-v4-flash", []Message{{Role: "user", Content: "hi"}}, nil,
+	err := c.Stream(ctx, "test-model", []Message{{Role: "user", Content: "hi"}}, nil,
 		func(d StreamDelta) { got += d.Content })
 	if err != nil {
 		t.Fatalf("Stream: %v", err)

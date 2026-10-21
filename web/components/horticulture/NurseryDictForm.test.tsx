@@ -11,6 +11,7 @@ vi.mock("@/lib/api/nursery-dict", () => ({
 }))
 
 import { createNurseryDict, updateNurseryDict } from "@/lib/api/nursery-dict"
+import { ApiError } from "@/lib/api/errors"
 import NurseryDictForm from "./NurseryDictForm"
 import type { NurseryDictItem } from "@/lib/api/nursery-dict"
 
@@ -123,5 +124,23 @@ describe("NurseryDictForm", () => {
     // Should render an input for the spec key
     const specInput = screen.getByDisplayValue("胸径_cm")
     expect(specInput).toBeInTheDocument()
+  })
+
+  async function submitName() {
+    render(<NurseryDictForm mode="create" onSuccess={vi.fn()} onCancel={vi.fn()} />)
+    fireEvent.change(screen.getByPlaceholderText("请输入苗木名称"), { target: { value: "香樟" } })
+    fireEvent.click(screen.getByRole("button", { name: /创建/ }))
+  }
+
+  it("TestNurseryDictForm_DuplicateName_PlainChinese", async () => {
+    vi.mocked(createNurseryDict).mockRejectedValueOnce(new ApiError(409, "dup", "x", { error: "duplicate name" }))
+    await submitName()
+    expect(await screen.findByText("苗木字典里已经有这个名字了")).toBeInTheDocument()
+  })
+
+  it("TestNurseryDictForm_EnglishRejection_ReplacedWithFallback", async () => {
+    vi.mocked(createNurseryDict).mockRejectedValueOnce(new ApiError(400, "bad", "x", { error: "invalid body" }))
+    await submitName()
+    expect(await screen.findByText("保存没成功，请检查填写的内容")).toBeInTheDocument()
   })
 })

@@ -63,8 +63,8 @@ func routerWithBilling(bilh *handlerbilling.Handler) *gin.Engine {
 	return router.New(
 		h, nil, nil, nil, // health, authMW, tenantDBMW, idempotencyMW
 		nil, nil, nil, nil, nil, nil, nil, nil, nil, // ph,uh,ah,pat,sh,bh,ch,saleh,payh
-		bilh,                                                                 // bilh — the one under test
-		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, // remaining handlers
+		bilh,                                                                           // bilh — the one under test
+		nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, // remaining handlers
 	)
 }
 

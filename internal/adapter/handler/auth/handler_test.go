@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -208,6 +210,67 @@ func TestAuthHandler_ChooseProfile_InvalidType_Returns400(t *testing.T) {
 
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestAuthHandler_ChooseProfile_InvalidType_ChineseDetail verifies the 400 text is
+// plain Chinese for the shopkeeper, with no English enum names.
+func TestAuthHandler_ChooseProfile_InvalidType_ChineseDetail(t *testing.T) {
+	stub := &stubChooseProfile{err: domain.ErrInvalidProfileType}
+	h := handlerAuth.New(stub, &stubGetMe{result: &appTenant.GetMeOutput{}})
+	e := newTestEngine(h, "sub-bad", "", "")
+
+	b, _ := json.Marshal(map[string]string{"profile_type": "garbage"})
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/tenant/profile", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	var got map[string]any
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	detail, _ := got["detail"].(string)
+	if !strings.Contains(detail, "请选择") || strings.Contains(detail, "profile_type") || strings.Contains(detail, "cross_border") {
+		t.Errorf("detail not plain Chinese: %q", detail)
+	}
+}
+
+// TestAuthHandler_ChooseProfile_BadBody_ChineseDetail verifies malformed JSON does not
+// leak the binder's English error.
+func TestAuthHandler_ChooseProfile_BadBody_ChineseDetail(t *testing.T) {
+	h := handlerAuth.New(&stubChooseProfile{}, &stubGetMe{result: &appTenant.GetMeOutput{}})
+	e := newTestEngine(h, "sub-bad", "", "")
+
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/tenant/profile", strings.NewReader("{not json"))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "invalid") || strings.Contains(rec.Body.String(), "character") {
+		t.Errorf("English leaked: %s", rec.Body.String())
+	}
+}
+
+// TestAuthHandler_ChooseProfile_InternalError_NoLeak verifies an unexpected failure
+// returns 500 without echoing err.Error().
+func TestAuthHandler_ChooseProfile_InternalError_NoLeak(t *testing.T) {
+	stub := &stubChooseProfile{err: errors.New("pq: violates check constraint tenant_profile_profile_type_check")}
+	h := handlerAuth.New(stub, &stubGetMe{result: &appTenant.GetMeOutput{}})
+	e := newTestEngine(h, "sub-500", "", "")
+
+	b, _ := json.Marshal(map[string]string{"profile_type": "horticulture"})
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/tenant/profile", bytes.NewReader(b))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "constraint") {
+		t.Errorf("internal error leaked: %s", rec.Body.String())
 	}
 }
 

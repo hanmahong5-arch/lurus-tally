@@ -1,22 +1,32 @@
 "use client"
 
 import { useCallback, useRef, useState } from "react"
+import Link from "next/link"
+import { getReceivables, unpaidByPartner, openBillsHref } from "@/lib/api/receivables"
+import { formatCNY } from "@/lib/format"
+import { extractApiError } from "@/lib/api/errors"
+import { statementHref } from "@/lib/api/receipts"
+import { ReceiptDialog } from "@/components/receipt-dialog"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
+import { useRole } from "@/hooks/use-role"
 import { toast } from "sonner"
 import type { ColumnDef } from "@tanstack/react-table"
 import {
   listSuppliers,
+  importSuppliers,
+  supplierImportTemplate,
   deleteSupplier,
-  restoreSupplier,
   createSupplier,
   updateSupplier,
   type SupplierItem,
   type SupplierCreateInput,
 } from "@/lib/api/suppliers"
 import { useConfirm } from "@/hooks/useConfirm"
+import { CsvImportDialog } from "@/components/csv-import-dialog"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable } from "@/components/ui/data-table"
+import { DataCard } from "@/components/ui/data-card"
 import { Pagination } from "@/components/ui/pagination"
 import { Sheet } from "@/components/ui/sheet"
 import { Button } from "@/components/ui/button"
@@ -38,7 +48,7 @@ interface SupplierForm {
 
 const FORM_FIELDS: { key: keyof SupplierForm; label: string; required?: boolean; placeholder: string }[] = [
   { key: "name", label: "名称", required: true, placeholder: "供应商名称" },
-  { key: "code", label: "编号", placeholder: "可选" },
+  { key: "code", label: "编号", placeholder: "留空自动生成" },
   { key: "contact", label: "联系人", placeholder: "可选" },
   { key: "phone", label: "电话", placeholder: "可选" },
   { key: "email", label: "邮箱", placeholder: "可选" },
@@ -61,12 +71,35 @@ const EMPTY_FORM: SupplierForm = {
  * a create/edit/view drawer (W3.D1).
  */
 export default function SuppliersPage() {
+  // 欠款、付款、对账单属于“看收付款”；增删改供应商需要 catalog.write。角色未知时不遮挡，后端兜底。
+  const { known, can } = useRole()
+  const canMoney = !known || can("payment.read")
+  // 请求失败即关闭：会话还没回来时不发受限请求，角色确定后再取。
+  const fetchMoney = known && can("payment.read")
+  const canPay = !known || can("payment.record")
+  const canEdit = !known || can("catalog.write")
   const [items, setItems] = useState<SupplierItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [q, setQ] = useState("")
   const [offset, setOffset] = useState(0)
+
+  // 欠款汇总只取一次；失败时欠款列显示“—”，不影响供应商列表本身。
+  const [owed, setOwed] = useState<Map<string, string> | null>(null)
+  const [owedTick, setOwedTick] = useState(0)
+  const [showImport, setShowImport] = useState(false)
+  useAbortableEffect((signal, isCancelled) => {
+    if (!fetchMoney) return
+    getReceivables("ap", { signal })
+      .then((r) => {
+        if (!isCancelled()) setOwed(unpaidByPartner(r))
+      })
+      .catch(() => {})
+  }, [owedTick, fetchMoney])
+
+  // 整笔付款：先预览会付清哪几张进货单，确认后刷新欠款。
+  const [payFor, setPayFor] = useState<SupplierItem | null>(null)
 
   const [drawerItem, setDrawerItem] = useState<SupplierItem | null>(null)
   const [drawerMode, setDrawerMode] = useState<"view" | "edit" | "create">("view")
@@ -89,7 +122,7 @@ export default function SuppliersPage() {
         })
         .catch((e) => {
           if (isCancelled?.() || signal?.aborted) return
-          setError(String(e))
+          setError(extractApiError(e).message)
         })
         .finally(() => {
           if (isCancelled?.()) return
@@ -172,7 +205,7 @@ export default function SuppliersPage() {
       closeDrawer()
       load(q, offset)
     } catch (e) {
-      toast.error("保存失败：" + String(e))
+      toast.error("保存失败：" + extractApiError(e).message)
     } finally {
       setSaving(false)
     }
@@ -180,8 +213,8 @@ export default function SuppliersPage() {
 
   async function handleDelete(item: SupplierItem) {
     const ok = await confirm({
-      title: "软删除供应商",
-      body: `确认软删除「${item.name}」？删除后可在列表中恢复。`,
+      title: "删除供应商",
+      body: `确认删除「${item.name}」？删除后列表里不再显示，如需找回请联系客服。`,
       confirmText: "删除",
       danger: true,
     })
@@ -190,23 +223,14 @@ export default function SuppliersPage() {
       await deleteSupplier(item.id)
       load(q, offset)
     } catch (e) {
-      toast.error("删除失败：" + String(e))
-    }
-  }
-
-  async function handleRestore(id: string) {
-    try {
-      await restoreSupplier(id)
-      load(q, offset)
-    } catch (e) {
-      toast.error("恢复失败：" + String(e))
+      toast.error("删除失败：" + extractApiError(e).message)
     }
   }
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
 
-  const columns: ColumnDef<SupplierItem>[] = [
+  const allColumns: ColumnDef<SupplierItem>[] = [
     {
       id: "name",
       header: "名称",
@@ -228,38 +252,88 @@ export default function SuppliersPage() {
       cell: ({ row }) => <span>{row.original.phone || "—"}</span>,
     },
     {
+      id: "owed",
+      header: "欠供应商款",
+      meta: { align: "right" },
+      cell: ({ row }) => {
+        if (owed === null) return <span className="block text-right text-muted-foreground">—</span>
+        const amt = owed.get(row.original.id)
+        if (!amt || Number(amt) <= 0) {
+          return <span className="block text-right text-xs text-muted-foreground">无欠款</span>
+        }
+        return (
+          <span className="block text-right" onClick={(e) => e.stopPropagation()}>
+            <Link
+              href={openBillsHref("ap", row.original.id, row.original.name)}
+              className="font-mono tabular-nums text-warning hover:underline"
+              title="查看这家的未结清单据"
+            >
+              {formatCNY(amt)}
+            </Link>
+          </span>
+        )
+      },
+    },
+    {
       id: "actions",
       header: "操作",
       meta: { align: "right" },
       cell: ({ row }) => (
         <div className="flex justify-end gap-3" onClick={(e) => e.stopPropagation()}>
-          <button
-            type="button"
-            onClick={() => openEdit(row.original)}
-            className="text-xs text-primary hover:underline"
-          >
-            编辑
-          </button>
-          <button
-            type="button"
-            onClick={() => void handleDelete(row.original)}
-            className="text-xs text-destructive hover:underline"
-          >
-            删除
-          </button>
+          {canPay && Number(owed?.get(row.original.id) ?? 0) > 0 && (
+            <button type="button" onClick={() => setPayFor(row.original)} className="text-xs text-primary hover:underline">
+              付款
+            </button>
+          )}
+          {canMoney && (
+            <Link href={statementHref("ap", row.original.id)} className="text-xs text-primary hover:underline">
+              对账单
+            </Link>
+          )}
+          {canEdit && (
+            <>
+              <button
+                type="button"
+                onClick={() => openEdit(row.original)}
+                className="text-xs text-primary hover:underline"
+              >
+                编辑
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDelete(row.original)}
+                className="text-xs text-destructive hover:underline"
+              >
+                删除
+              </button>
+            </>
+          )}
         </div>
       ),
     },
   ]
 
   const isForm = drawerMode === "create" || drawerMode === "edit"
+  // 没有收付款权限的人看不到欠款列；既不能付款、看对账单、也不能改的人，操作列没有内容。
+  const columns = allColumns.filter(
+    (c) => (c.id !== "owed" || canMoney) && (c.id !== "actions" || canMoney || canEdit),
+  )
 
   return (
     <PageContainer width="wide">
       <PageHeader
         title={<span data-testid="page-title">供应商管理</span>}
         subtitle={`共 ${total} 个供应商`}
-        actions={<Button onClick={openCreate}>+ 新增供应商</Button>}
+        actions={
+          <>
+            {canEdit && (
+              <Button variant="outline" onClick={() => setShowImport(true)}>
+                批量导入
+              </Button>
+            )}
+            {canEdit && <Button onClick={openCreate}>+ 新增供应商</Button>}
+          </>
+        }
       />
 
       <div className="mb-4">
@@ -279,12 +353,54 @@ export default function SuppliersPage() {
         error={error}
         getRowId={(item) => item.id}
         onRowClick={openDetail}
+        mobileCard={(item) => {
+          const amt = owed?.get(item.id)
+          const hasOwed = !!amt && Number(amt) > 0
+          return (
+            <DataCard
+              title={item.name}
+              subtitle={item.code || undefined}
+              aside={
+                canMoney ? (
+                  hasOwed ? (
+                    <span className="font-mono tabular-nums text-warning">{formatCNY(amt)}</span>
+                  ) : (
+                    <span className="text-xs text-muted-foreground">{owed === null ? "—" : "无欠款"}</span>
+                  )
+                ) : undefined
+              }
+              fields={[
+                { label: "联系人", value: item.contact || "—" },
+                { label: "电话", value: item.phone || "—" },
+              ]}
+              actions={
+                <>
+                  {canPay && hasOwed && (
+                    <button type="button" onClick={() => setPayFor(item)} className="text-xs text-primary hover:underline">
+                      付款
+                    </button>
+                  )}
+                  {canMoney && (
+                    <Link href={statementHref("ap", item.id)} className="text-xs text-primary hover:underline">
+                      对账单
+                    </Link>
+                  )}
+                  {canEdit && (
+                    <button type="button" onClick={() => openEdit(item)} className="text-xs text-primary hover:underline">
+                      编辑
+                    </button>
+                  )}
+                </>
+              }
+            />
+          )
+        }}
         animateRows
         empty={
           <EmptyState
             title="暂无供应商"
-            description="添加供应商后可在采购单中快速引用"
-            action={<Button variant="outline" onClick={openCreate}>新增第一个供应商</Button>}
+            description={canEdit ? "添加供应商后可在采购单中快速引用" : "还没有供应商"}
+            action={canEdit ? <Button variant="outline" onClick={openCreate}>新增第一个供应商</Button> : undefined}
           />
         }
       />
@@ -317,11 +433,8 @@ export default function SuppliersPage() {
                 {saving ? "保存中..." : "保存"}
               </Button>
             </>
-          ) : drawerItem ? (
+          ) : drawerItem && canEdit ? (
             <>
-              <Button variant="outline" size="sm" onClick={() => void handleRestore(drawerItem.id)}>
-                恢复
-              </Button>
               <Button
                 variant="destructive"
                 size="sm"
@@ -330,7 +443,7 @@ export default function SuppliersPage() {
                   closeDrawer()
                 }}
               >
-                软删除
+                删除
               </Button>
               <Button size="sm" onClick={() => openEdit(drawerItem)}>
                 编辑
@@ -376,6 +489,28 @@ export default function SuppliersPage() {
           </div>
         )}
       </Sheet>
+      {payFor && (
+        <ReceiptDialog
+          open
+          onOpenChange={(o) => {
+            if (!o) setPayFor(null)
+          }}
+          direction="ap"
+          partnerId={payFor.id}
+          partnerName={payFor.name}
+          owed={owed?.get(payFor.id)}
+          onDone={() => setOwedTick((n) => n + 1)}
+        />
+      )}
+      <CsvImportDialog
+        open={showImport}
+        onOpenChange={setShowImport}
+        noun="供应商"
+        templateFilename="供应商导入模板.csv"
+        fetchTemplate={supplierImportTemplate}
+        importFile={(file, idempotencyKey) => importSuppliers(file, { idempotencyKey })}
+        onImported={() => load(q, 0)}
+      />
     </PageContainer>
   )
 }

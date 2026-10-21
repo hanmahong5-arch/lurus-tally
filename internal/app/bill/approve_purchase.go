@@ -19,6 +19,26 @@ import (
 // ErrInvalidUnitForProduct is returned when the item's unit_id is not valid for the product.
 var ErrInvalidUnitForProduct = fmt.Errorf("bill: unit_id is not valid for this product")
 
+// resolveApprovalWarehouse returns the warehouse an approval books stock against.
+// A bill without one is assigned the tenant default inside tx and written back, so
+// the document records where its stock moved. ErrWarehouseRequired when none exists.
+func resolveApprovalWarehouse(ctx context.Context, repo BillRepo, tx *sql.Tx, head *domain.BillHead, tenantID, billID uuid.UUID) (uuid.UUID, error) {
+	if head.WarehouseID != nil {
+		return *head.WarehouseID, nil
+	}
+	id, ok, err := repo.DefaultWarehouseID(ctx, tenantID)
+	if err != nil {
+		return uuid.Nil, fmt.Errorf("resolve default warehouse: %w", err)
+	}
+	if !ok {
+		return uuid.Nil, ErrWarehouseRequired
+	}
+	if err := repo.SetBillWarehouse(ctx, tx, tenantID, billID, id); err != nil {
+		return uuid.Nil, fmt.Errorf("set bill warehouse: %w", err)
+	}
+	return id, nil
+}
+
 // StockMovementExecutor is the minimal interface of RecordMovementUseCase needed by ApprovePurchase.
 // It exposes only ExecuteInTx so the approve use case can participate in an outer transaction.
 type StockMovementExecutor interface {
@@ -38,6 +58,28 @@ type ApprovePurchaseUseCase struct {
 	repo     BillRepo
 	stockUC  StockMovementExecutor
 	unitRepo ProductUnitRepo
+	// paymentRepo is optional; see WithPayments.
+	paymentRepo PaymentRecorder
+}
+
+// ApprovePurchaseRequest is the input to ExecuteWithPayment. PaidAmount > 0 books a
+// payment against the bill in the same transaction as the approval.
+type ApprovePurchaseRequest struct {
+	TenantID   uuid.UUID
+	BillID     uuid.UUID
+	ApprovedBy uuid.UUID
+	PaidAmount decimal.Decimal
+	PayType    string
+	// AllowZeroPrice confirms lines with a zero unit price are gifts to be booked at
+	// zero cost. Without it such a draft is refused with ErrZeroPriceLines.
+	AllowZeroPrice bool
+}
+
+// WithPayments enables paying at approval time. Without it a request carrying a
+// positive paid amount is refused rather than silently dropped.
+func (uc *ApprovePurchaseUseCase) WithPayments(rec PaymentRecorder) *ApprovePurchaseUseCase {
+	uc.paymentRepo = rec
+	return uc
 }
 
 // NewApprovePurchaseUseCase constructs the use case.
@@ -51,6 +93,13 @@ func NewApprovePurchaseUseCase(repo BillRepo, stockUC StockMovementExecutor, uni
 
 // Execute approves the given purchase bill within a single transaction.
 func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID, approvedBy uuid.UUID) error {
+	return uc.ExecuteWithPayment(ctx, ApprovePurchaseRequest{TenantID: tenantID, BillID: billID, ApprovedBy: approvedBy})
+}
+
+// ExecuteWithPayment approves the purchase bill and, when PaidAmount > 0, records the
+// payment in the same transaction so the payable drops as soon as the goods are booked.
+func (uc *ApprovePurchaseUseCase) ExecuteWithPayment(ctx context.Context, req ApprovePurchaseRequest) error {
+	tenantID, billID, approvedBy := req.TenantID, req.BillID, req.ApprovedBy
 	if tenantID == uuid.Nil {
 		return fmt.Errorf("approve purchase: tenant_id is required")
 	}
@@ -58,12 +107,26 @@ func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID,
 		return fmt.Errorf("approve purchase: bill_id is required")
 	}
 
-	// Pre-lock idempotency check: if the bill is already approved, return nil immediately.
+	if req.PaidAmount.IsNegative() {
+		return fmt.Errorf("approve purchase: %w: paid_amount must be non-negative", ErrValidation)
+	}
+	if _, err := resolvePayType(req.PayType); err != nil {
+		return err
+	}
+	if err := checkSettlementMethod(req.PayType, req.PaidAmount); err != nil {
+		return err
+	}
+	if req.PaidAmount.GreaterThan(decimal.Zero) && uc.paymentRepo == nil {
+		return fmt.Errorf("approve purchase: payments are not enabled")
+	}
+
+	// Pre-lock idempotency check: if the bill is already approved, return nil immediately
+	// (unless a payment rides along, which would be silently dropped).
 	// This avoids taking the advisory lock on every duplicate-click retry, which is the
 	// common case. The lock-and-recheck inside still guards the concurrent race.
 	preFetch, err := uc.repo.GetBill(ctx, tenantID, billID)
 	if err == nil && preFetch.Status == domain.StatusApproved {
-		return nil
+		return alreadyPaidApprovalResult(req.PaidAmount)
 	}
 
 	return uc.repo.WithTx(ctx, func(tx *sql.Tx) error {
@@ -80,7 +143,11 @@ func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID,
 
 		// Idempotent: if concurrently approved between pre-lock check and lock acquisition, return nil.
 		if head.Status == domain.StatusApproved {
-			return nil
+			return alreadyPaidApprovalResult(req.PaidAmount)
+		}
+
+		if req.PaidAmount.GreaterThan(head.TotalAmount) {
+			return fmt.Errorf("approve purchase: %w: paid %s, total %s", ErrPaidExceedsTotal, req.PaidAmount, head.TotalAmount)
 		}
 
 		// Validate state machine transition.
@@ -94,10 +161,22 @@ func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID,
 			return fmt.Errorf("approve purchase: load items: %w", err)
 		}
 
-		// Resolve warehouse from bill head (fall back to uuid.Nil if not set).
-		warehouseID := uuid.Nil
-		if head.WarehouseID != nil {
-			warehouseID = *head.WarehouseID
+		if !req.AllowZeroPrice {
+			var zero []ZeroPriceLine
+			for _, item := range items {
+				if item.UnitPrice.IsZero() {
+					zero = append(zero, ZeroPriceLine{LineNo: item.LineNo, ProductID: item.ProductID})
+				}
+			}
+			if len(zero) > 0 {
+				return fmt.Errorf("approve purchase: %w", &ZeroPriceLinesError{Lines: zero})
+			}
+		}
+
+		// Resolve warehouse from bill head, falling back to the tenant default.
+		warehouseID, err := resolveApprovalWarehouse(ctx, uc.repo, tx, head, tenantID, billID)
+		if err != nil {
+			return fmt.Errorf("approve purchase: %w", err)
 		}
 
 		// Resolve the FX rate that converts the bill's invoice currency to base (CNY).
@@ -113,20 +192,22 @@ func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID,
 		// Record one stock movement per line item.
 		for _, item := range items {
 			// Resolve conversion factor: if no unit_id, assume 1 (already in base unit).
-			convFactor := "1"
+			convFactor, factor := "1", decimal.NewFromInt(1)
 			if item.UnitID != nil {
 				f, err := uc.unitRepo.GetConversionFactor(ctx, item.ProductID, *item.UnitID)
 				if err != nil {
 					return fmt.Errorf("approve purchase: item line_no=%d: %w", item.LineNo, err)
 				}
-				convFactor = f.String()
+				convFactor, factor = f.String(), f
 			}
 
 			// Convert the per-unit cost to base currency (CNY) at this boundary so the
 			// recorded movement, WAC/FIFO cost and downstream inventory valuation are all
 			// expressed in the same currency as bill_head.total_amount (already converted in
 			// create_purchase). For a base-currency bill baseRate == 1, so this is a no-op.
-			baseUnitCost := item.UnitPrice.Mul(baseRate)
+			// The price is per purchase unit while the movement quantity is in base units, so
+			// the cost is brought down to a base unit as well.
+			baseUnitCost := item.UnitPrice.Mul(baseRate).Div(factor)
 
 			_, err := uc.stockUC.ExecuteInTx(ctx, tx, appstock.RecordMovementRequest{
 				TenantID:    tenantID,
@@ -171,6 +252,21 @@ func (uc *ApprovePurchaseUseCase) Execute(ctx context.Context, tenantID, billID,
 			"bill_id":   billID.String(),
 			"result":    "ok",
 		})
+
+		if req.PaidAmount.GreaterThan(decimal.Zero) {
+			if err := recordInitialPayment(ctx, tx, uc.repo, uc.paymentRepo, head, tenantID, billID, approvedBy, req.PaidAmount, req.PayType, now, ""); err != nil {
+				return fmt.Errorf("approve purchase: %w", err)
+			}
+		}
 		return nil
 	})
+}
+
+// alreadyPaidApprovalResult is the outcome of approving an already-approved purchase:
+// a plain repeat is idempotent, a repeat carrying a payment is told it was not booked.
+func alreadyPaidApprovalResult(paid decimal.Decimal) error {
+	if paid.GreaterThan(decimal.Zero) {
+		return ErrBillAlreadyApproved
+	}
+	return nil
 }

@@ -3,6 +3,7 @@
  * Follows the same fetch + X-Tenant-ID header pattern as projects.ts.
  */
 import { apiFetch } from "./client"
+import { fetchPartnerTemplate, uploadPartnerCsv } from "./partner-import"
 
 export interface SupplierItem {
   id: string
@@ -86,4 +87,15 @@ export async function deleteSupplier(id: string, tenantId?: string): Promise<voi
 
 export async function restoreSupplier(id: string, tenantId?: string): Promise<SupplierItem> {
   return apiFetch<SupplierItem>(`/suppliers/${id}/restore`, { method: "POST", tenantId })
+}
+
+export { type PartnerImportResult as SupplierImportResult } from "./partner-import"
+
+/** Bulk-import suppliers from a CSV file (name required; same name is skipped). */
+export function importSuppliers(file: File, opts: { tenantId?: string; idempotencyKey?: string } = {}) {
+  return uploadPartnerCsv("suppliers", file, opts)
+}
+
+export function supplierImportTemplate() {
+  return fetchPartnerTemplate("suppliers")
 }

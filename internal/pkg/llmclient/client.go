@@ -1,8 +1,8 @@
-// Package llmclient provides an OpenAI-compatible HTTP client routed through
-// lurus newapi (newapi.lurus.cn). It never imports the openai SDK — all
+// Package llmclient provides a chat-completions-compatible HTTP client routed through
+// lurus newapi (newapi.lurus.cn). It never imports any vendor SDK — all
 // communication is plain HTTP/JSON per the cost-llm skill guidance.
 //
-// DeepSeek v4 trap defenses applied:
+// Model trap defenses applied:
 //  1. thinking disabled by default (prevents silent content="" with small max_tokens)
 //  2. min max_tokens=1024 enforced
 //  3. error.code classified (not HTTP status) to distinguish retryable vs deterministic
@@ -53,7 +53,7 @@ type Message struct {
 	ReasoningContent *string `json:"reasoning_content,omitempty"`
 }
 
-// Tool is an OpenAI-compatible function tool definition.
+// Tool is a chat-completions-compatible function tool definition.
 type Tool struct {
 	Type     string      `json:"type"`
 	Function FunctionDef `json:"function"`
@@ -95,7 +95,7 @@ type ChatRequest struct {
 	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
 }
 
-// StreamOptions is the OpenAI-compatible stream_options object.
+// StreamOptions is the chat-completions-compatible stream_options object.
 type StreamOptions struct {
 	IncludeUsage bool `json:"include_usage"`
 }
@@ -147,7 +147,7 @@ type Config struct {
 	// APIKey is the Bearer token for newapi.
 	APIKey string
 	// DefaultModel is the model name to use when none is specified in the request.
-	// Defaults to "deepseek-v4-flash" when empty.
+	// Required: there is no built-in model name.
 	DefaultModel string
 	// HTTPTimeout overrides the per-request deadline. Defaults to 120s.
 	HTTPTimeout time.Duration
@@ -169,10 +169,10 @@ func New(cfg Config) (*Client, error) {
 	if cfg.APIKey == "" {
 		return nil, fmt.Errorf("llmclient: APIKey is required")
 	}
-	model := cfg.DefaultModel
-	if model == "" {
-		model = "deepseek-v4-flash"
+	if cfg.DefaultModel == "" {
+		return nil, fmt.Errorf("llmclient: DefaultModel is required")
 	}
+	model := cfg.DefaultModel
 	timeout := cfg.HTTPTimeout
 	if timeout == 0 {
 		timeout = defaultHTTPTimeout

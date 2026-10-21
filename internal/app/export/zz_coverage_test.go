@@ -43,10 +43,10 @@ func TestStockExport_HappyPath_NumericAsString(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"code", "name", "warehouse", "qty", "cost"}
+	cols := []string{"code", "name", "warehouse", "qty", "cost", "value"}
 	rows := mock.NewRows(cols).
-		AddRow("SKU001", "苗木A", "wh-1", "123.4500", "9.990000").
-		AddRow("SKU002", "苗木B", "wh-2", "0.0000", "0.000001")
+		AddRow("SKU001", "苗木A", "wh-1", "123.4500", "9.990000", "0").
+		AddRow("SKU002", "苗木B", "wh-2", "0.0000", "0.000001", "0")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, stockRowLimit+1).
 		WillReturnRows(rows)
@@ -88,7 +88,7 @@ func TestStockExport_EmptyResultSet(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, stockRowLimit+1).
-		WillReturnRows(mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost"}))
+		WillReturnRows(mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost", "value"}))
 
 	uc := NewStockExportUseCase(db, nil)
 	var buf bytes.Buffer
@@ -111,10 +111,10 @@ func TestStockExport_Truncation(t *testing.T) {
 	tenantID := uuid.New()
 
 	// rowLimit=2, DB returns 3 rows (limit+1) → 2 data rows + trailer, count==2.
-	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost"}).
-		AddRow("A", "a", "w1", "1", "1").
-		AddRow("B", "b", "w2", "2", "2").
-		AddRow("C", "c", "w3", "3", "3")
+	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost", "value"}).
+		AddRow("A", "a", "w1", "1", "1", "0").
+		AddRow("B", "b", "w2", "2", "2", "0").
+		AddRow("C", "c", "w3", "3", "3", "0")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, 3).
 		WillReturnRows(rows)
@@ -149,9 +149,9 @@ func TestStockExport_NoTruncationWhenUnderLimit(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost"})
+	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost", "value"})
 	for i := 0; i < 5; i++ {
-		rows.AddRow("C", "n", "w", "1", "1")
+		rows.AddRow("C", "n", "w", "1", "1", "0")
 	}
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, stockRowLimit+1).
@@ -199,8 +199,8 @@ func TestStockExport_ScanError(t *testing.T) {
 	tenantID := uuid.New()
 
 	scanErr := errors.New("scan boom")
-	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost"}).
-		AddRow("A", "a", "w1", "1", "1").
+	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost", "value"}).
+		AddRow("A", "a", "w1", "1", "1", "0").
 		RowError(0, scanErr)
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, stockRowLimit+1).
@@ -220,8 +220,8 @@ func TestStockExport_RowsErr(t *testing.T) {
 	tenantID := uuid.New()
 
 	closeErr := errors.New("rows iteration failed")
-	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost"}).
-		AddRow("A", "a", "w1", "1", "1").
+	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost", "value"}).
+		AddRow("A", "a", "w1", "1", "1", "0").
 		CloseError(closeErr)
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, stockRowLimit+1).
@@ -244,9 +244,9 @@ func TestStockExport_NilLoggerDefaultsToSlogDefault(t *testing.T) {
 	tenantID := uuid.New()
 
 	// Force the truncation branch (which logs) with a nil logger — must not panic.
-	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost"}).
-		AddRow("A", "a", "w1", "1", "1").
-		AddRow("B", "b", "w2", "2", "2")
+	rows := mock.NewRows([]string{"code", "name", "warehouse", "qty", "cost", "value"}).
+		AddRow("A", "a", "w1", "1", "1", "0").
+		AddRow("B", "b", "w2", "2", "2", "0")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, 2).
 		WillReturnRows(rows)
@@ -271,13 +271,13 @@ func TestBillsExport_HappyPath_TenantScopedAndSoftDeleteFiltered(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark"}
+	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark", "unpaid", "pay_state"}
 	rows := mock.NewRows(cols).
-		AddRow("B0001", "purchase", int16(0), nil, "p1", "w1", "1000.00", "500.00", "note1").
-		AddRow("B0002", "sale", int16(2), mustTime(2026, 6, 13), "p2", "w2", "2500.5000", "2500.5000", "")
+		AddRow("B0001", "purchase", int16(0), nil, "p1", "w1", "1000.00", "500.00", "note1", "", "").
+		AddRow("B0002", "sale", int16(2), mustTime(2026, 6, 13), "p2", "w2", "2500.5000", "2500.5000", "", "", "")
 	// Assert tenant isolation: WHERE tenant_id=$1 AND deleted_at IS NULL — the
 	// query text match plus WithArgs(tenantID, ...) pins arg #1 to tenantID.
-	mock.ExpectQuery(`(?i)FROM tally\.bill_head\s+WHERE tenant_id = \$1 AND deleted_at IS NULL`).
+	mock.ExpectQuery(`(?i)FROM tally\.bill_head bh\s+LEFT JOIN tally\.partner p .*LEFT JOIN tally\.warehouse wh .*WHERE bh\.tenant_id = \$1 AND bh\.deleted_at IS NULL\s+ORDER BY`).
 		WithArgs(tenantID, billsRowLimit+1).
 		WillReturnRows(rows)
 
@@ -295,8 +295,9 @@ func TestBillsExport_HappyPath_TenantScopedAndSoftDeleteFiltered(t *testing.T) {
 	if len(records) != 3 {
 		t.Fatalf("records = %d, want 3", len(records))
 	}
-	if !equalSlice(records[0], billsHeader) {
-		t.Errorf("header = %v, want %v", records[0], billsHeader)
+	wantHeader := []string{"单号", "类型", "状态", "日期", "合作方", "仓库", "总额", "已付", "备注", "未收付金额", "收付款状态"}
+	if !equalSlice(records[0], wantHeader) {
+		t.Errorf("header = %v, want %v", records[0], wantHeader)
 	}
 	// row1: status 0 -> 草稿, NULL date -> "".
 	if records[1][2] != "草稿" || records[1][3] != "" {
@@ -323,10 +324,10 @@ func TestBillsExport_StatusCancelledAndUnknownFallback(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark"}
+	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark", "unpaid", "pay_state"}
 	rows := mock.NewRows(cols).
-		AddRow("B0003", "purchase", int16(9), nil, "", "", "0.00", "0.00", "").
-		AddRow("B0004", "purchase", int16(4), nil, "", "", "0.00", "0.00", "")
+		AddRow("B0003", "purchase", int16(9), nil, "", "", "0.00", "0.00", "", "", "").
+		AddRow("B0004", "purchase", int16(4), nil, "", "", "0.00", "0.00", "", "", "")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, billsRowLimit+1).
 		WillReturnRows(rows)
@@ -350,11 +351,11 @@ func TestBillsExport_Truncation(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark"}
+	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark", "unpaid", "pay_state"}
 	rows := mock.NewRows(cols).
-		AddRow("B1", "t", int16(0), nil, "", "", "1", "1", "").
-		AddRow("B2", "t", int16(0), nil, "", "", "1", "1", "").
-		AddRow("B3", "t", int16(0), nil, "", "", "1", "1", "")
+		AddRow("B1", "t", int16(0), nil, "", "", "1", "1", "", "", "").
+		AddRow("B2", "t", int16(0), nil, "", "", "1", "1", "", "", "").
+		AddRow("B3", "t", int16(0), nil, "", "", "1", "1", "", "", "")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, 3).
 		WillReturnRows(rows)
@@ -400,9 +401,9 @@ func TestBillsExport_ScanError(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark"}
+	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark", "unpaid", "pay_state"}
 	rows := mock.NewRows(cols).
-		AddRow("B1", "t", int16(0), nil, "", "", "1", "1", "").
+		AddRow("B1", "t", int16(0), nil, "", "", "1", "1", "", "", "").
 		RowError(0, errors.New("scan fail"))
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, billsRowLimit+1).
@@ -420,9 +421,9 @@ func TestBillsExport_RowsErr(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark"}
+	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_id", "warehouse_id", "total_amount", "paid_amount", "remark", "unpaid", "pay_state"}
 	rows := mock.NewRows(cols).
-		AddRow("B1", "t", int16(0), nil, "", "", "1", "1", "").
+		AddRow("B1", "t", int16(0), nil, "", "", "1", "1", "", "", "").
 		CloseError(errors.New("iter fail"))
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, billsRowLimit+1).
@@ -444,11 +445,11 @@ func TestPaymentsExport_HappyPath_TenantScopedAndSoftDeleteFiltered(t *testing.T
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date"}
+	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date", "direction", "counted", "related_type"}
 	rows := mock.NewRows(cols).
-		AddRow("B0001", "p1", "999.990000", "cash", mustDatetime(2026, 6, 13, 14, 30, 5)).
-		AddRow("", "", "0.00", "wire", nil)
-	mock.ExpectQuery(`(?i)FROM tally\.payment_head\s+WHERE tenant_id = \$1 AND deleted_at IS NULL`).
+		AddRow("B0001", "p1", "999.990000", "cash", mustDatetime(2026, 6, 13, 14, 30, 5), "out", true, "采购").
+		AddRow("", "", "0.00", "wire", nil, "out", true, "采购")
+	mock.ExpectQuery(`(?i)FROM tally\.payment_head ph\s+LEFT JOIN tally\.bill_head bh .*LEFT JOIN tally\.partner p .*WHERE ph\.tenant_id = \$1 AND ph\.deleted_at IS NULL`).
 		WithArgs(tenantID, paymentsRowLimit+1).
 		WillReturnRows(rows)
 
@@ -468,12 +469,13 @@ func TestPaymentsExport_HappyPath_TenantScopedAndSoftDeleteFiltered(t *testing.T
 	if !equalSlice(records[0], paymentsHeader) {
 		t.Errorf("header = %v, want %v", records[0], paymentsHeader)
 	}
-	// Business invariant: amount is exact NUMERIC text, not float-rounded.
-	if records[1][2] != "999.990000" {
-		t.Errorf("amount = %q, want 999.990000", records[1][2])
+	// Business invariant: amount is exact NUMERIC text shown to the cent.
+	if records[1][2] != "999.99" {
+		t.Errorf("amount = %q, want 999.99", records[1][2])
 	}
-	if records[1][4] != "2026-06-13 14:30:05" {
-		t.Errorf("pay_date = %q, want 2026-06-13 14:30:05", records[1][4])
+	// Mock returns 14:30:05 UTC; the export renders in Asia/Shanghai (+8).
+	if records[1][4] != "2026-06-13 22:30:05" {
+		t.Errorf("pay_date = %q, want 2026-06-13 22:30:05", records[1][4])
 	}
 	if records[2][4] != "" {
 		t.Errorf("NULL pay_date = %q, want empty", records[2][4])
@@ -488,11 +490,11 @@ func TestPaymentsExport_Truncation(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date"}
+	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date", "direction", "counted", "related_type"}
 	rows := mock.NewRows(cols).
-		AddRow("P1", "p", "1", "cash", nil).
-		AddRow("P2", "p", "1", "cash", nil).
-		AddRow("P3", "p", "1", "cash", nil)
+		AddRow("P1", "p", "1", "cash", nil, "out", true, "采购").
+		AddRow("P2", "p", "1", "cash", nil, "out", true, "采购").
+		AddRow("P3", "p", "1", "cash", nil, "out", true, "采购")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, 3).
 		WillReturnRows(rows)
@@ -520,8 +522,8 @@ func TestPaymentsExport_NoTruncationWhenUnderLimit(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date"}
-	rows := mock.NewRows(cols).AddRow("P1", "p", "1", "cash", nil)
+	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date", "direction", "counted", "related_type"}
+	rows := mock.NewRows(cols).AddRow("P1", "p", "1", "cash", nil, "out", true, "采购")
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, paymentsRowLimit+1).
 		WillReturnRows(rows)
@@ -548,7 +550,7 @@ func TestPaymentsExport_EmptyResultSet(t *testing.T) {
 
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, paymentsRowLimit+1).
-		WillReturnRows(mock.NewRows([]string{"bill_no", "partner_id", "amount", "pay_type", "pay_date"}))
+		WillReturnRows(mock.NewRows([]string{"bill_no", "partner_id", "amount", "pay_type", "pay_date", "direction", "counted", "related_type"}))
 
 	uc := NewPaymentsExportUseCase(db, nil)
 	var buf bytes.Buffer
@@ -588,9 +590,9 @@ func TestPaymentsExport_ScanError(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date"}
+	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date", "direction", "counted", "related_type"}
 	rows := mock.NewRows(cols).
-		AddRow("P1", "p", "1", "cash", nil).
+		AddRow("P1", "p", "1", "cash", nil, "out", true, "采购").
 		RowError(0, errors.New("scan fail"))
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, paymentsRowLimit+1).
@@ -608,9 +610,9 @@ func TestPaymentsExport_RowsErr(t *testing.T) {
 	defer db.Close()
 	tenantID := uuid.New()
 
-	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date"}
+	cols := []string{"bill_no", "partner_id", "amount", "pay_type", "pay_date", "direction", "counted", "related_type"}
 	rows := mock.NewRows(cols).
-		AddRow("P1", "p", "1", "cash", nil).
+		AddRow("P1", "p", "1", "cash", nil, "out", true, "采购").
 		CloseError(errors.New("iter fail"))
 	mock.ExpectQuery(`SELECT`).
 		WithArgs(tenantID, paymentsRowLimit+1).
@@ -647,4 +649,174 @@ func equalSlice(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// ---------------------------------------------------------------------------
+// Bills filtered export
+// ---------------------------------------------------------------------------
+
+func TestBillsExport_Filtered_WhereClauseAndArgs(t *testing.T) {
+	db, mock := sqlmockNew(t)
+	defer db.Close()
+	tenantID := uuid.New()
+	partnerID := uuid.New()
+	creatorID := uuid.New()
+	from := mustTime(2026, 10, 1)
+	to := mustTime(2026, 11, 1)
+	status := int16(2)
+
+	cols := []string{"bill_no", "bill_type", "status", "bill_date", "partner_name", "warehouse_name", "total_amount", "paid_amount", "remark", "unpaid", "pay_state"}
+	rows := mock.NewRows(cols).
+		AddRow("S1", "出库", int16(2), mustTime(2026, 10, 5), "老王五金", "一号仓", "100.0000", "40.0000", "", "60.0000", "部分")
+	mock.ExpectQuery(`(?i)WHERE bh\.tenant_id = \$1 AND bh\.deleted_at IS NULL AND bh\.bill_type = \$2 AND bh\.sub_type = \$3 AND bh\.status = \$4 AND bh\.partner_id = \$5 AND bh\.bill_date >= \$6 AND bh\.bill_date < \$7 AND bh\.creator_id = \$8 AND \(bh\.bill_no ILIKE \$9 OR p\.name ILIKE \$9\) AND bh\.status = 2 AND bh\.paid_amount > 0 AND bh\.paid_amount < GREATEST\(bh\.total_amount - COALESCE\(r\.amt, 0\), 0\)\s+ORDER BY bh\.bill_date DESC, bh\.created_at DESC\s+LIMIT \$10`).
+		WithArgs(tenantID, "出库", "销售", status, partnerID, from, to, creatorID, `%50\%\_%`, billsRowLimit+1).
+		WillReturnRows(rows)
+
+	uc := NewBillsExportUseCase(db, nil)
+	var buf bytes.Buffer
+	n, err := uc.ExecuteFiltered(context.Background(), tenantID, BillsFilter{
+		Type: "sale", Status: &status, PartnerID: &partnerID, DateFrom: &from, DateTo: &to,
+		PaymentStatus: "partial", Q: `50%_`, CreatorID: &creatorID,
+	}, &buf)
+	if err != nil || n != 1 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	records := readCSV(t, buf.Bytes())
+	if records[1][4] != "老王五金" || records[1][5] != "一号仓" || records[1][9] != "60.0000" || records[1][10] != "部分" {
+		t.Errorf("row = %v", records[1])
+	}
+	if len(records[0]) != 11 || records[0][9] != "未收付金额" || records[0][10] != "收付款状态" {
+		t.Errorf("header = %v", records[0])
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+func TestBillsExport_Filtered_PaymentStatusClauses(t *testing.T) {
+	for ps, want := range map[string]string{
+		"paid":    `AND bh\.status = 2 AND bh\.paid_amount > 0 AND bh\.paid_amount >= GREATEST\(bh\.total_amount - COALESCE\(r\.amt, 0\), 0\)\s+ORDER BY`,
+		"unpaid":  `AND bh\.status = 2 AND bh\.paid_amount <= 0\s+ORDER BY`,
+		"partial": `AND bh\.status = 2 AND bh\.paid_amount > 0 AND bh\.paid_amount < GREATEST\(bh\.total_amount - COALESCE\(r\.amt, 0\), 0\)\s+ORDER BY`,
+		"open":    `AND bh\.status = 2 AND GREATEST\(bh\.total_amount - COALESCE\(r\.amt, 0\), 0\) > bh\.paid_amount\s+ORDER BY`,
+	} {
+		db, mock := sqlmockNew(t)
+		tenantID := uuid.New()
+		mock.ExpectQuery(`(?i)`+want).
+			WithArgs(tenantID, billsRowLimit+1).
+			WillReturnRows(mock.NewRows([]string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"}))
+		var buf bytes.Buffer
+		if _, err := NewBillsExportUseCase(db, nil).ExecuteFiltered(context.Background(), tenantID, BillsFilter{PaymentStatus: ps}, &buf); err != nil {
+			t.Fatalf("%s: %v", ps, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Errorf("%s: %v", ps, err)
+		}
+		db.Close()
+	}
+}
+
+func TestBillsExport_Filtered_InvoiceStatusClauses(t *testing.T) {
+	inv := `COALESCE\(\(SELECT SUM\(ib\.amount\) FROM tally\.invoice_bill ib\s+JOIN tally\.invoice iv ON iv\.id = ib\.invoice_id AND iv\.tenant_id = ib\.tenant_id\s+WHERE ib\.bill_id = bh\.id AND ib\.tenant_id = bh\.tenant_id AND iv\.status = 'issued' AND iv\.deleted_at IS NULL\), 0\)`
+	for is, want := range map[string]string{
+		"none":    `AND bh\.status = 2 AND ` + inv + ` <= 0\s+ORDER BY`,
+		"partial": `AND bh\.status = 2 AND ` + inv + ` > 0 AND ` + inv + ` < TRUNC\(bh\.total_amount, 2\)\s+ORDER BY`,
+		"full":    `AND bh\.status = 2 AND ` + inv + ` > 0 AND ` + inv + ` >= TRUNC\(bh\.total_amount, 2\)\s+ORDER BY`,
+	} {
+		db, mock := sqlmockNew(t)
+		tenantID := uuid.New()
+		mock.ExpectQuery(`(?i)`+want).
+			WithArgs(tenantID, billsRowLimit+1).
+			WillReturnRows(mock.NewRows([]string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"}))
+		var buf bytes.Buffer
+		if _, err := NewBillsExportUseCase(db, nil).ExecuteFiltered(context.Background(), tenantID, BillsFilter{InvoiceStatus: is}, &buf); err != nil {
+			t.Fatalf("%s: %v", is, err)
+		}
+		if err := mock.ExpectationsWereMet(); err != nil {
+			t.Errorf("%s: %v", is, err)
+		}
+		db.Close()
+	}
+}
+
+func TestBillsExport_Filtered_EmptyRangeOnlyHeader(t *testing.T) {
+	db, mock := sqlmockNew(t)
+	defer db.Close()
+	tenantID := uuid.New()
+	cst := time.FixedZone("CST", 8*3600)
+	from := time.Date(2030, 1, 1, 0, 0, 0, 0, cst)
+	to := time.Date(2030, 2, 1, 0, 0, 0, 0, cst)
+
+	mock.ExpectQuery(`(?i)AND bh\.bill_type = \$2 AND bh\.sub_type = \$3 AND bh\.bill_date >= \$4 AND bh\.bill_date < \$5\s+ORDER BY bh\.bill_date DESC, bh\.created_at DESC\s+LIMIT \$6`).
+		WithArgs(tenantID, "出库", "销售", from, to, billsRowLimit+1).
+		WillReturnRows(mock.NewRows([]string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"}))
+
+	var buf bytes.Buffer
+	n, err := NewBillsExportUseCase(db, nil).ExecuteFiltered(context.Background(), tenantID,
+		BillsFilter{Type: "sale", DateFrom: &from, DateTo: &to}, &buf)
+	if err != nil || n != 0 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	want := "单号,类型,状态,日期,合作方,仓库,总额,已付,备注,未收付金额,收付款状态\n"
+	if got := buf.String(); got != want {
+		t.Errorf("output = %q, want %q", got, want)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("unmet expectations: %v", err)
+	}
+}
+
+func TestBillsExport_DateRenderedInShanghai(t *testing.T) {
+	db, mock := sqlmockNew(t)
+	defer db.Close()
+	tenantID := uuid.New()
+	// 2026-10-09 16:30 UTC is 2026-10-10 00:30 in Shanghai.
+	ts := time.Date(2026, 10, 9, 16, 30, 0, 0, time.UTC)
+	mock.ExpectQuery(`SELECT`).
+		WithArgs(tenantID, billsRowLimit+1).
+		WillReturnRows(mock.NewRows([]string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k"}).
+			AddRow("B1", "出库", int16(2), ts, "", "", "1", "1", "", "0", "已付清"))
+	var buf bytes.Buffer
+	if _, err := NewBillsExportUseCase(db, nil).Execute(context.Background(), tenantID, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if r := readCSV(t, buf.Bytes()); r[1][3] != "2026-10-10" {
+		t.Errorf("date = %q, want 2026-10-10", r[1][3])
+	}
+}
+
+func TestPaymentsExport_DateRenderedInShanghai(t *testing.T) {
+	db, mock := sqlmockNew(t)
+	defer db.Close()
+	tenantID := uuid.New()
+	ts := time.Date(2026, 10, 9, 16, 30, 0, 0, time.UTC)
+	mock.ExpectQuery(`SELECT`).
+		WithArgs(tenantID, paymentsRowLimit+1).
+		WillReturnRows(mock.NewRows([]string{"a", "b", "c", "d", "e", "f", "g", "h"}).
+			AddRow("PO-1", "老王", "1.0000", "cash", ts, "out", true, "采购"))
+	var buf bytes.Buffer
+	if _, err := NewPaymentsExportUseCase(db, nil).Execute(context.Background(), tenantID, &buf); err != nil {
+		t.Fatal(err)
+	}
+	if r := readCSV(t, buf.Bytes()); r[1][4] != "2026-10-10 00:30:00" {
+		t.Errorf("pay_date = %q, want 2026-10-10 00:30:00", r[1][4])
+	}
+}
+
+func TestPaymentsExport_JoinsBillNoAndPartnerName(t *testing.T) {
+	db, mock := sqlmockNew(t)
+	defer db.Close()
+	tenantID := uuid.New()
+	mock.ExpectQuery(`(?i)COALESCE\(bh\.bill_no, ph\.bill_no, ''\).*LEFT JOIN tally\.bill_head bh ON bh\.id = ph\.related_bill_id`).
+		WithArgs(tenantID, paymentsRowLimit+1).
+		WillReturnRows(mock.NewRows([]string{"bill_no", "partner_name", "amount", "pay_type", "pay_date", "direction", "counted", "related_type"}).
+			AddRow("PO-001", "老王五金", "10.0000", "cash", nil, "out", true, "采购"))
+	var buf bytes.Buffer
+	if _, err := NewPaymentsExportUseCase(db, nil).Execute(context.Background(), tenantID, &buf); err != nil {
+		t.Fatal(err)
+	}
+	r := readCSV(t, buf.Bytes())
+	if r[1][0] != "PO-001" || r[1][1] != "老王五金" {
+		t.Errorf("row = %v", r[1])
+	}
 }

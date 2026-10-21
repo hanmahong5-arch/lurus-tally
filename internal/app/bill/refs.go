@@ -49,3 +49,21 @@ func validateRefs(ctx context.Context, repo BillRepo, tenantID uuid.UUID, produc
 
 	return nil
 }
+
+// validatePartner verifies that a non-nil partner id exists and belongs to
+// tenantID. A nil or zero id means "no partner" and is accepted. Same
+// cross-tenant rationale as validateRefs: the partner FK bypasses RLS, and a
+// missing id would otherwise surface as a 500 foreign key violation.
+func validatePartner(ctx context.Context, repo BillRepo, tenantID uuid.UUID, partnerID *uuid.UUID) error {
+	if partnerID == nil || *partnerID == uuid.Nil {
+		return nil
+	}
+	ok, err := repo.PartnerExists(ctx, tenantID, *partnerID)
+	if err != nil {
+		return fmt.Errorf("validate partner reference %s: %w", *partnerID, err)
+	}
+	if !ok {
+		return fmt.Errorf("%w: 往来单位不存在", ErrValidation)
+	}
+	return nil
+}

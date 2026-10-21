@@ -218,7 +218,7 @@ func TestRace_ConcurrentRecordUsageAndSinkSwap(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
-			RecordUsage(WithTenant(context.Background(), "race-tenant"), "deepseek-v4", 1, 1)
+			RecordUsage(WithTenant(context.Background(), "race-tenant"), "test-model", 1, 1)
 		}
 	}()
 	go func() {

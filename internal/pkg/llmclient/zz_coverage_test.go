@@ -103,7 +103,7 @@ func TestLLMError_Error(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestNew_EmptyBaseURL(t *testing.T) {
-	_, err := New(Config{BaseURL: "", APIKey: "k"})
+	_, err := New(Config{BaseURL: "", APIKey: "k", DefaultModel: "test-model"})
 	if err == nil {
 		t.Fatal("expected error for empty BaseURL")
 	}
@@ -116,13 +116,20 @@ func TestNew_EmptyAPIKey(t *testing.T) {
 	}
 }
 
-func TestNew_DefaultsModelAndTimeout(t *testing.T) {
-	c, err := New(Config{BaseURL: "http://x/v1", APIKey: "k"})
+func TestNew_EmptyModel(t *testing.T) {
+	_, err := New(Config{BaseURL: "http://x/v1", APIKey: "k"})
+	if err == nil {
+		t.Fatal("expected error for empty DefaultModel")
+	}
+}
+
+func TestNew_DefaultsTimeout(t *testing.T) {
+	c, err := New(Config{BaseURL: "http://x/v1", APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	if c.defaultModel != "deepseek-v4-flash" {
-		t.Errorf("defaultModel = %q, want %q", c.defaultModel, "deepseek-v4-flash")
+	if c.defaultModel != "test-model" {
+		t.Errorf("defaultModel = %q, want %q", c.defaultModel, "test-model")
 	}
 	if c.http.Timeout != 120*time.Second {
 		t.Errorf("http.Timeout = %v, want 120s (default)", c.http.Timeout)
@@ -156,7 +163,7 @@ func TestNew_CustomModelAndTimeoutPreserved(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestBuildRequest_AlwaysDisablesThinkingAndEnforcesMaxTokens(t *testing.T) {
-	c, err := New(Config{BaseURL: "http://x/v1", APIKey: "k"})
+	c, err := New(Config{BaseURL: "http://x/v1", APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -164,7 +171,7 @@ func TestBuildRequest_AlwaysDisablesThinkingAndEnforcesMaxTokens(t *testing.T) {
 	req := c.buildRequest("m", []Message{{Role: "user", Content: "hi"}}, tools, true)
 
 	if req.MaxTokens != 1024 {
-		t.Errorf("MaxTokens = %d, want 1024 (DeepSeek-v4 empty-content trap defense)", req.MaxTokens)
+		t.Errorf("MaxTokens = %d, want 1024 (empty-content trap defense)", req.MaxTokens)
 	}
 	if req.Thinking == nil || req.Thinking.Type != "disabled" {
 		t.Errorf("Thinking = %+v, want {Type: disabled}", req.Thinking)
@@ -244,7 +251,7 @@ func TestDoChatOnce_ChatErrorRegardlessOfHTTPStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{BaseURL: srv.URL, APIKey: "k"})
+	c, err := New(Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -276,7 +283,7 @@ func TestDoChatOnce_HTTPErrorNoStructuredBody(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{BaseURL: srv.URL, APIKey: "k"})
+	c, err := New(Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -302,7 +309,7 @@ func TestDoChatOnce_UnmarshalError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{BaseURL: srv.URL, APIKey: "k"})
+	c, err := New(Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -328,7 +335,7 @@ func TestDoChat_ExhaustsAttemptsOnPersistentRetryableError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{BaseURL: srv.URL, APIKey: "k"})
+	c, err := New(Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -356,7 +363,7 @@ func TestDoChat_CtxCancelDuringBackoff(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{BaseURL: srv.URL, APIKey: "k"})
+	c, err := New(Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -422,7 +429,7 @@ func TestDoStream_HTTPErrorStructured(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{BaseURL: srv.URL, APIKey: "k"})
+	c, err := New(Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -448,7 +455,7 @@ func TestDoStream_HTTPErrorUnstructured(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{BaseURL: srv.URL, APIKey: "k"})
+	c, err := New(Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -475,7 +482,7 @@ func TestDoStream_MalformedChunkSkippedThenGoodChunkDelivered(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{BaseURL: srv.URL, APIKey: "k"})
+	c, err := New(Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -527,7 +534,7 @@ func TestDoStream_MidStreamFailureNotRetried(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{BaseURL: srv.URL, APIKey: "k"})
+	c, err := New(Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -558,7 +565,7 @@ func TestDoStream_UsageOnlyRecordedOnTerminalChunk(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{BaseURL: srv.URL, APIKey: "k"})
+	c, err := New(Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -588,7 +595,7 @@ func TestDoStream_ScannerErrSurfaced(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	c, err := New(Config{BaseURL: srv.URL, APIKey: "k"})
+	c, err := New(Config{BaseURL: srv.URL, APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -611,7 +618,7 @@ func TestDoStream_ScannerErrSurfaced(t *testing.T) {
 // ---------------------------------------------------------------------------
 
 func TestChat_CreateRequestError_InvalidBaseURL(t *testing.T) {
-	c, err := New(Config{BaseURL: "http://\x7f", APIKey: "k"})
+	c, err := New(Config{BaseURL: "http://\x7f", APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -622,7 +629,7 @@ func TestChat_CreateRequestError_InvalidBaseURL(t *testing.T) {
 }
 
 func TestStream_CreateRequestError_InvalidBaseURL(t *testing.T) {
-	c, err := New(Config{BaseURL: "http://\x7f", APIKey: "k"})
+	c, err := New(Config{BaseURL: "http://\x7f", APIKey: "k", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -643,7 +650,7 @@ func TestChat_HTTPDoError_ConnectionRefused(t *testing.T) {
 	url := ln.URL
 	ln.Close() // now nothing listens at this address
 
-	c, err := New(Config{BaseURL: url, APIKey: "k", HTTPTimeout: 2 * time.Second})
+	c, err := New(Config{BaseURL: url, APIKey: "k", DefaultModel: "test-model", HTTPTimeout: 2 * time.Second})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -661,7 +668,7 @@ func TestStream_HTTPDoError_ConnectionRefused(t *testing.T) {
 	url := ln.URL
 	ln.Close()
 
-	c, err := New(Config{BaseURL: url, APIKey: "k", HTTPTimeout: 2 * time.Second})
+	c, err := New(Config{BaseURL: url, APIKey: "k", DefaultModel: "test-model", HTTPTimeout: 2 * time.Second})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

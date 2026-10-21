@@ -1,6 +1,8 @@
 "use client"
 
-import { createContext, useContext, useMemo, useState } from "react"
+import { createContext, useContext, useEffect, useMemo, useState } from "react"
+
+import { clearSwitchMarker } from "./switch-user"
 
 interface AccountDrawerContextValue {
   open: boolean
@@ -26,6 +28,8 @@ const AccountDrawerContext = createContext<AccountDrawerContextValue | null>(nul
  */
 export function AccountDrawerProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useState(false)
+  // Mounted only behind a login: whoever got here has signed in, so the hand-over marker is spent.
+  useEffect(() => clearSwitchMarker(), [])
   const value = useMemo<AccountDrawerContextValue>(
     () => ({
       open,

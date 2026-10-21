@@ -3,8 +3,11 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"time"
 
@@ -22,7 +25,7 @@ const (
 	HeaderIdempotencyReplay = "Idempotent-Replay"
 
 	idempotencyKeyMaxLen = 200
-	idempotencyCacheTTL  = 10 * time.Minute
+	idempotencyCacheTTL  = 24 * time.Hour
 	idempotencyLockTTL   = 30 * time.Second
 	idempotencyKeyPrefix = "tally:idem:"
 )
@@ -46,8 +49,8 @@ var ErrIdemNotFound = errors.New("idempotency: key not found")
 //
 // Kind classifies the response for cache retention:
 //   - "ok"           — 2xx; always cached.
-//   - "client_error" — deterministic 4xx (validation, conflict, etc.); cached so
-//     replays return the same error without re-running the handler.
+//   - "client_error" — other 4xx (validation, conflict, etc.); NOT cached so a
+//     corrected retry with the same key reaches the handler.
 //   - "transient"    — 429 (rate limited); NOT cached so a retry can succeed after
 //     the rate-limit budget resets.
 type idempotencyEntry struct {
@@ -55,6 +58,10 @@ type idempotencyEntry struct {
 	Kind        string `json:"kind"` // "ok" | "client_error" | "transient"
 	ContentType string `json:"ct,omitempty"`
 	Body        []byte `json:"body,omitempty"`
+	// Fingerprint is sha256(method|path|body) of the request that produced this
+	// entry. A replay with the same key but a different fingerprint is a client
+	// bug (key reused for a different payment) and must not be served the old result.
+	Fingerprint string `json:"fp,omitempty"`
 }
 
 // Idempotency returns a Gin middleware that dedupes write requests carrying an
@@ -68,7 +75,10 @@ type idempotencyEntry struct {
 //   - Missing or oversized header passes through unchanged.
 //   - Missing tenant context (auth not run / failed) passes through —
 //     downstream handlers will reject the request anyway.
-//   - 5xx responses are NOT cached so a transient failure can be retried.
+//   - 5xx and 4xx responses are NOT cached so a failed request can be retried
+//     (after fixing the input) with the same key.
+//   - Reusing a key with a different request fingerprint (method, path, body
+//     sha256) returns 422 idempotency_key_reused instead of replaying.
 //   - Concurrent requests that both miss the cache compete on a short SetNX
 //     lock; the loser receives 409 with Retry-After: 1 and is expected to
 //     retry once the leader finishes (≤ idempotencyLockTTL).
@@ -122,6 +132,15 @@ func Idempotency(store IdempotencyStore) gin.HandlerFunc {
 			return
 		}
 		ctx := c.Request.Context()
+		fp, ferr := requestFingerprint(c.Request)
+		if ferr != nil {
+			// Body is partially consumed and cannot be restored; do not run the handler on a truncated payload.
+			c.AbortWithStatusJSON(http.StatusRequestEntityTooLarge, gin.H{
+				"error":   "request_body_unreadable",
+				"message": "提交的内容过大或读取失败，请精简后重新提交",
+			})
+			return
+		}
 		storeKey := idempotencyKeyPrefix + tid + ":" + rawKey
 		lockKey := storeKey + ":lock"
 
@@ -131,6 +150,13 @@ func Idempotency(store IdempotencyStore) gin.HandlerFunc {
 		case err == nil:
 			var entry idempotencyEntry
 			if jerr := json.Unmarshal(raw, &entry); jerr == nil && entry.Status > 0 {
+				if entry.Fingerprint != "" && entry.Fingerprint != fp {
+					c.AbortWithStatusJSON(http.StatusUnprocessableEntity, gin.H{
+						"error":   "idempotency_key_reused",
+						"message": "这次提交的编号已经用在另一笔不同的请求上，请刷新页面后重新提交",
+					})
+					return
+				}
 				if entry.ContentType != "" {
 					c.Header("Content-Type", entry.ContentType)
 				}
@@ -164,7 +190,7 @@ func Idempotency(store IdempotencyStore) gin.HandlerFunc {
 			c.Header("Retry-After", "1")
 			c.AbortWithStatusJSON(http.StatusConflict, gin.H{
 				"error":   "idempotency_in_flight",
-				"message": "an earlier request with this Idempotency-Key is still being processed",
+				"message": "上一次提交还在处理，请稍等几秒再看结果",
 			})
 			return
 		}
@@ -183,18 +209,39 @@ func Idempotency(store IdempotencyStore) gin.HandlerFunc {
 			// after the rate-limit budget resets.
 			return
 		}
-		if kind != "" {
+		if kind == idempotencyKindOK {
 			payload, mErr := json.Marshal(idempotencyEntry{
 				Status:      status,
 				Kind:        kind,
 				ContentType: rec.Header().Get("Content-Type"),
 				Body:        rec.body.Bytes(),
+				Fingerprint: fp,
 			})
 			if mErr == nil {
 				_ = store.Set(ctx, storeKey, payload, idempotencyCacheTTL)
 			}
 		}
 	}
+}
+
+// requestFingerprint hashes method, path and body, then restores the body so
+// downstream handlers can still read it.
+func requestFingerprint(r *http.Request) (string, error) {
+	h := sha256.New()
+	h.Write([]byte(r.Method))
+	h.Write([]byte{0})
+	h.Write([]byte(r.URL.Path))
+	h.Write([]byte{0})
+	if r.Body != nil {
+		b, err := io.ReadAll(r.Body)
+		if err != nil {
+			return "", err
+		}
+		_ = r.Body.Close()
+		r.Body = io.NopCloser(bytes.NewReader(b))
+		h.Write(b)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 const (
@@ -209,8 +256,8 @@ const (
 // Conservative policy:
 //   - 2xx → "ok", always cache.
 //   - 429 → "transient", never cache (retry after budget reset must reach the handler).
-//   - Other 4xx → "client_error", cache (deterministic: same input → same error).
-//   - 5xx → "" (not cached; existing behaviour preserved).
+//   - Other 4xx → "client_error", not cached (a corrected retry must reach the handler).
+//   - 5xx → "" (not cached).
 func classifyStatus(status int) string {
 	switch {
 	case status >= http.StatusOK && status < http.StatusMultipleChoices:

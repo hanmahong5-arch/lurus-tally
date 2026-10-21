@@ -61,12 +61,13 @@ type updateRequest struct {
 
 // Handler groups all supplier Gin handlers.
 type Handler struct {
-	create  *appsupp.CreateUseCase
-	get     *appsupp.GetByIDUseCase
-	list    *appsupp.ListUseCase
-	update  *appsupp.UpdateUseCase
-	delete  *appsupp.DeleteUseCase
-	restore *appsupp.RestoreUseCase
+	create   *appsupp.CreateUseCase
+	get      *appsupp.GetByIDUseCase
+	list     *appsupp.ListUseCase
+	update   *appsupp.UpdateUseCase
+	delete   *appsupp.DeleteUseCase
+	restore  *appsupp.RestoreUseCase
+	importer Importer
 }
 
 // New constructs a Handler wired to the provided use cases.
@@ -93,6 +94,10 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/suppliers", h.List)
 	rg.POST("/suppliers", h.Create)
 	rg.GET("/suppliers/:id", h.GetByID)
+	if h.importer != nil {
+		rg.POST("/suppliers/import", h.Import)
+		rg.GET("/suppliers/import/template.csv", h.ImportTemplate)
+	}
 	rg.PUT("/suppliers/:id", h.Update)
 	rg.DELETE("/suppliers/:id", h.Delete)
 	rg.POST("/suppliers/:id/restore", h.Restore)

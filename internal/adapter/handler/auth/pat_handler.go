@@ -62,7 +62,7 @@ type createPATResponse struct {
 func (h *PATHandler) Create(c *gin.Context) {
 	tenantID := patResolveTenantID(c)
 	if tenantID == uuid.Nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant_id required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "message": "请先登录"})
 		return
 	}
 
@@ -141,7 +141,7 @@ type patSummary struct {
 func (h *PATHandler) List(c *gin.Context) {
 	tenantID := patResolveTenantID(c)
 	if tenantID == uuid.Nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant_id required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "message": "请先登录"})
 		return
 	}
 
@@ -165,7 +165,7 @@ func (h *PATHandler) List(c *gin.Context) {
 func (h *PATHandler) Revoke(c *gin.Context) {
 	tenantID := patResolveTenantID(c)
 	if tenantID == uuid.Nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant_id required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "message": "请先登录"})
 		return
 	}
 

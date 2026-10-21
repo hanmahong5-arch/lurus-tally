@@ -581,7 +581,7 @@ alt_units: [
 ### 11.4 计费模式
 
 - **基础订阅**: 走 `2l-svc-platform` 订阅体系（月付/年付）
-- **定价差异**: retail profile 提供年付低价套餐（¥99-300/年）；cross_border 提供月付套餐（¥500-5000/月）
+- **定价差异**: 定价以 2b-svc-tally/docs/pricing.md 为准（原文：retail profile 提供年付低价套餐（¥99-300/年）；cross_border 提供月付套餐（¥500-5000/月））
 - **AI 调用按量计费**: 每次 Hub LLM 调用、Kova Agent 执行均计量；超出套餐额度扣钱包
 - **边缘节点授权**: V2 时 edge 部署需要额外授权（包含在高级套餐或单独购买）
 

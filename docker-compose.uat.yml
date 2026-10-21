@@ -1,9 +1,11 @@
+# UAT 隔离栈。宿主端口用标准端口，靠 compose project 隔离而不是靠散号端口隔离；
+# 需要与别的栈并行时用环境变量覆盖，例如 PG_PORT=5436 docker compose -f docker-compose.uat.yml up -d
 services:
   postgres:
     image: pgvector/pgvector:pg16
     container_name: tally-uat-pg
     ports:
-      - "5436:5432"
+      - "${PG_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: tally
       POSTGRES_PASSWORD: tallysecret

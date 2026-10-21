@@ -105,10 +105,25 @@ spec:
                   memory: 128Mi
           volumes:
             - name: repo
-              # FOLLOW-UP: replace with a git-sync sidecar or ConfigMap injection
-              # once the first customer cohort begins and assumptions.md has live
-              # data. hostPath is sufficient for the Sprint 0 manual-ops phase.
+              # FOLLOW-UP(仍未做,2026-09-07 复核):替换成 git-sync sidecar 或
+              # ConfigMap 注入。下面三条路都**实测过**,各自被一堵墙挡住,所以这
+              # 不是「随手就能改」——留给需要它的人别再重新撞一遍:
+              #   1) kustomize configMapGenerator 读仓根的 assumptions.md →
+              #      被安全策略拒绝(file not in or below .../deploy/k8s/base),
+              #      除非全员改用 --load-restrictor LoadRestrictionsNone。
+              #   2) 烤进镜像(COPY 到 /app)→ .dockerignore:6 排除了 _bmad-output/,
+              #      探针构建实测 "not found";要走这条得先给 .dockerignore 开口子。
+              #   3) 保持 hostPath → 需要有人真的把仓放到 R6 的这个路径上;
+              #      这正是 Sprint 0 说好的手工步骤,而它从 2026-06-08 起就没人做。
+              #
+              # 🔴 type 从 DirectoryOrCreate 改成 Directory(2026-09-07):
+              # DirectoryOrCreate 会**静默创建一个空目录**,于是挂载「成功」、容器
+              # 起来、程序找不到文件、每周失败一次 —— 而失败原因藏在早已被 GC 的
+              # pod 日志里。实测:/data/repos/lurus-tally 是空的,mtime 2026-06-08
+              # 01:00,正是该任务首次触发的时刻;它从未成功过。
+              # 改成 Directory 后,路径不存在会让 pod 直接卡在无法挂载并把原因写在
+              # 事件里 —— 同样是坏的,但**坏得看得见**,不用去翻已经没有的日志。
               hostPath:
-                # Adjust to the actual checkout path on the R6 node.
+                # 需要 R6 节点上真实存在的 checkout 路径(见上面第 3 条)。
                 path: /data/repos/lurus-tally
-                type: DirectoryOrCreate
+                type: Directory

@@ -18,10 +18,13 @@ import (
 
 // DefaultSKU is the minimal pricing view of a product's default SKU.
 type DefaultSKU struct {
-	SKUID         uuid.UUID
-	ProductID     uuid.UUID
-	RetailPrice   decimal.Decimal
-	PurchasePrice decimal.Decimal
+	SKUID          uuid.UUID
+	ProductID      uuid.UUID
+	RetailPrice    decimal.Decimal
+	PurchasePrice  decimal.Decimal
+	WholesalePrice decimal.Decimal
+	// UnitName is the unit the SKU prices are quoted in (may be empty).
+	UnitName string
 }
 
 // PriceRepo is the persistence interface for SKU price reads/writes.

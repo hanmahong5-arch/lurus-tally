@@ -84,3 +84,24 @@ func TestGetMe_MissingSub_Rejected(t *testing.T) {
 		t.Error("expected error for missing sub, got nil")
 	}
 }
+
+type stubShopNamer struct{ name string }
+
+func (s stubShopNamer) ShopDisplayName(_ context.Context, _ uuid.UUID) string { return s.name }
+
+// TestGetMe_ReportsShopName verifies /me carries the name people know the shop by.
+func TestGetMe_ReportsShopName(t *testing.T) {
+	store := newStubBootstrapStore()
+	tenantID := uuid.New()
+	store.mappings["sub-a"] = &domain.UserIdentityMapping{ID: uuid.New(), TenantID: tenantID, IDPSubject: "sub-a", IsOwner: true}
+
+	out, err := appTenant.NewGetMeUseCase(store).WithShopNamer(stubShopNamer{name: "老张五金"}).
+		Execute(context.Background(), appTenant.GetMeInput{UserSub: "sub-a"})
+	if err != nil || out.ShopName != "老张五金" {
+		t.Fatalf("got %+v %v", out, err)
+	}
+	out, err = appTenant.NewGetMeUseCase(store).Execute(context.Background(), appTenant.GetMeInput{UserSub: "sub-a"})
+	if err != nil || out.ShopName != "" {
+		t.Fatalf("no namer must leave shop_name empty, got %+v %v", out, err)
+	}
+}

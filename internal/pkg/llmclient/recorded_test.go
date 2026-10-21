@@ -2,7 +2,7 @@ package llmclient
 
 // Contract tests against RECORDED gateway traffic. The other tests in this
 // package feed hand-written bodies; these replay what newapi (routing to
-// deepseek-v4-flash, the production model) actually answered, so a drift
+// test-model, the production model) actually answered, so a drift
 // between our structs and the real wire format — or a request the real
 // gateway would reject — shows up here.
 //
@@ -26,7 +26,7 @@ import (
 	"testing"
 )
 
-const recordedModel = "deepseek-v4-flash"
+const recordedModel = "test-model"
 
 // exchange is one recorded HTTP round trip. The Authorization header is never
 // stored.

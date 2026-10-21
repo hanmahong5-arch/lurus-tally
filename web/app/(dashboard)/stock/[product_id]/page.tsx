@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { useParams } from "next/navigation"
 import Link from "next/link"
 import {
@@ -11,14 +11,17 @@ import {
   type Direction,
 } from "@/lib/api/stock"
 import { getProduct, type Product } from "@/lib/api/products"
+import { listWarehouses, type WarehouseItem } from "@/lib/api/warehouses"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useTenantId } from "@/hooks/use-tenant-id"
+import { useRole } from "@/hooks/use-role"
 import { formatCNY } from "@/lib/format"
 import { PageContainer } from "@/components/ui/page-container"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { EmptyState } from "@/components/ui/empty-state"
 import { Skeleton } from "@/components/ui/skeleton"
+import { extractApiError } from "@/lib/api/errors"
 
 const DIRECTION_LABEL: Record<Direction, string> = {
   in: "入库",
@@ -52,9 +55,10 @@ function shortId(id: string | undefined | null): string {
   return id.slice(0, 8)
 }
 
-function referenceHref(refType: string, refId: string | null | undefined): string | null {
+// A purchase bill is readable only with cost.view; everyone else gets plain text, not a dead link.
+function referenceHref(refType: string, refId: string | null | undefined, canCost: boolean): string | null {
   if (!refId) return null
-  if (refType === "purchase") return `/purchases/${refId}`
+  if (refType === "purchase") return !canCost ? null :  `/purchases/${refId}`
   if (refType === "sale") return `/sales/${refId}`
   return null
 }
@@ -66,9 +70,12 @@ export default function StockDetailPage() {
   const [product, setProduct] = useState<Product | null>(null)
   const [snapshots, setSnapshots] = useState<StockSnapshot[]>([])
   const [movements, setMovements] = useState<StockMovement[]>([])
+  const [warehouses, setWarehouses] = useState<WarehouseItem[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const tenantId = useTenantId()
+  const { known, can } = useRole()
+  const showCost = known && can("cost.view")
 
   useAbortableEffect((signal, isCancelled) => {
     if (!productId) return
@@ -78,22 +85,27 @@ export default function StockDetailPage() {
       getProduct(productId, tenantId, signal).catch(() => null),
       getProductStock(productId, tenantId, signal),
       listStockMovements({ product_id: productId, limit: 50, tenantId, signal }),
+      listWarehouses({ tenantId, limit: 200, signal }).catch(() => null),
     ])
-      .then(([p, snaps, mvs]) => {
+      .then(([p, snaps, mvs, wh]) => {
         if (isCancelled()) return
+        setWarehouses(wh?.items ?? [])
         setProduct(p)
         setSnapshots(snaps)
         setMovements(mvs)
       })
       .catch((e) => {
         if (isCancelled() || signal.aborted) return
-        setError(String(e))
+        setError(extractApiError(e).message)
       })
       .finally(() => {
         if (isCancelled()) return
         setLoading(false)
       })
   }, [productId, tenantId])
+
+  const warehouseNames = useMemo(() => new Map(warehouses.map((w) => [w.id, w.name])), [warehouses])
+  const warehouseName = (id: string) => warehouseNames.get(id) ?? "未知仓库"
 
   const totalOnHand = snapshots.reduce((acc, s) => acc + (Number(s.on_hand_qty ?? "0") || 0), 0)
   const totalAvailable = snapshots.reduce((acc, s) => acc + (Number(s.available_qty ?? "0") || 0), 0)
@@ -163,17 +175,17 @@ export default function StockDetailPage() {
                     <th className="px-4 py-2.5 text-left font-medium">仓库</th>
                     <th className="px-4 py-2.5 text-right font-medium">在手</th>
                     <th className="px-4 py-2.5 text-right font-medium">可用</th>
-                    <th className="px-4 py-2.5 text-right font-medium">单位成本</th>
+                    {showCost && <th className="px-4 py-2.5 text-right font-medium">单位成本</th>}
                     <th className="px-4 py-2.5 text-left font-medium">更新时间</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
                   {snapshots.map((s) => (
                     <tr key={s.warehouse_id} className="transition-colors hover:bg-muted/30">
-                      <td className="px-4 py-2.5 font-mono text-xs">{shortId(s.warehouse_id)}</td>
+                      <td className="px-4 py-2.5">{warehouseName(s.warehouse_id)}</td>
                       <td className="px-4 py-2.5 text-right font-mono tabular-nums">{formatDecimal(s.on_hand_qty)}</td>
                       <td className="px-4 py-2.5 text-right font-mono tabular-nums">{formatDecimal(s.available_qty)}</td>
-                      <td className="px-4 py-2.5 text-right font-mono tabular-nums">{formatCNY(s.unit_cost)}</td>
+                      {showCost && <td className="px-4 py-2.5 text-right font-mono tabular-nums">{formatCNY(s.unit_cost)}</td>}
                       <td className="px-4 py-2.5 text-muted-foreground">
                         {s.updated_at ? new Date(s.updated_at).toLocaleString("zh-CN") : "—"}
                       </td>
@@ -202,7 +214,7 @@ export default function StockDetailPage() {
               {movements.map((m) => {
                 const sign = m.direction === "out" ? "-" : "+"
                 const refLabel = REFERENCE_LABEL[m.reference_type] ?? m.reference_type
-                const href = referenceHref(m.reference_type, m.reference_id)
+                const href = referenceHref(m.reference_type, m.reference_id, showCost)
                 return (
                   <li key={m.id} className="flex items-center gap-4 rounded-lg border border-border bg-card px-4 py-3">
                     <Badge tone={DIRECTION_TONE[m.direction] ?? "neutral"}>
@@ -214,7 +226,7 @@ export default function StockDetailPage() {
                     </span>
                     <div className="min-w-0 flex-1 text-xs text-muted-foreground">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span>仓库 {shortId(m.warehouse_id)}</span>
+                        <span>{warehouseName(m.warehouse_id)}</span>
                         <span>·</span>
                         <span>
                           {refLabel}
@@ -223,11 +235,9 @@ export default function StockDetailPage() {
                               {" "}
                               {href ? (
                                 <Link href={href} className="font-mono text-primary hover:underline">
-                                  {shortId(m.reference_id)}
+                                  查看单据
                                 </Link>
-                              ) : (
-                                <span className="font-mono">{shortId(m.reference_id)}</span>
-                              )}
+                              ) : null}
                             </>
                           )}
                         </span>
