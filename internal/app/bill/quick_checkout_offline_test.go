@@ -143,7 +143,7 @@ func TestQuickCheckout_NegativeStock_OnlyPosOfflineAndNoted(t *testing.T) {
 	if !stockUC.calls[0].AllowNegative {
 		t.Fatal("pos_offline 应向库存层传 AllowNegative")
 	}
-	if h := repo.mockBillRepo.storedHead; h.Source != "pos_offline" || h.ClientRef != "off-1" {
+	if h := repo.storedHead; h.Source != "pos_offline" || h.ClientRef != "off-1" {
 		t.Fatalf("来源/client_ref 未落单: %+v", h)
 	}
 
@@ -183,7 +183,7 @@ func TestQuickCheckout_OccurredAtBounds(t *testing.T) {
 			if err != nil {
 				t.Fatalf("want ok, got %v", err)
 			}
-			h := repo.mockBillRepo.storedHead
+			h := repo.storedHead
 			if h.OccurredAt == nil || h.OccurredAt.Sub(at).Abs() > time.Second || time.Since(h.BillDate) > time.Minute {
 				t.Fatalf("occurred_at 应保留、bill_date 应按重放时刻: %+v", h)
 			}
@@ -196,7 +196,7 @@ func TestQuickCheckout_OccurredAtOmitted_UsesNow(t *testing.T) {
 	if _, err := newOfflineUC(repo, &shortStockUC{onHand: decimal.NewFromInt(100)}).Execute(context.Background(), offlineReq("", "", time.Time{})); err != nil {
 		t.Fatal(err)
 	}
-	h := repo.mockBillRepo.storedHead
+	h := repo.storedHead
 	if h.OccurredAt != nil || time.Since(h.BillDate) > time.Minute || h.Source != "pos" {
 		t.Fatalf("缺省应为 now / source=pos / occurred_at 为空: %+v", h)
 	}

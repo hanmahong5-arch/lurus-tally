@@ -611,7 +611,7 @@ func TestCheckSpokenQuantities_CancelProbes(t *testing.T) {
 		for _, f := range CheckSpokenQuantities(tc.text, two) {
 			got = append(got, f.Line)
 		}
-		if !reflect.DeepEqual(got, tc.want) && !(len(got) == 0 && len(tc.want) == 0) {
+		if !reflect.DeepEqual(got, tc.want) && (len(got) != 0 || len(tc.want) != 0) {
 			t.Fatalf("%s: lines=%v want %v", name, got, tc.want)
 		}
 	}

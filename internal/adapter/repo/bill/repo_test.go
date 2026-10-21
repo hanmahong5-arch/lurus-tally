@@ -143,3 +143,64 @@ func TestBillNoDay_UsesShanghaiCalendarDay(t *testing.T) {
 		t.Errorf("BillNoDay = %s, want 20261010", got)
 	}
 }
+
+// 备注为 NULL 的单据（老数据 / 未填备注）在列表与详情里都不能让扫描失败：
+// remark 必须在 SQL 里 COALESCE 成空串。
+func TestListBills_NullRemarkCoalesced(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	tenantID, billID := uuid.New(), uuid.New()
+	now := time.Now()
+	mock.ExpectQuery(`SELECT COUNT\(\*\)`).
+		WithArgs(tenantID).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	mock.ExpectQuery(`COALESCE\(b\.remark, ''\), b\.created_at`).
+		WithArgs(tenantID, 20, 0).
+		WillReturnRows(sqlmock.NewRows(append(billHeadCols[:21:21], "exchange_rate", "partner_name", "invoiced", "returned")).AddRow(
+			billID, tenantID, "SO-1", "出库", "销售", int16(2), nil, nil,
+			uuid.New(), now, "10", "0", "0", "10",
+			"0", nil, nil, 1, "", now, now,
+			"1", "", "0", "0",
+		))
+
+	bills, total, err := repobill.New(db).ListBills(context.Background(), appbill.BillListFilter{TenantID: tenantID})
+	if err != nil {
+		t.Fatalf("ListBills: %v", err)
+	}
+	if total != 1 || len(bills) != 1 || bills[0].Remark != "" {
+		t.Fatalf("got total=%d bills=%+v", total, bills)
+	}
+	if err := mock.ExpectationsWereMet(); err != nil {
+		t.Errorf("expectations: %v", err)
+	}
+}
+
+func TestGetBill_NullRemarkCoalesced(t *testing.T) {
+	db, mock, err := sqlmock.New()
+	if err != nil {
+		t.Fatalf("sqlmock.New: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	tenantID, billID := uuid.New(), uuid.New()
+	now := time.Now()
+	mock.ExpectQuery(`revision, COALESCE\(remark, ''\), created_at`).
+		WithArgs(billID, tenantID).
+		WillReturnRows(sqlmock.NewRows(billHeadCols).AddRow(
+			billID, tenantID, "SO-1", "出库", "销售", int16(2), nil, nil,
+			uuid.New(), now, "10", "0", "0", "10",
+			"0", nil, nil, 1, "", now, now,
+			"CNY", "1", "10", nil,
+		))
+	h, err := repobill.New(db).GetBill(context.Background(), tenantID, billID)
+	if err != nil {
+		t.Fatalf("GetBill: %v", err)
+	}
+	if h.Remark != "" {
+		t.Errorf("Remark = %q", h.Remark)
+	}
+}

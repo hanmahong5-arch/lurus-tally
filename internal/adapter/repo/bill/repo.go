@@ -214,7 +214,7 @@ func (r *Repo) GetBillForUpdate(ctx context.Context, tx *sql.Tx, tenantID, billI
 	const q = `
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at,
+		       paid_amount, approved_at, approved_by, revision, COALESCE(remark, ''), created_at, updated_at,
 		       COALESCE(currency, 'CNY'), exchange_rate, COALESCE(amount_local, total_amount),
 			       occurred_at
 		FROM tally.bill_head
@@ -228,7 +228,7 @@ func (r *Repo) GetBill(ctx context.Context, tenantID, billID uuid.UUID) (*domain
 	const q = `
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at,
+		       paid_amount, approved_at, approved_by, revision, COALESCE(remark, ''), created_at, updated_at,
 		       COALESCE(currency, 'CNY'), exchange_rate, COALESCE(amount_local, total_amount),
 			       occurred_at
 		FROM tally.bill_head
@@ -691,7 +691,7 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 	q := listCTE(f) + `
 		SELECT b.id, b.tenant_id, b.bill_no, b.bill_type, b.sub_type, b.status, b.partner_id, b.warehouse_id,
 		       b.creator_id, b.bill_date, b.subtotal, b.shipping_fee, b.tax_amount, b.total_amount,
-		       b.paid_amount, b.approved_at, b.approved_by, b.revision, b.remark, b.created_at, b.updated_at,
+		       b.paid_amount, b.approved_at, b.approved_by, b.revision, COALESCE(b.remark, ''), b.created_at, b.updated_at,
 		       b.exchange_rate, COALESCE(p.name, ''), ` + invoicedExpr + `::text, ` + returnedExpr(f) + `::text` + listFromFor(f) + `
 		WHERE ` + whereClause + `
 		ORDER BY ` + listOrder(f) + `

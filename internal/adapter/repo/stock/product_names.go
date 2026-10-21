@@ -25,7 +25,7 @@ func (r *Repo) ProductNames(ctx context.Context, tenantID uuid.UUID, ids []uuid.
 	if err != nil {
 		return nil, fmt.Errorf("stock repo: product names: %w", err)
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	for rows.Next() {
 		var id uuid.UUID
 		var name string

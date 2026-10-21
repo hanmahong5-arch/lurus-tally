@@ -972,16 +972,6 @@ func FlagsPayload(flags []DraftFlag) []map[string]interface{} {
 	return out
 }
 
-func nonMoney(qs []Quantity) []Quantity {
-	out := qs[:0:0]
-	for _, q := range qs {
-		if !q.Money {
-			out = append(out, q)
-		}
-	}
-	return out
-}
-
 func containsDec(vs []decimal.Decimal, v decimal.Decimal) bool { return indexDec(vs, v) >= 0 }
 
 func indexDec(vs []decimal.Decimal, v decimal.Decimal) int {
@@ -1098,7 +1088,7 @@ func crossCheckExtracted(plan *domainai.Plan, extracted []ExtractedLine, spoken 
 	if total, ok := SpokenTotal(spoken); ok {
 		priced := make([]CheckLine, 0, len(extracted))
 		for _, e := range extracted {
-			priced = append(priced, CheckLine{ProductName: e.ProductName, Qty: e.Qty, UnitPrice: e.UnitPrice})
+			priced = append(priced, CheckLine(e))
 		}
 		flags = append(flags, CheckTotal(priced, total)...)
 	}

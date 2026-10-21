@@ -195,7 +195,7 @@ func (e *Extractor) ExtractChecked(ctx context.Context, tenantID uuid.UUID, spok
 	}
 	cl := make([]CheckLine, 0, len(lines))
 	for _, l := range lines {
-		cl = append(cl, CheckLine{ProductName: l.ProductName, Qty: l.Qty, UnitPrice: l.UnitPrice})
+		cl = append(cl, CheckLine(l))
 	}
 	flags := CheckSpokenQuantities(spoken, cl)
 	if total, ok := SpokenTotal(spoken); ok {

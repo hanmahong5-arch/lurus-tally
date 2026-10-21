@@ -5,10 +5,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"github.com/DATA-DOG/go-sqlmock"
 	"log/slog"
 	"strings"
 	"testing"
+
+	"github.com/DATA-DOG/go-sqlmock"
 )
 
 // TestFrom_NoPin_ReturnsFallback verifies that, with nothing stored in context,

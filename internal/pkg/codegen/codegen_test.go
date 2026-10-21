@@ -73,7 +73,7 @@ func TestAlphabet_ExcludesAmbiguousCharacters(t *testing.T) {
 			t.Errorf("Alphabet has duplicate %q", r)
 		}
 		seen[r] = true
-		if !(r >= '2' && r <= '9') && !(r >= 'A' && r <= 'Z') {
+		if (r < '2' || r > '9') && (r < 'A' || r > 'Z') {
 			t.Errorf("Alphabet has non upper-alnum %q", r)
 		}
 	}

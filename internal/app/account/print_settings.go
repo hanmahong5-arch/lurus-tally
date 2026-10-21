@@ -186,7 +186,7 @@ func (uc *PutPrintSettings) resolvePrinter(ctx context.Context, in *PrintSetting
 
 func isAlnum(s string) bool {
 	for _, r := range s {
-		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z') {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'z') && (r < 'A' || r > 'Z') {
 			return false
 		}
 	}

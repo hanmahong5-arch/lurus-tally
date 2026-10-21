@@ -141,7 +141,15 @@ func insertStockMovement(t *testing.T, db *sql.DB, ctx context.Context,
 	direction string, qty float64, occurredAt time.Time,
 ) {
 	t.Helper()
-	refID := uuid.New() // synthetic reference ID — real system uses bill_item.id etc.
+	// A sale movement must point at a live bill_head: demand velocity skips sales whose
+	// bill no longer exists (a cleared sample sale), so a dangling reference would not count.
+	refID := uuid.New()
+	if _, err := db.ExecContext(ctx, `
+		INSERT INTO tally.bill_head (id, tenant_id, bill_no, bill_type, sub_type, status, creator_id, bill_date)
+		VALUES ($1, $2, $3, '出库', '销售', 2, $2, now())
+	`, refID, tenantID, "MV-"+refID.String()); err != nil {
+		t.Fatalf("insertStockMovement: bill: %v", err)
+	}
 	_, err := db.ExecContext(ctx, `
 		INSERT INTO tally.stock_movement
 		    (tenant_id, product_id, warehouse_id, direction, qty_base, reference_type, reference_id, occurred_at)

@@ -98,7 +98,7 @@ func (c *FeieClient) call(ctx context.Context, apiname string, extra url.Values)
 	if err != nil {
 		return nil, fmt.Errorf("print/feie: %s: %w", apiname, err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil, fmt.Errorf("print/feie: %s: read body: %w", apiname, err)
