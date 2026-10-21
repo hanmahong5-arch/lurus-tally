@@ -51,3 +51,16 @@ describe("middleware cashier landing", () => {
     expect(res.headers.get("location")).toBeNull()
   })
 })
+
+describe("middleware matcher", () => {
+  it("leaves static assets (service worker, icons, scanner wasm) outside the auth gate", async () => {
+    const { config } = await import("./middleware")
+    const re = new RegExp("^" + config.matcher[0].replace(/\.\*\)/, ".*)") + "$")
+    for (const open of ["/sw.js", "/icons/icon-192.png", "/zxing/zxing_reader.wasm", "/offline", "/login"]) {
+      expect(re.test(open), open).toBe(false)
+    }
+    for (const gated of ["/dashboard", "/pos", "/products"]) {
+      expect(re.test(gated), gated).toBe(true)
+    }
+  })
+})

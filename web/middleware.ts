@@ -10,7 +10,7 @@ import { normalizeRole } from "@/lib/roles"
 // Using a negative matcher avoids the "(dashboard) is a route group, not a URL
 // segment" bug where /products, /dictionary, /projects etc. silently bypassed auth.
 export const config = {
-  matcher: ["/((?!login|pricing|api|_next|favicon.ico|manifest.webmanifest|sw.js|swe-worker|offline|icons).*)"],
+  matcher: ["/((?!login|pricing|api|_next|favicon.ico|manifest.webmanifest|sw.js|swe-worker|offline|icons|zxing).*)"],
 }
 
 export default auth((req) => {
