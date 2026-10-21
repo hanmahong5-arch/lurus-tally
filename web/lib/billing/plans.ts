@@ -4,7 +4,9 @@
  * 数字真源见 docs/pricing.md（建议值，待负责人裁决；平台种子需经改价迁移同步）。
  *
  * Source of truth for pricing lives in lurus-platform's identity.product_plans
- * table (seeded by migration 025_seed_tally_product). This file mirrors that
+ * table (seeded by migration 025_seed_tally_product, product id `tally` —
+ * lurus-platform api/ontology.yaml; the seed's `lurus-tally` was renamed by
+ * migration 100). This file mirrors that
  * data so the marketing copy + feature comparison can render server-side
  * without an extra round-trip.
  *
@@ -30,8 +32,6 @@ export interface TallyPlan {
 
 /** 种子期：全部功能免费试用，不开放付费入口。正式收费时改为 false。 */
 export const SEED_TRIAL = true
-
-export const TALLY_PRODUCT_ID = "lurus-tally"
 
 export const TALLY_PLANS: readonly TallyPlan[] = [
   {

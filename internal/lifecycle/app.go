@@ -439,11 +439,15 @@ func NewApp(cfg *config.Config) (*App, error) {
 	subLock := buildSubscriptionLock(cfg.DevMode, platClient, db)
 	// The handler is always mounted: /subscription/state must answer without a
 	// platform (never locked); the platform-backed routes answer 501 until it is wired.
-	billingHandler := handlerbilling.New(handlerbilling.UnconfiguredSubscribe{}, handlerbilling.UnconfiguredOverview{}).WithLock(subLock)
+	billingHandler := handlerbilling.New(handlerbilling.UnconfiguredSubscribe{}, handlerbilling.UnconfiguredOverview{}, handlerbilling.UnconfiguredOrderStatus{}).WithLock(subLock)
 	if platClient != nil {
+		// Billing is per-tenant: the plan lives on tenant.platform_account_id,
+		// the same pin the entitlement gate and usage reporter resolve through.
+		billingStore := billingTenantStore{SQLBootstrapStore: tenantStore, TenantRepo: repotenant.NewTenantRepo(db)}
 		billingHandler = handlerbilling.New(
-			appbilling.NewSubscribeUseCase(platClient),
-			appbilling.NewOverviewUseCase(platClient),
+			appbilling.NewSubscribeUseCase(platClient, billingStore),
+			appbilling.NewOverviewUseCase(platClient, billingStore),
+			appbilling.NewOrderStatusUseCase(platClient, billingStore),
 		).WithLock(subLock)
 		l.Info("billing integration enabled")
 	}
@@ -1094,4 +1098,11 @@ func (a *redisLimiterAdapter) Expire(ctx context.Context, key string, ttl time.D
 		return fmt.Errorf("redis client unavailable")
 	}
 	return a.c.Expire(ctx, key, ttl).Err()
+}
+
+// billingTenantStore composes the two tenant repos billing needs: membership
+// and pin writes from the bootstrap store, the pin read from the tenant repo.
+type billingTenantStore struct {
+	*repotenant.SQLBootstrapStore
+	*repotenant.TenantRepo
 }

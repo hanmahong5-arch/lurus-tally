@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
@@ -23,245 +25,251 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+var tenantID = uuid.MustParse("22222222-2222-2222-2222-222222222222")
+
 type stubSubscribe struct {
-	out *appbilling.SubscribeOutput
-	err error
-	in  appbilling.SubscribeInput
+	out   *appbilling.SubscribeOutput
+	err   error
+	in    appbilling.SubscribeInput
+	calls int
 }
 
 func (s *stubSubscribe) Execute(_ context.Context, in appbilling.SubscribeInput) (*appbilling.SubscribeOutput, error) {
+	s.calls++
 	s.in = in
 	return s.out, s.err
 }
 
 type stubOverview struct {
-	out *platformclient.AccountOverview
+	out *appbilling.Overview
 	err error
-	in  string
+	in  appbilling.Caller
 }
 
-func (s *stubOverview) Execute(_ context.Context, sub string) (*platformclient.AccountOverview, error) {
-	s.in = sub
+func (s *stubOverview) Execute(_ context.Context, c appbilling.Caller) (*appbilling.Overview, error) {
+	s.in = c
 	return s.out, s.err
 }
 
-func newEngine(h *handlerbilling.Handler, sub string) *gin.Engine {
+type stubOrder struct {
+	out     *appbilling.OrderStatus
+	err     error
+	orderNo string
+}
+
+func (s *stubOrder) Execute(_ context.Context, _ appbilling.Caller, orderNo string) (*appbilling.OrderStatus, error) {
+	s.orderNo = orderNo
+	return s.out, s.err
+}
+
+// newEngine mimics AuthMiddleware: it injects the verified subject and tenant.
+func newEngine(sub *stubSubscribe, ov *stubOverview, ord *stubOrder, idpSub string) *gin.Engine {
+	if sub == nil {
+		sub = &stubSubscribe{}
+	}
+	if ov == nil {
+		ov = &stubOverview{}
+	}
+	if ord == nil {
+		ord = &stubOrder{}
+	}
 	e := gin.New()
 	e.Use(func(c *gin.Context) {
-		if sub != "" {
-			c.Set(middleware.CtxKeyIDPSubject, sub)
+		if idpSub != "" {
+			c.Set(middleware.CtxKeyIDPSubject, idpSub)
 		}
+		c.Set(middleware.CtxKeyTenantID, tenantID)
+		c.Next()
+	})
+	handlerbilling.New(sub, ov, ord).RegisterRoutes(e.Group("/api/v1"))
+	return e
+}
+
+// engineFor mounts an already-built handler behind the same auth shim as newEngine.
+func engineFor(h *handlerbilling.Handler, idpSub string) *gin.Engine {
+	e := gin.New()
+	e.Use(func(c *gin.Context) {
+		if idpSub != "" {
+			c.Set(middleware.CtxKeyIDPSubject, idpSub)
+		}
+		c.Set(middleware.CtxKeyTenantID, tenantID)
 		c.Next()
 	})
 	h.RegisterRoutes(e.Group("/api/v1"))
 	return e
 }
 
-func TestSubscribe_Unauthenticated_Returns401(t *testing.T) {
-	h := handlerbilling.New(&stubSubscribe{}, &stubOverview{})
-	e := newEngine(h, "")
-
-	body, _ := json.Marshal(map[string]string{"plan_code": "pro", "billing_cycle": "monthly", "payment_method": "wallet"})
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/billing/subscribe", bytes.NewReader(body))
+func postSubscribe(e *gin.Engine, body map[string]string, hdr map[string]string) *httptest.ResponseRecorder {
+	raw, _ := json.Marshal(body)
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/billing/subscribe", bytes.NewReader(raw))
+	req.Host = "tally.lurus.cn"
 	req.Header.Set("Content-Type", "application/json")
+	for k, v := range hdr {
+		req.Header.Set(k, v)
+	}
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d (%s)", rec.Code, rec.Body.String())
-	}
+	return rec
 }
 
-func TestSubscribe_HappyWalletPath_Returns200WithSubscription(t *testing.T) {
-	stub := &stubSubscribe{
-		out: &appbilling.SubscribeOutput{
-			Subscription: &platformclient.SubscriptionSnapshot{PlanCode: "pro", Status: "active"},
-		},
-	}
-	h := handlerbilling.New(stub, &stubOverview{})
-	e := newEngine(h, "sub-abc")
+func walletBody() map[string]string {
+	return map[string]string{"plan_code": "pro", "billing_cycle": "monthly", "payment_method": "wallet"}
+}
 
-	body, _ := json.Marshal(map[string]string{"plan_code": "pro", "billing_cycle": "monthly", "payment_method": "wallet"})
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/billing/subscribe", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
+func TestSubscribe_WalletActivation(t *testing.T) {
+	stub := &stubSubscribe{out: &appbilling.SubscribeOutput{
+		Subscription: &platformclient.SubscriptionSnapshot{PlanCode: "pro", Status: "active"},
+	}}
+	rec := postSubscribe(newEngine(stub, nil, nil, "sub-owner"), walletBody(),
+		map[string]string{middleware.HeaderIdempotencyKey: "idem-9", "User-Agent": "UA-test"})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("want 200, got %d %s", rec.Code, rec.Body)
 	}
-	if !strings.Contains(rec.Body.String(), `"plan_code":"pro"`) {
-		t.Errorf("expected subscription in body, got %s", rec.Body.String())
+	if stub.in.IDPSubject != "sub-owner" || stub.in.TenantID != tenantID {
+		t.Errorf("caller not propagated: %+v", stub.in.Caller)
 	}
-	if stub.in.IDPSubject != "sub-abc" {
-		t.Errorf("idp subject propagation lost: %+v", stub.in)
+	if stub.in.IdempotencyKey != "idem-9" || stub.in.UserAgent != "UA-test" {
+		t.Errorf("idempotency key / UA not forwarded: %+v", stub.in)
+	}
+	if !strings.Contains(rec.Body.String(), `"plan_code":"pro"`) || strings.Contains(rec.Body.String(), "pay_url") {
+		t.Errorf("unexpected body %s", rec.Body)
 	}
 }
 
-func TestSubscribe_AlipayReturnsPayURL(t *testing.T) {
-	stub := &stubSubscribe{
-		out: &appbilling.SubscribeOutput{OrderNo: "ORD42", PayURL: "https://alipay/qr/ORD42"},
-	}
-	h := handlerbilling.New(stub, &stubOverview{})
-	e := newEngine(h, "sub-abc")
-
-	body, _ := json.Marshal(map[string]string{"plan_code": "pro", "billing_cycle": "monthly", "payment_method": "alipay"})
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/billing/subscribe", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
+func TestSubscribe_ReturnURLIsAbsolutizedOnRequestOrigin(t *testing.T) {
+	stub := &stubSubscribe{out: &appbilling.SubscribeOutput{OrderNo: "LO1", PayURL: "https://openapi.alipay.com/x"}}
+	body := walletBody()
+	body["payment_method"] = "alipay"
+	body["return_url"] = "/subscription"
+	rec := postSubscribe(newEngine(stub, nil, nil, "sub-owner"), body, map[string]string{"X-Forwarded-Proto": "https"})
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("want 200, got %d %s", rec.Code, rec.Body)
 	}
-	if !strings.Contains(rec.Body.String(), `"pay_url":"https://alipay/qr/ORD42"`) {
-		t.Errorf("missing pay_url in body: %s", rec.Body.String())
+	if stub.in.ReturnURL != "https://tally.lurus.cn/subscription" {
+		t.Errorf("return url = %q", stub.in.ReturnURL)
 	}
-}
-
-func TestSubscribe_InsufficientBalance_Returns402(t *testing.T) {
-	stub := &stubSubscribe{
-		err: &platformclient.Error{Code: platformclient.ErrCodeInsufficientBalance, HTTPStatus: 402, Message: "broke"},
-	}
-	h := handlerbilling.New(stub, &stubOverview{})
-	e := newEngine(h, "sub-abc")
-
-	body, _ := json.Marshal(map[string]string{"plan_code": "pro", "billing_cycle": "monthly", "payment_method": "wallet"})
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/billing/subscribe", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusPaymentRequired {
-		t.Errorf("expected 402, got %d (%s)", rec.Code, rec.Body.String())
-	}
-	if !strings.Contains(rec.Body.String(), "insufficient_balance") {
-		t.Errorf("expected insufficient_balance code in body: %s", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `"pay_url":"https://openapi.alipay.com/x"`) {
+		t.Errorf("pay_url missing: %s", rec.Body)
 	}
 }
 
-func TestSubscribe_PlatformDown_Returns502(t *testing.T) {
-	stub := &stubSubscribe{
-		err: &platformclient.Error{Code: platformclient.ErrCodeUnavailable, HTTPStatus: 502, Message: "boom"},
-	}
-	h := handlerbilling.New(stub, &stubOverview{})
-	e := newEngine(h, "sub-abc")
-
-	body, _ := json.Marshal(map[string]string{"plan_code": "pro", "billing_cycle": "monthly", "payment_method": "wallet"})
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/billing/subscribe", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadGateway {
-		t.Errorf("expected 502, got %d (%s)", rec.Code, rec.Body.String())
+func TestSubscribe_RejectsOffSiteReturnURL(t *testing.T) {
+	for _, bad := range []string{"https://evil.example/x", "//evil.example/x", "subscription", "/\\evil.example"} {
+		stub := &stubSubscribe{}
+		body := walletBody()
+		body["return_url"] = bad
+		rec := postSubscribe(newEngine(stub, nil, nil, "sub-owner"), body, nil)
+		if rec.Code != http.StatusBadRequest || stub.calls != 0 {
+			t.Errorf("%q: want 400 without checkout, got %d (calls=%d)", bad, rec.Code, stub.calls)
+		}
 	}
 }
 
-func TestSubscribe_BadRequest_Returns400(t *testing.T) {
-	h := handlerbilling.New(&stubSubscribe{}, &stubOverview{})
-	e := newEngine(h, "sub-abc")
-
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/billing/subscribe",
-		bytes.NewReader([]byte(`{"plan_code":""}`)))
-	req.Header.Set("Content-Type", "application/json")
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rec.Code)
+func TestSubscribe_QRCodeIsReturnedSeparately(t *testing.T) {
+	stub := &stubSubscribe{out: &appbilling.SubscribeOutput{OrderNo: "LO2", QRCode: "weixin://wxpay/bizpayurl?pr=1"}}
+	rec := postSubscribe(newEngine(stub, nil, nil, "sub-owner"), walletBody(), nil)
+	if !strings.Contains(rec.Body.String(), `"qr_code":"weixin://wxpay/bizpayurl?pr=1"`) {
+		t.Errorf("qr_code missing: %s", rec.Body)
 	}
 }
 
-func TestOverview_HappyPath_Returns200(t *testing.T) {
-	ov := &platformclient.AccountOverview{}
-	ov.Account.ID = 7
-	ov.Account.Email = "u@x"
-	ov.Wallet = &platformclient.Wallet{Available: 50}
-	ov.Subscription = &platformclient.SubscriptionSnapshot{PlanCode: "free", Status: "active"}
-
-	h := handlerbilling.New(&stubSubscribe{}, &stubOverview{out: ov})
-	e := newEngine(h, "sub-abc")
-
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/billing/overview", nil)
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d (%s)", rec.Code, rec.Body.String())
+func TestSubscribe_ErrorMapping(t *testing.T) {
+	cases := []struct {
+		err      error
+		status   int
+		wantCode string
+	}{
+		{appbilling.ErrOwnerOnly, http.StatusForbidden, "owner_only"},
+		{appbilling.ErrNotLinked, http.StatusConflict, "not_linked"},
+		{appbilling.ErrUnauthenticated, http.StatusUnauthorized, "unauthorized"},
+		{&platformclient.Error{Code: platformclient.ErrCodeInsufficientBalance, HTTPStatus: 402}, http.StatusPaymentRequired, "insufficient_balance"},
+		{&platformclient.Error{Code: platformclient.ErrCodeInvalidParameter, HTTPStatus: 400, Body: `{"error":"method_not_available"}`}, http.StatusBadRequest, "method_not_available"},
+		{&platformclient.Error{Code: platformclient.ErrCodeUnauthorized, HTTPStatus: 401}, http.StatusBadGateway, "platform_auth_failed"},
+		{&platformclient.Error{Code: platformclient.ErrCodeUnavailable}, http.StatusBadGateway, "platform_unavailable"},
+		{errors.New("boom"), http.StatusInternalServerError, ""},
 	}
-	if !strings.Contains(rec.Body.String(), `"plan_code":"free"`) {
-		t.Errorf("expected subscription block: %s", rec.Body.String())
-	}
-}
-
-func TestOverview_Unauthenticated_Returns401(t *testing.T) {
-	h := handlerbilling.New(&stubSubscribe{}, &stubOverview{})
-	e := newEngine(h, "")
-	req, _ := http.NewRequest(http.MethodGet, "/api/v1/billing/overview", nil)
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-	if rec.Code != http.StatusUnauthorized {
-		t.Errorf("expected 401, got %d", rec.Code)
+	for _, c := range cases {
+		rec := postSubscribe(newEngine(&stubSubscribe{err: c.err}, nil, nil, "sub-owner"), walletBody(), nil)
+		if rec.Code != c.status {
+			t.Errorf("%v: want %d, got %d", c.err, c.status, rec.Code)
+		}
+		if c.wantCode != "" && !strings.Contains(rec.Body.String(), `"error":"`+c.wantCode+`"`) {
+			t.Errorf("%v: want code %s, body %s", c.err, c.wantCode, rec.Body)
+		}
 	}
 }
 
-// TestSubscribe_IgnoresClientIDPSubjectHeader is the regression guard for the
-// cross-account billing impersonation fix. A PAT-authenticated request never
-// gets CtxKeyIDPSubject set by AuthMiddleware (a PAT is tenant-scoped, carries
-// no OIDC subject); newEngine(h, "") reproduces exactly that context. Before
-// the fix, callerSub fell back to the attacker-controlled X-IDP-Subject header,
-// letting the caller check out a subscription against a victim's platform
-// account. Billing identity must come only from the verified OIDC token in
-// context, so the spoofed header must be ignored: 401 and the victim subject
-// must never reach the use case.
+func TestSubscribe_BadBodyIs400(t *testing.T) {
+	stub := &stubSubscribe{}
+	rec := postSubscribe(newEngine(stub, nil, nil, "sub-owner"), map[string]string{"plan_code": "pro"}, nil)
+	if rec.Code != http.StatusBadRequest || stub.calls != 0 {
+		t.Fatalf("want 400 without checkout, got %d", rec.Code)
+	}
+}
+
+// Billing identity must come only from the verified token in context. Before a
+// past fix the handler fell back to the client-controlled X-IDP-Subject header,
+// letting a caller act on a victim's account. PAT-authenticated requests carry
+// no subject and must get 401.
 func TestSubscribe_IgnoresClientIDPSubjectHeader(t *testing.T) {
-	stub := &stubSubscribe{
-		out: &appbilling.SubscribeOutput{
-			Subscription: &platformclient.SubscriptionSnapshot{PlanCode: "pro", Status: "active"},
-		},
-	}
-	h := handlerbilling.New(stub, &stubOverview{})
-	e := newEngine(h, "") // PAT-auth shape: tenant set upstream, NO idp_subject in ctx
-
-	body, _ := json.Marshal(map[string]string{"plan_code": "pro", "billing_cycle": "monthly", "payment_method": "wallet"})
-	req, _ := http.NewRequest(http.MethodPost, "/api/v1/billing/subscribe", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-IDP-Subject", "victim-sub") // attacker-controlled
-	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 (client header must not be honoured), got %d (%s)", rec.Code, rec.Body.String())
-	}
-	if stub.in.IDPSubject == "victim-sub" {
-		t.Fatalf("SECURITY: attacker-controlled X-IDP-Subject header reached the use case: %q", stub.in.IDPSubject)
+	stub := &stubSubscribe{}
+	rec := postSubscribe(newEngine(stub, nil, nil, ""), walletBody(), map[string]string{"X-IDP-Subject": "victim-sub"})
+	if rec.Code != http.StatusUnauthorized || stub.calls != 0 {
+		t.Fatalf("SECURITY: want 401 without reaching the use case, got %d (calls=%d)", rec.Code, stub.calls)
 	}
 }
 
-// TestOverview_IgnoresClientIDPSubjectHeader is the read-side twin of the guard
-// above: a PAT-auth-shaped request (no ctx subject) with a spoofed header must
-// not let the caller read a victim's wallet/subscription snapshot.
-func TestOverview_IgnoresClientIDPSubjectHeader(t *testing.T) {
-	stub := &stubOverview{out: &platformclient.AccountOverview{}}
-	h := handlerbilling.New(&stubSubscribe{}, stub)
-	e := newEngine(h, "") // no idp_subject in ctx
-
+func TestOverview_PassesCallerAndRendersReadModel(t *testing.T) {
+	ov := &stubOverview{out: &appbilling.Overview{
+		AccountID: 7, CanManage: true,
+		Wallet:       appbilling.OverviewWallet{Available: 10, Total: 10},
+		Entitlements: map[string]string{"plan_code": "pro"},
+	}}
 	req, _ := http.NewRequest(http.MethodGet, "/api/v1/billing/overview", nil)
-	req.Header.Set("X-IDP-Subject", "victim-sub") // attacker-controlled
+	req.Header.Set("X-IDP-Subject", "victim-sub")
 	rec := httptest.NewRecorder()
-	e.ServeHTTP(rec, req)
-
-	if rec.Code != http.StatusUnauthorized {
-		t.Fatalf("expected 401 (client header must not be honoured), got %d (%s)", rec.Code, rec.Body.String())
+	newEngine(nil, ov, nil, "sub-member").ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d", rec.Code)
 	}
-	if stub.in == "victim-sub" {
-		t.Fatalf("SECURITY: attacker-controlled X-IDP-Subject header reached the overview use case: %q", stub.in)
+	if ov.in.IDPSubject != "sub-member" || ov.in.TenantID != tenantID {
+		t.Errorf("caller must come from context only: %+v", ov.in)
+	}
+	for _, want := range []string{`"can_manage":true`, `"available":10`, `"plan_code":"pro"`} {
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("body missing %s: %s", want, rec.Body)
+		}
+	}
+}
+
+func TestOverview_UnauthenticatedIs401(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/billing/overview", nil)
+	newEngine(nil, nil, nil, "").ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("want 401, got %d", rec.Code)
+	}
+}
+
+func TestOrderStatus_Route(t *testing.T) {
+	ord := &stubOrder{out: &appbilling.OrderStatus{OrderNo: "LO7", Status: "paid", Paid: true, Final: true}}
+	rec := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodGet, "/api/v1/billing/orders/LO7", nil)
+	newEngine(nil, nil, ord, "sub-owner").ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || ord.orderNo != "LO7" || !strings.Contains(rec.Body.String(), `"paid":true`) {
+		t.Fatalf("got %d %s (order=%q)", rec.Code, rec.Body, ord.orderNo)
+	}
+
+	notFound := &stubOrder{err: &platformclient.Error{Code: platformclient.ErrCodeNotFound, HTTPStatus: 404}}
+	rec = httptest.NewRecorder()
+	newEngine(nil, nil, notFound, "sub-owner").ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown order: want 404, got %d", rec.Code)
 	}
 }
 
 func TestOverview_LockedFlag(t *testing.T) {
-	ov := &platformclient.AccountOverview{}
+	ov := &appbilling.Overview{}
 	ov.Subscription = &platformclient.SubscriptionSnapshot{PlanCode: "pro", Status: "expired"}
 
 	cases := []struct {
@@ -274,11 +282,11 @@ func TestOverview_LockedFlag(t *testing.T) {
 		{"no checker", nil, `"locked":false`},
 	}
 	for _, tc := range cases {
-		h := handlerbilling.New(&stubSubscribe{}, &stubOverview{out: ov})
+		h := handlerbilling.New(&stubSubscribe{}, &stubOverview{out: ov}, &stubOrder{})
 		if tc.lock != nil {
 			h = h.WithLock(tc.lock)
 		}
-		e := newEngine(h, "sub-abc")
+		e := engineFor(h, "sub-abc")
 		req, _ := http.NewRequest(http.MethodGet, "/api/v1/billing/overview", nil)
 		rec := httptest.NewRecorder()
 		e.ServeHTTP(rec, req)
@@ -303,10 +311,10 @@ func TestLockState_ReportsLockWithoutPlatform(t *testing.T) {
 		locked bool
 		want   string
 	}{{true, `"locked":true`}, {false, `"locked":false`}} {
-		h := handlerbilling.New(nil, nil).WithLock(lockStub{locked: tc.locked})
+		h := handlerbilling.New(nil, nil, nil).WithLock(lockStub{locked: tc.locked})
 		rec := httptest.NewRecorder()
 		req := httptest.NewRequest(http.MethodGet, "/api/v1/subscription/state", nil)
-		newEngine(h, "").ServeHTTP(rec, req)
+		engineFor(h, "").ServeHTTP(rec, req)
 		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), tc.want) {
 			t.Errorf("locked=%v: %d %s", tc.locked, rec.Code, rec.Body.String())
 		}
@@ -324,9 +332,9 @@ func (limitsStub) Status(context.Context, uuid.UUID) map[string]entitlement.Limi
 func (limitsStub) Mode() entitlement.Mode { return entitlement.ModeEnforce }
 
 func TestLockState_CarriesPlanLimits(t *testing.T) {
-	h := handlerbilling.New(nil, nil).WithLock(lockStub{}).WithLimits(limitsStub{})
+	h := handlerbilling.New(nil, nil, nil).WithLock(lockStub{}).WithLimits(limitsStub{})
 	rec := httptest.NewRecorder()
-	newEngine(h, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/subscription/state", nil))
+	engineFor(h, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/subscription/state", nil))
 	var body struct {
 		Limits map[string]entitlement.LimitStatus `json:"limits"`
 	}
@@ -343,7 +351,7 @@ func TestLockState_CarriesPlanLimits(t *testing.T) {
 
 func TestLockState_NoLimitsWithoutGuard(t *testing.T) {
 	rec := httptest.NewRecorder()
-	newEngine(handlerbilling.New(nil, nil).WithLock(lockStub{}), "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/subscription/state", nil))
+	engineFor(handlerbilling.New(nil, nil, nil).WithLock(lockStub{}), "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/subscription/state", nil))
 	if strings.Contains(rec.Body.String(), "limits") {
 		t.Fatalf("no guard, no limits: %s", rec.Body.String())
 	}

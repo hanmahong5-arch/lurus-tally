@@ -172,12 +172,20 @@ func TestGetAccountOverview_HappyPath(t *testing.T) {
 			t.Errorf("missing product_id query: %s", r.URL.RawQuery)
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"account": map[string]any{"id": 42, "username": "u", "email": "u@x", "vip_tier": "Standard"},
-			"wallet":  map[string]any{"available": 100.5, "frozen": 0, "total": 100.5},
+			// Platform's real wire shape (internal/app/overview_service.go
+			// AccountOverview). An earlier fixture invented available/total and
+			// vip_tier, which hid a decode mismatch that showed every wallet as ¥0.
+			"account": map[string]any{"id": 42, "lurus_id": "LU42", "display_name": "u", "avatar_url": ""},
+			"vip":     map[string]any{"level": 1, "level_name": "白银", "level_en": "Silver", "points": 0, "level_expires_at": nil},
+			"wallet":  map[string]any{"balance": 100.5, "frozen": 2, "credits_cents": 0, "discount_rate": 1, "discount_tier": "none"},
 			"subscription": map[string]any{
-				"plan_code": "free",
-				"status":    "active",
+				"product_id": "tally",
+				"plan_code":  "pro",
+				"status":     "active",
+				"expires_at": "2026-12-01T00:00:00Z",
+				"auto_renew": false,
 			},
+			"topup_url": "https://identity.lurus.cn/wallet/topup",
 		})
 	}))
 	defer srv.Close()
@@ -186,11 +194,40 @@ func TestGetAccountOverview_HappyPath(t *testing.T) {
 	if err != nil {
 		t.Fatalf("overview err: %v", err)
 	}
-	if ov.Wallet == nil || ov.Wallet.Available != 100.5 {
+	if ov.Wallet.Balance != 100.5 || ov.Wallet.Frozen != 2 {
 		t.Errorf("wallet: %+v", ov.Wallet)
 	}
-	if ov.Subscription == nil || ov.Subscription.PlanCode != "free" {
+	if ov.VIP.Level != 1 || ov.VIP.LevelName != "白银" {
+		t.Errorf("vip: %+v", ov.VIP)
+	}
+	if ov.Subscription == nil || ov.Subscription.PlanCode != "pro" || ov.Subscription.ExpiresAt == "" {
 		t.Errorf("subscription: %+v", ov.Subscription)
+	}
+	if ov.TopupURL == "" {
+		t.Error("topup_url not decoded")
+	}
+}
+
+func TestGetCheckoutStatus_HappyPath(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/internal/v1/checkout/LO2026AB/status" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"order_no": "LO2026AB", "status": "paid", "amount_cny": 199.0, "pay_url": "", "paid_at": "2026-10-16T08:00:00Z",
+		})
+	}))
+	defer srv.Close()
+
+	st, err := newClient(t, srv).GetCheckoutStatus(context.Background(), "LO2026AB")
+	if err != nil {
+		t.Fatalf("status err: %v", err)
+	}
+	if st.Status != "paid" || st.AmountCNY != 199 {
+		t.Errorf("status: %+v", st)
+	}
+	if _, err := newClient(t, srv).GetCheckoutStatus(context.Background(), ""); !platform.IsCode(err, platform.ErrCodeInvalidParameter) {
+		t.Errorf("empty order_no must be rejected before the call, got %v", err)
 	}
 }
 

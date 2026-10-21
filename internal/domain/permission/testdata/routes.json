@@ -13,6 +13,7 @@
   "GET /api/v1/ai/plans": "ai.use",
   "GET /api/v1/audit": "audit.view",
   "GET /api/v1/auth/pats": "token.manage",
+  "GET /api/v1/billing/orders/:order_no": "billing.manage",
   "GET /api/v1/billing/overview": "billing.manage",
   "GET /api/v1/exports/all.zip": "report.view",
   "GET /api/v1/exports/bills.csv": "report.view",

@@ -36,17 +36,31 @@ vi.mock("@/lib/api/billing", () => ({
   },
   getBillingOverview: vi.fn(),
   getSubscriptionState: vi.fn(() => Promise.resolve({ locked: false, refreshed: true })),
+  getOrderStatus: vi.fn(),
   subscribe: vi.fn(),
 }))
 
-import { getBillingOverview, getSubscriptionState, subscribe, BillingError } from "@/lib/api/billing"
+vi.mock("qrcode.react", () => ({
+  QRCodeSVG: ({ value }: { value: string }) => <svg data-testid="pay-qr" data-value={value} />,
+}))
+
+import {
+  getBillingOverview,
+  getOrderStatus,
+  getSubscriptionState,
+  subscribe,
+  BillingError,
+} from "@/lib/api/billing"
 import * as plans from "@/lib/billing/plans"
 import { SubscriptionPlansView } from "./plans-view"
 
 const baseOverview = {
-  account: { id: 1, username: "u", email: "u@x.com", vip_tier: "standard" },
+  account_id: 1,
   wallet: { available: 500, frozen: 0, total: 500 },
+  vip: { level: 0, level_name: "" },
   subscription: null,
+  entitlements: { plan_code: "free" },
+  can_manage: true,
 }
 
 describe("SubscriptionPlansView — checkout redirect hand-off", () => {
@@ -113,6 +127,34 @@ describe("SubscriptionPlansView — checkout redirect hand-off", () => {
       expect(screen.getByText(/已开通 专业版/)).toBeInTheDocument()
     })
     expect(window.location.assign).not.toHaveBeenCalled()
+  })
+
+  it("防止桌面端选微信支付后卡死——微信扫码要在页面里出二维码，并在支付到账后提示开通", async () => {
+    vi.mocked(getBillingOverview).mockResolvedValue(baseOverview)
+    vi.mocked(subscribe).mockResolvedValue({
+      order_no: "ORD-QR",
+      qr_code: "weixin://wxpay/bizpayurl?pr=abc",
+    })
+    vi.mocked(getOrderStatus).mockResolvedValue({ order_no: "ORD-QR", status: "paid", paid: true, final: true })
+
+    render(<SubscriptionPlansView />)
+    await waitFor(() => expect(getBillingOverview).toHaveBeenCalled())
+
+    fireEvent.click(screen.getByTestId("pm-wechat"))
+    fireEvent.click(screen.getByTestId("subscribe-pro"))
+
+    await waitFor(() => expect(getOrderStatus).toHaveBeenCalledWith("ORD-QR"))
+    await waitFor(() => expect(screen.getByText(/已开通 专业版/)).toBeInTheDocument())
+    // A QR payment is never a redirect.
+    expect(window.location.assign).not.toHaveBeenCalled()
+  })
+
+  it("防止成员误以为能升级——非企业所有者看到说明，订阅按钮不可点", async () => {
+    vi.mocked(getBillingOverview).mockResolvedValue({ ...baseOverview, can_manage: false })
+
+    render(<SubscriptionPlansView />)
+    await waitFor(() => expect(screen.getByText(/只有企业所有者可以变更/)).toBeInTheDocument())
+    expect(screen.getByTestId("subscribe-pro")).toBeDisabled()
   })
 
   it("没有订阅时显示免费版，不写未开通", async () => {
@@ -220,3 +262,4 @@ describe("SubscriptionPlansView payment return", () => {
     window.history.pushState({}, "", "/")
   })
 })
+

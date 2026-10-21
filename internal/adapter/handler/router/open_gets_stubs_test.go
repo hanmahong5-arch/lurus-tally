@@ -567,7 +567,7 @@ func newProbeEnvGuarded(guard gin.HandlerFunc) *probeEnv {
 	}
 	engine := New(health.New("dev"), authMW, pass, pass,
 		ph, unith, ah, handlerAuth.NewPATHandler(nil), sh, bh,
-		curh, saleh, payh, handlerbilling.New(nil, nil), nil,
+		curh, saleh, payh, handlerbilling.New(nil, nil, nil), nil,
 		dicth, projh, handlermetrics.NewMetricsHandler(""),
 		suph, whh, handlerexport.New(nil, nil, nil, nil), acct,
 		handlerreplenish.New(nil), handlerreports.New(nil), srch, handlerimporting.New(nil, uuid.Nil), digh,

@@ -90,6 +90,7 @@ func TestRoutes_ApproveVoidReturnPayBillingTeamAreGated(t *testing.T) {
 		"POST /api/v1/payments":                   permission.PaymentRecord,
 		"POST /api/v1/billing/subscribe":          permission.BillingManage,
 		"GET /api/v1/billing/overview":            permission.BillingManage,
+		"GET /api/v1/billing/orders/:order_no":    permission.BillingManage,
 		"POST /api/v1/team/invites":               permission.TeamManage,
 		"POST /api/v1/auth/pats":                  permission.TokenManage,
 		"GET /api/v1/auth/pats":                   permission.TokenManage,

@@ -28,14 +28,18 @@ describe("getBillingOverview", () => {
 
   it("decodes the overview body", async () => {
     const overview: BillingOverview = {
-      account: { id: 7, username: "u", email: "u@x", vip_tier: "Standard" },
+      account_id: 7,
       wallet: { available: 50, frozen: 0, total: 50 },
+      vip: { level: 1, level_name: "白银" },
       subscription: { plan_code: "free", status: "active" },
+      entitlements: { plan_code: "free" },
+      can_manage: true,
     }
     mockFetch(true, overview)
 
     const got = await getBillingOverview()
-    expect(got.account.email).toBe("u@x")
+    expect(got.account_id).toBe(7)
+    expect(got.can_manage).toBe(true)
     expect(got.wallet?.available).toBe(50)
     expect(got.subscription?.plan_code).toBe("free")
   })

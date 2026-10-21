@@ -52,7 +52,7 @@ func TestLockState_RefreshThrottledTo10s(t *testing.T) {
 	plat := &fakePlatform{status: "expired"}
 	svc := subscription.NewService(fakeAcct{}, plat)
 	now := time.Now()
-	h := handlerbilling.New(nil, nil).WithLock(svc).WithClock(func() time.Time { return now })
+	h := handlerbilling.New(nil, nil, nil).WithLock(svc).WithClock(func() time.Time { return now })
 	e := tenantEngine(h, uuid.New())
 
 	if b := getState(e, ""); !strings.Contains(b, `"locked":true`) || !strings.Contains(b, `"refreshed":false`) {
@@ -86,7 +86,7 @@ func TestSubscribe_SuccessInvalidatesState(t *testing.T) {
 	sub := &stubSubscribe{out: &appbilling.SubscribeOutput{
 		Subscription: &platformclient.SubscriptionSnapshot{PlanCode: "pro", Status: "active"},
 	}}
-	h := handlerbilling.New(sub, nil).WithLock(svc)
+	h := handlerbilling.New(sub, nil, nil).WithLock(svc)
 	e := tenantEngine(h, uuid.New())
 	if b := getState(e, ""); !strings.Contains(b, `"locked":true`) {
 		t.Fatalf("want locked: %s", b)

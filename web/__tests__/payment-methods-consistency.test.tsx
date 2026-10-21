@@ -30,6 +30,7 @@ vi.mock("@/lib/billing/plans", async (orig) => {
 vi.mock("@/lib/api/billing", () => ({
   BillingError: class BillingError extends Error {},
   getBillingOverview: vi.fn().mockResolvedValue(null),
+  getOrderStatus: vi.fn(),
   subscribe: vi.fn(),
 }))
 

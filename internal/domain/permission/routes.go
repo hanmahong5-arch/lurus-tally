@@ -110,8 +110,9 @@ var RoutePerm = map[string]Perm{
 	// Operation log: owner, manager and finance.
 	"GET /api/v1/audit": AuditView,
 	// Billing: owner only.
-	"GET /api/v1/billing/overview":   BillingManage,
-	"POST /api/v1/billing/subscribe": BillingManage,
+	"GET /api/v1/billing/overview":         BillingManage,
+	"GET /api/v1/billing/orders/:order_no": BillingManage,
+	"POST /api/v1/billing/subscribe":       BillingManage,
 	// Team: owner and manager (joining is open to any signed-in person).
 	"GET /api/v1/team/members":                TeamManage,
 	"PATCH /api/v1/team/members/:account_id":  TeamManage,

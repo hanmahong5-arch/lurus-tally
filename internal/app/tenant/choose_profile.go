@@ -125,8 +125,11 @@ func (uc *ChooseProfileUseCase) Execute(ctx context.Context, in ChooseProfileInp
 			// also back-fills platform_account_id for tenants onboarded before
 			// Wave 2 (the column was added in migration 000051).
 			//
-			// Owner only: a team member re-entering setup must not re-pin the
-			// shop's billing account or organization owner to their own account.
+			// Owner only: upsertPlatformAccount pins the CALLER's account as the
+			// tenant's plan holder and organization owner. A member re-running
+			// onboarding would otherwise move the tenant's subscription,
+			// entitlements and usage attribution onto their personal account,
+			// silently dropping the owner's paid plan.
 			if mapping.IsOwner {
 				uc.upsertPlatformAccount(ctx, mapping.TenantID, in)
 			}

@@ -91,28 +91,6 @@ last_updated: null
 
 | 日期 | H1 status | H1 current_value | H2 status | H2 current_value | H3 status | H3 current_value | KS1 status | KS1 value | KS2 status | KS2 value |
 |---|---|---|---|---|---|---|---|---|---|---|
-| 2026-07-01 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-02 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-03 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-04 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-05 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-06 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-07 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-08 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-09 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-10 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-11 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-12 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-13 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-14 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-15 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-16 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-17 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-18 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-19 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-20 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-21 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
-| 2026-07-22 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-07-23 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-07-24 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-07-25 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
@@ -181,3 +159,25 @@ last_updated: null
 | 2026-09-27 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-09-28 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
 | 2026-09-29 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-09-30 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-01 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-02 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-03 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-04 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-05 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-06 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-07 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-08 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-09 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-10 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-11 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-12 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-13 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-14 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-15 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-16 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-17 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-18 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-19 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-20 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
+| 2026-10-21 | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a | inconclusive | n/a |
