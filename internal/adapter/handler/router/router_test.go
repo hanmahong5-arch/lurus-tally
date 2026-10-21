@@ -3,11 +3,15 @@ package router_test
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/router"
+	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
+	"github.com/hanmahong5-arch/lurus-tally/internal/app/subscription"
 )
 
 func init() {
@@ -19,7 +23,7 @@ func init() {
 // authMW is also nil in tests so we exercise pure route registration.
 func newTestRouter() *gin.Engine {
 	h := health.New("dev")
-	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
+	return router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 }
 
 func TestRouter_HealthzRouteRegistered(t *testing.T) {
@@ -112,6 +116,7 @@ func TestRouter_PurchaseRoutesRegistered(t *testing.T) {
 		{http.MethodPost, "/api/v1/purchase-bills/some-id/cancel"},
 		{http.MethodGet, "/api/v1/purchase-bills"},
 		{http.MethodGet, "/api/v1/purchase-bills/some-id"},
+		{http.MethodGet, "/api/v1/receivables"},
 	}
 
 	for _, tc := range routes {
@@ -358,5 +363,38 @@ func TestRouter_RegistersNurseryDictRoutes(t *testing.T) {
 		if w.Code == http.StatusNotFound {
 			t.Errorf("%s %s returned 404 — nursery dict route not registered", tc.method, tc.path)
 		}
+	}
+}
+
+// TestRouter_SubscriptionGuard_LocksWritesOnly verifies a lapsed plan refuses
+// bill writes with 402 (Chinese message) while reads and exports still pass.
+func TestRouter_SubscriptionGuard_LocksWritesOnly(t *testing.T) {
+	h := health.New("dev")
+	setTenant := func(c *gin.Context) {
+		c.Set(middleware.CtxKeyTenantID, uuid.MustParse("a21b880b-9d5d-481f-8dfa-daf2cdeb564c"))
+		c.Next()
+	}
+	guard := middleware.SubscriptionGuard(subscription.Fixed{Locked: true, Reason: subscription.ReasonExpired, PlanCode: "pro"})
+	r := router.New(h, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, setTenant, guard)
+
+	w := httptest.NewRecorder()
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/sale-bills", nil)
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusPaymentRequired || !strings.Contains(w.Body.String(), "套餐已到期") {
+		t.Fatalf("POST sale-bills = %d %s, want 402 with Chinese message", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodGet, "/api/v1/sale-bills", nil)
+	r.ServeHTTP(w, req)
+	if w.Code == http.StatusPaymentRequired {
+		t.Fatalf("GET sale-bills must not be locked, got 402")
+	}
+
+	w = httptest.NewRecorder()
+	req, _ = http.NewRequest(http.MethodPost, "/api/v1/billing/subscribe", nil)
+	r.ServeHTTP(w, req)
+	if w.Code == http.StatusPaymentRequired {
+		t.Fatalf("billing/subscribe must stay open while locked")
 	}
 }

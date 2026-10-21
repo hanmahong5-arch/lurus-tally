@@ -237,7 +237,7 @@ func TestRecord_InvalidBillID_Returns400(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal response: %v", err)
 	}
-	if resp["message"] != "bill_id must be a valid UUID" {
+	if resp["message"] != "单据编号不正确" {
 		t.Errorf("message = %v, want exact bill_id UUID error", resp["message"])
 	}
 }
@@ -298,11 +298,10 @@ func TestRecord_AmountValidation_TableDriven(t *testing.T) {
 
 // ===================== Record: recordUC.Execute error -> 422 =====================
 
-// TestRecord_UseCaseError_Returns422 drives the use case's own validation
-// (bill not found in the repo -> GetBillForUpdate error -> Execute returns a
-// wrapped error) and asserts the handler surfaces it as 422 payment_error,
-// echoing the use-case error text (not a generic message).
-func TestRecord_UseCaseError_Returns422(t *testing.T) {
+// TestRecord_UseCaseError_Returns500 drives an unexpected use-case failure (the repo
+// cannot load the bill) and asserts the handler answers 500 through WriteInternal
+// instead of passing a database fault off as a 422 the shopkeeper could fix.
+func TestRecord_UseCaseError_Returns500(t *testing.T) {
 	billReader := newZCBillReader() // no bills registered -> GetBillForUpdate fails
 	payRepo := &zcPaymentRepo{}
 	tenantID := uuid.New()
@@ -317,15 +316,15 @@ func TestRecord_UseCaseError_Returns422(t *testing.T) {
 	})
 	w := doRecord(r, tenantID, body, true)
 
-	if w.Code != http.StatusUnprocessableEntity {
-		t.Fatalf("status = %d, want 422; body: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want 500; body: %s", w.Code, w.Body.String())
 	}
 	var resp map[string]any
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if resp["error"] != "payment_error" {
-		t.Errorf("error code = %v, want payment_error", resp["error"])
+	if resp["error"] != "internal_error" {
+		t.Errorf("error code = %v, want internal_error", resp["error"])
 	}
 	if len(payRepo.recorded) != 0 {
 		t.Errorf("no payment should be persisted when the use case fails")
@@ -352,7 +351,7 @@ func TestRecord_CreatorIDResolution_TableDriven(t *testing.T) {
 	}{
 		{"sub_absent_falls_back_to_tenant", "absent", "", false},
 		{"sub_non_string_falls_back_to_tenant", "int", "", false},
-		{"sub_invalid_uuid_falls_back_to_tenant", "string", "not-a-uuid", false},
+		{"sub_invalid_uuid_maps_to_derived_id", "string", "not-a-uuid", false},
 		{"sub_valid_uuid_is_used", "string", validSub.String(), true},
 	}
 
@@ -388,6 +387,12 @@ func TestRecord_CreatorIDResolution_TableDriven(t *testing.T) {
 			var want uuid.UUID
 			if tc.wantCreatorFromSub {
 				want = validSub
+			} else if tc.subVal != "" {
+				// non-UUID sub: stable derived id, neither tenant nor Nil.
+				if got == tenantID || got == uuid.Nil {
+					t.Errorf("CreatorID = %s, want derived id distinct from tenant", got)
+				}
+				return
 			} else {
 				want = tenantID
 			}
@@ -544,7 +549,7 @@ func TestList_MissingBillID_Returns400(t *testing.T) {
 	}
 	var resp map[string]any
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["message"] != "bill_id query parameter is required" {
+	if resp["message"] != "请指定单据" {
 		t.Errorf("message = %v, want required-param message", resp["message"])
 	}
 }

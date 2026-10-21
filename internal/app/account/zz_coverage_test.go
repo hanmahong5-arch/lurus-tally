@@ -50,25 +50,49 @@ func TestListSessions_PropagatesRepoError(t *testing.T) {
 // ---- RevokeSession (idempotent per doc comment) -----------------------------
 
 func TestRevokeSession_Idempotent(t *testing.T) {
-	// The fake's Revoke always records the id and returns nil, mirroring the
-	// documented idempotent contract: revoking a missing or already-revoked
-	// session returns nil, not an error.
-	repo := &fakeSessionRepo{}
-	uc := appacct.NewRevokeSession(repo)
+	// Revoking an own session forwards to the repo; revoking again (the row is
+	// gone from the active list) is a no-op that still returns nil.
 	tid := uuid.New()
 	sid := uuid.New()
+	repo := &fakeSessionRepo{listed: []*domain.Session{{ID: sid, TenantID: tid, UserID: "u1"}}}
+	uc := appacct.NewRevokeSession(repo)
 
-	if err := uc.Execute(context.Background(), tid, sid); err != nil {
+	if err := uc.Execute(context.Background(), tid, "u1", sid); err != nil {
 		t.Fatalf("RevokeSession must be idempotent (nil), got %v", err)
 	}
 	if len(repo.revoked) != 1 || repo.revoked[0] != sid {
 		t.Errorf("expected session id %s forwarded to repo.Revoke, got %v", sid, repo.revoked)
 	}
 
-	// Revoking again (simulating an already-revoked / missing session) must
-	// still return nil.
-	if err := uc.Execute(context.Background(), tid, sid); err != nil {
+	repo.listed = nil
+	if err := uc.Execute(context.Background(), tid, "u1", sid); err != nil {
 		t.Fatalf("second revoke must also be idempotent (nil), got %v", err)
+	}
+	if len(repo.revoked) != 1 {
+		t.Errorf("an already-revoked session must not be revoked again, got %v", repo.revoked)
+	}
+}
+
+func TestRevokeSession_OtherUsersSessionIsUntouched(t *testing.T) {
+	tid := uuid.New()
+	mine, theirs := uuid.New(), uuid.New()
+	// The repo lists only the caller's sessions, so the other person's id is absent.
+	repo := &fakeSessionRepo{listed: []*domain.Session{{ID: mine, TenantID: tid, UserID: "u1"}}}
+	uc := appacct.NewRevokeSession(repo)
+
+	if err := uc.Execute(context.Background(), tid, "u1", theirs); err != nil {
+		t.Fatalf("revoking a foreign session must be a silent no-op, got %v", err)
+	}
+	if len(repo.revoked) != 0 {
+		t.Errorf("a foreign session must not be revoked, got %v", repo.revoked)
+	}
+}
+
+func TestRevokeSession_ListErrorPropagates(t *testing.T) {
+	repo := &fakeSessionRepo{listErr: errors.New("boom")}
+	uc := appacct.NewRevokeSession(repo)
+	if err := uc.Execute(context.Background(), uuid.New(), "u1", uuid.New()); err == nil {
+		t.Fatal("a list failure must surface")
 	}
 }
 

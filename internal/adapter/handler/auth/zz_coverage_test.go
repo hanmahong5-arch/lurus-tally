@@ -84,11 +84,11 @@ func TestAuthHandler_ChooseProfile_InconsistentState_Returns500(t *testing.T) {
 	}
 }
 
-// TestAuthHandler_ChooseProfile_UnmappedError_Returns500WithEchoedDetail
+// TestAuthHandler_ChooseProfile_UnmappedError_Returns500WithoutLeak
 // verifies the `default` branch of the switch — any error that is not one of
-// the three known sentinels falls through to a generic 500 whose detail is
-// exactly err.Error() (unlike the sentinel branches, which use fixed text).
-func TestAuthHandler_ChooseProfile_UnmappedError_Returns500WithEchoedDetail(t *testing.T) {
+// the three known sentinels falls through to a generic 500 whose body is a
+// fixed Chinese message that never echoes err.Error().
+func TestAuthHandler_ChooseProfile_UnmappedError_Returns500WithoutLeak(t *testing.T) {
 	underlying := errors.New("boom: db connection reset")
 	stub := &stubChooseProfile{err: underlying}
 	h := handlerAuth.New(stub, &stubGetMe{result: &appTenant.GetMeOutput{}})
@@ -108,17 +108,17 @@ func TestAuthHandler_ChooseProfile_UnmappedError_Returns500WithEchoedDetail(t *t
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if resp["error"] != "internal server error" {
-		t.Errorf("error field = %v, want %q", resp["error"], "internal server error")
+	if resp["error"] != "internal_error" {
+		t.Errorf("error field = %v, want %q", resp["error"], "internal_error")
 	}
-	if resp["detail"] != underlying.Error() {
-		t.Errorf("detail = %v, want echoed %q", resp["detail"], underlying.Error())
+	if strings.Contains(rec.Body.String(), underlying.Error()) {
+		t.Errorf("underlying error leaked: %s", rec.Body.String())
 	}
 }
 
 // TestAuthHandler_GetMe_UseCaseError_Returns500 verifies GetMe's only
 // remaining branch: a failing getMe.Execute maps to a generic 500 whose
-// detail echoes err.Error() (there is no sentinel switch here, unlike
+// body does not echo err.Error() (there is no sentinel switch here, unlike
 // ChooseProfile).
 func TestAuthHandler_GetMe_UseCaseError_Returns500(t *testing.T) {
 	underlying := errors.New("get me: lookup mapping: connection refused")
@@ -137,8 +137,8 @@ func TestAuthHandler_GetMe_UseCaseError_Returns500(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
-	if resp["detail"] != underlying.Error() {
-		t.Errorf("detail = %v, want echoed %q", resp["detail"], underlying.Error())
+	if strings.Contains(rec.Body.String(), underlying.Error()) {
+		t.Errorf("underlying error leaked: %s", rec.Body.String())
 	}
 }
 

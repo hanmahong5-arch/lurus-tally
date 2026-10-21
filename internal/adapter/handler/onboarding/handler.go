@@ -4,7 +4,7 @@
 //
 //	POST /api/v1/onboarding/seed-demo   — seeds demo products, opening stock, and
 //	                                      ~30 days of backdated sales (velocity)
-//	POST /api/v1/onboarding/clear-demo  — removes all demo-marked rows
+//	POST /api/v1/onboarding/clear-demo  — clears demo data (used ones become real)
 //
 // The handler adapts the app-layer onboarding ports (StockInitRequest /
 // DemoSaleRequest) to the real appstock.RecordMovementUseCase signature via the
@@ -13,11 +13,15 @@ package onboarding
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appob "github.com/hanmahong5-arch/lurus-tally/internal/app/onboarding"
@@ -119,8 +123,14 @@ func New(
 	// adapter is the initializer ('in'), the sales recorder (bill + 'out'
 	// movement), and uses demoRepo to persist the sale bills.
 	adapter := &stockAdapter{uc: stockUC, sales: demoRepo}
+	seed := appob.NewSeedDemoUseCase(productCreator, adapter, adapter)
+	// The default-SKU writer (prices, unit, barcode) is optional: stores that do
+	// not implement it still seed products and stock.
+	if w, ok := demoRepo.(appob.DemoSKUWriter); ok {
+		seed.WithSKUWriter(w)
+	}
 	return &Handler{
-		seed:  appob.NewSeedDemoUseCase(productCreator, adapter, adapter),
+		seed:  seed,
 		clear: appob.NewClearDemoUseCase(demoRepo),
 	}
 }
@@ -184,8 +194,10 @@ func (h *Handler) SeedDemo(c *gin.Context) {
 
 // ClearDemo handles POST /api/v1/onboarding/clear-demo.
 //
-// No body required. Deletes all demo-marked rows for the authenticated tenant.
-// Response 204 on success.
+// No body required. Clears the authenticated tenant's demo data. Response 200
+// with the number of products cleared and the demo products that approved bills
+// still use, which were kept as real products (converted_products, with a hint
+// to check them by stocktake).
 func (h *Handler) ClearDemo(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
 	if tenantID == uuid.Nil {
@@ -193,11 +205,39 @@ func (h *Handler) ClearDemo(c *gin.Context) {
 		return
 	}
 
-	if err := h.clear.Execute(c.Request.Context(), tenantID); err != nil {
-		httperr.WriteInternal(c, err)
+	res, err := h.clear.Execute(c.Request.Context(), tenantID)
+	if err != nil {
+		var inUse *appob.DemoInUseError
+		if errors.As(err, &inUse) {
+			httperr.Write(c, httperr.Wrap(http.StatusConflict, "demo_in_use",
+				"示例商品已被你已审核的单据用到（"+billNoList(inUse.BillNos, inUse.Total)+"），这些示例数据会一直算在报表里，请按下面的办法处理",
+				"是你卖的货：在库存页用“盘点”把数量改成实际数；不是你卖的货：在商品页把这个示例商品删除（已审核的单据不受影响）", err))
+			return
+		}
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23503" {
+			slog.Warn("clear demo blocked by foreign key", "tenant_id", tenantID, "constraint", pgErr.ConstraintName, "err", err)
+			httperr.Write(c, httperr.Wrap(http.StatusConflict, "demo_clear_conflict",
+				"示例数据这次没有清除成功，没有改动任何数据", "请稍后再试；如果一直不行请联系客服", err))
+			return
+		}
+		httperr.Write(c, httperr.Wrap(http.StatusInternalServerError, "clear_demo_failed",
+			"清除示例数据没有成功", "请稍后再试，如果一直不行请联系客服", err))
 		return
 	}
-	c.Status(http.StatusNoContent)
+	c.JSON(http.StatusOK, res)
+}
+
+// billNoList renders up to five bill numbers for the owner, "等N张" beyond that.
+// total is the real count (nos may be capped); it falls back to len(nos).
+func billNoList(nos []string, total int) string {
+	if total < len(nos) {
+		total = len(nos)
+	}
+	if total <= 5 {
+		return strings.Join(nos, "、")
+	}
+	return strings.Join(nos[:5], "、") + fmt.Sprintf(" 等 %d 张", total)
 }
 
 // NewForTest constructs a Handler with pre-built use cases, bypassing the

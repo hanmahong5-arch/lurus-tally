@@ -21,10 +21,12 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 
 	handleronboarding "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/onboarding"
@@ -64,8 +66,8 @@ func (noopSalesRecorder) RecordSale(_ context.Context, _ appob.DemoSaleRequest) 
 // error branch, which the handler must turn into a 500.
 type erroringDemoDeleter struct{}
 
-func (erroringDemoDeleter) DeleteDemoProducts(_ context.Context, _ uuid.UUID) error {
-	return errors.New("connection reset")
+func (erroringDemoDeleter) ClearDemo(_ context.Context, _ uuid.UUID) (*appob.ClearResult, error) {
+	return nil, errors.New("connection reset")
 }
 
 // InsertDemoSale satisfies the other half of demoStore (appob.DemoSaleWriter).
@@ -556,10 +558,10 @@ type capturingDemoDeleter struct {
 	called      bool
 }
 
-func (d *capturingDemoDeleter) DeleteDemoProducts(_ context.Context, tenantID uuid.UUID) error {
+func (d *capturingDemoDeleter) ClearDemo(_ context.Context, tenantID uuid.UUID) (*appob.ClearResult, error) {
 	d.called = true
 	d.gotTenantID = tenantID
-	return nil
+	return &appob.ClearResult{}, nil
 }
 
 func TestClearDemoHandler_Success_TenantPropagation(t *testing.T) {
@@ -574,14 +576,14 @@ func TestClearDemoHandler_Success_TenantPropagation(t *testing.T) {
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
-	if w.Code != http.StatusNoContent {
-		t.Fatalf("want 204, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", w.Code, w.Body.String())
 	}
 	if !del.called {
-		t.Fatal("want DeleteDemoProducts called")
+		t.Fatal("want ClearDemo called")
 	}
 	if del.gotTenantID != wantTenant {
-		t.Errorf("want DeleteDemoProducts tenantID=%s, got %s (tenant isolation broken)", wantTenant, del.gotTenantID)
+		t.Errorf("want ClearDemo tenantID=%s, got %s (tenant isolation broken)", wantTenant, del.gotTenantID)
 	}
 }
 
@@ -621,7 +623,7 @@ func TestSeedDemoHandler_MissingTenant_UseCaseNotInvoked(t *testing.T) {
 // never reached when tenantID == uuid.Nil.
 type panicDemoDeleter struct{}
 
-func (panicDemoDeleter) DeleteDemoProducts(context.Context, uuid.UUID) error {
+func (panicDemoDeleter) ClearDemo(context.Context, uuid.UUID) (*appob.ClearResult, error) {
 	panic("ClearDemoUseCase.Execute must not be invoked when tenantID == uuid.Nil")
 }
 
@@ -637,5 +639,27 @@ func TestClearDemoHandler_MissingTenant_UseCaseNotInvoked(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("want 401, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+type fkDemoDeleter struct{}
+
+func (fkDemoDeleter) ClearDemo(context.Context, uuid.UUID) (*appob.ClearResult, error) {
+	return nil, &pgconn.PgError{Code: "23503", Message: "violates foreign key constraint payment_head_x"}
+}
+
+// A foreign-key block must read as plain Chinese, never the driver / English text.
+func TestClearDemoHandler_InUse_ChineseConflict(t *testing.T) {
+	seed := appob.NewSeedDemoUseCase(erroringProductCreator{}, noopStockInitializer{}, noopSalesRecorder{})
+	r := buildRouterZZ(seed, appob.NewClearDemoUseCase(fkDemoDeleter{}))
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/onboarding/clear-demo", http.NoBody)
+	req.Header.Set("X-Tenant-ID", zzTenantID)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "没有改动任何数据") || strings.Contains(w.Body.String(), "foreign key") {
+		t.Errorf("body should be Chinese only: %s", w.Body.String())
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -138,7 +139,14 @@ type CancelResult struct {
 	OriginalBillID  uuid.UUID
 	ReversalBillID  uuid.UUID
 	ReversalBillNo  string
+	// NothingToReverse is set when no reversal bill was needed: the order never shipped
+	// (oversold draft) or earlier refunds already returned every unit.
+	NothingToReverse bool
 }
+
+// ErrNothingToReverse is returned by a ReturnCreator when a cancelled order has no stock
+// left to give back. IngestCancelOrder turns it into a soft skip, not a failure.
+var ErrNothingToReverse = errors.New("importing: nothing to reverse")
 
 // ----- refund types ---------------------------------------------------------
 
@@ -168,6 +176,9 @@ type RefundResult struct {
 	PlatformRefundID string
 	BillID           uuid.UUID
 	BillNo           string
+	// NothingToReverse is set when the refund put no stock back: the order is unknown
+	// to Tally, or earlier returns (a cancellation) already restored every unit.
+	NothingToReverse bool
 }
 
 // ImportResult is the output of ImportOrdersUseCase.Execute.
@@ -613,7 +624,11 @@ type SingleOrderRequest struct {
 	WarehouseID     uuid.UUID
 	Platform        Platform
 	PlatformOrderNo string
-	Lines           []OrderRow // Currency and OrderDate must be set on each row
+	// PlatformOrderAlias is a second identifier the platform later refers to the order by
+	// (Shopify refunds carry the numeric order id, not the order name). Recorded in
+	// import_order_seen so a refund finds its sale.
+	PlatformOrderAlias string
+	Lines              []OrderRow // Currency and OrderDate must be set on each row
 }
 
 // IngestSingleOrder ingests one webhook-delivered order through the same
@@ -643,8 +658,21 @@ func (uc *ImportOrdersUseCase) IngestSingleOrder(ctx context.Context, req Single
 		return ImportedOrder{}, nil, fmt.Errorf("importing: at least one order line is required")
 	}
 
+	// An orders/cancelled that beat this orders/create left a tombstone: the order was
+	// cancelled before it was ever imported, so it must not take stock.
+	if cancelled, _, _, cerr := uc.repo.IsCancelSeen(ctx, req.TenantID, string(req.Platform), req.PlatformOrderNo); cerr != nil {
+		return ImportedOrder{}, nil, fmt.Errorf("importing: cancel check for order %s: %w", req.PlatformOrderNo, cerr)
+	} else if cancelled {
+		return ImportedOrder{}, &SkippedOrder{PlatformOrderNo: req.PlatformOrderNo, Reason: "cancelled"}, nil
+	}
+
 	imported, skipped, err := uc.ingestOneOrder(ctx, req.TenantID, req.CreatorID, req.WarehouseID,
 		req.Platform, req.PlatformOrderNo, req.Lines)
+	if err == nil && skipped == nil && imported.MarkSeenError == "" &&
+		req.PlatformOrderAlias != "" && req.PlatformOrderAlias != req.PlatformOrderNo {
+		// Best effort: without the alias a later refund falls back to the snapshot cost.
+		_ = uc.repo.MarkOrderSeen(ctx, req.TenantID, string(req.Platform), req.PlatformOrderAlias, imported.BillID)
+	}
 	return imported, skipped, err
 }
 
@@ -816,11 +844,18 @@ func (uc *ImportOrdersUseCase) IngestCancelOrder(ctx context.Context, req Cancel
 		return nil, fmt.Errorf("importing: cancel dedup check for order %s: %w", req.PlatformOrderNo, err)
 	}
 	if alreadyCancelled {
-		return &CancelResult{
-			PlatformOrderNo: req.PlatformOrderNo,
-			OriginalBillID:  origBillID,
-			ReversalBillID:  revBillID,
-		}, nil
+		res := &CancelResult{
+			PlatformOrderNo:  req.PlatformOrderNo,
+			OriginalBillID:   origBillID,
+			ReversalBillID:   revBillID,
+			NothingToReverse: revBillID == uuid.Nil,
+		}
+		if lk, ok := uc.repo.(reversalBillNoLookup); ok && revBillID != uuid.Nil {
+			if no, lerr := lk.ReversalBillNo(ctx, req.TenantID, revBillID); lerr == nil {
+				res.ReversalBillNo = no
+			}
+		}
+		return res, nil
 	}
 
 	// 2. Find the original import bill via import_order_seen.
@@ -829,27 +864,33 @@ func (uc *ImportOrdersUseCase) IngestCancelOrder(ctx context.Context, req Cancel
 		return nil, fmt.Errorf("importing: lookup original order %s: %w", req.PlatformOrderNo, err)
 	}
 	if !seen {
-		// Order was not imported through Tally — nothing to reverse.
-		return nil, fmt.Errorf("importing: cancel order %s: original order not found in import_order_seen", req.PlatformOrderNo)
+		// Order was not imported through Tally (yet): nothing to reverse. A soft skip,
+		// since failing would make the platform retry an event that may never succeed.
+		// The tombstone stops a delayed orders/create from importing an order that was
+		// already cancelled.
+		if merr := uc.repo.MarkCancelSeen(ctx, req.TenantID, string(req.Platform), req.PlatformOrderNo, uuid.Nil, uuid.Nil); merr != nil {
+			return nil, fmt.Errorf("importing: mark_cancel_seen for unknown order %s: %w", req.PlatformOrderNo, merr)
+		}
+		return &CancelResult{PlatformOrderNo: req.PlatformOrderNo, NothingToReverse: true}, nil
 	}
 
 	// 3. Create reversal return-stock bill.
-	// Remark carries an audit link back to the original sale bill.
-	// The reversal bill mirrors the original sale line quantities; the actual
-	// line items must be fetched from the bill_head/bill_item tables by the
-	// ReturnCreator implementation.  Here we pass an empty Items slice and rely
-	// on the ReturnCreator to clone from original_bill_id via Remark convention:
-	//   "cancel:shopify:#1001:original_bill_id=<uuid>"
-	// Alternatively, the ReturnCreator reads from Remark and performs the lookup.
-	// This keeps the use case free of direct DB dependency on bill tables.
+	// Items stay empty on purpose: the ReturnCreator reads original_bill_id from the
+	// remark and clones the original sale's lines and warehouse, keeping this use case
+	// free of any dependency on the bill tables.
 	remark := fmt.Sprintf("cancel:%s:%s:original_bill_id=%s", req.Platform, req.PlatformOrderNo, originalBillID)
 	out, err := uc.returnCreator.Create(ctx, ReturnCreatorInput{
 		TenantID:  req.TenantID,
 		CreatorID: req.CreatorID,
 		BillDate:  time.Now().UTC(),
 		Remark:    remark,
-		Items:     nil, // ReturnCreator clones items from originalBillID via Remark
+		Items:     nil, // cloned from original_bill_id by the ReturnCreator
 	})
+	if errors.Is(err, ErrNothingToReverse) {
+		// Never shipped or already refunded in full: record the cancellation (reversal
+		// id Nil) so a Shopify retry short-circuits, and answer success.
+		return uc.cancelNothingToReverse(ctx, req, originalBillID)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("importing: create reversal bill for order %s: %w", req.PlatformOrderNo, err)
 	}
@@ -860,6 +901,10 @@ func (uc *ImportOrdersUseCase) IngestCancelOrder(ctx context.Context, req Cancel
 		BillID:    out.BillID,
 		CreatorID: req.CreatorID,
 	}); err != nil {
+		if errors.Is(err, ErrNothingToReverse) {
+			// A concurrent delivery of the same event already restored the stock.
+			return uc.cancelNothingToReverse(ctx, req, originalBillID)
+		}
 		return nil, fmt.Errorf("importing: approve reversal bill for order %s: %w", req.PlatformOrderNo, err)
 	}
 
@@ -881,6 +926,18 @@ func (uc *ImportOrdersUseCase) IngestCancelOrder(ctx context.Context, req Cancel
 		OriginalBillID:  originalBillID,
 		ReversalBillID:  out.BillID,
 		ReversalBillNo:  out.BillNo,
+	}, nil
+}
+
+// cancelNothingToReverse records a cancellation that put no stock back and answers success.
+func (uc *ImportOrdersUseCase) cancelNothingToReverse(ctx context.Context, req CancelRequest, originalBillID uuid.UUID) (*CancelResult, error) {
+	if merr := uc.repo.MarkCancelSeen(ctx, req.TenantID, string(req.Platform), req.PlatformOrderNo, originalBillID, uuid.Nil); merr != nil {
+		return nil, fmt.Errorf("importing: mark_cancel_seen for order %s: %w", req.PlatformOrderNo, merr)
+	}
+	return &CancelResult{
+		PlatformOrderNo:  req.PlatformOrderNo,
+		OriginalBillID:   originalBillID,
+		NothingToReverse: true,
 	}, nil
 }
 
@@ -928,10 +985,30 @@ func (uc *ImportOrdersUseCase) IngestRefund(ctx context.Context, req RefundReque
 		return nil, fmt.Errorf("importing: refund dedup check for %s: %w", req.PlatformRefundID, err)
 	}
 	if alreadySeen {
-		return &RefundResult{
+		res := &RefundResult{
 			PlatformOrderNo:  req.PlatformOrderNo,
 			PlatformRefundID: req.PlatformRefundID,
 			BillID:           existingBillID,
+			NothingToReverse: existingBillID == uuid.Nil,
+		}
+		if lk, ok := uc.repo.(reversalBillNoLookup); ok && existingBillID != uuid.Nil {
+			if no, lerr := lk.ReversalBillNo(ctx, req.TenantID, existingBillID); lerr == nil {
+				res.BillNo = no
+			}
+		}
+		return res, nil
+	}
+
+	// The goods can only come back for an order Tally booked out. An unknown order
+	// (never imported, or skipped for lack of stock) is a soft skip and is not recorded,
+	// so the refund still applies if the order is imported later and the event re-sent.
+	if seen, _, serr := uc.repo.IsOrderSeen(ctx, req.TenantID, string(req.Platform), req.PlatformOrderNo); serr != nil {
+		return nil, fmt.Errorf("importing: lookup order %s for refund: %w", req.PlatformOrderNo, serr)
+	} else if !seen {
+		return &RefundResult{
+			PlatformOrderNo:  req.PlatformOrderNo,
+			PlatformRefundID: req.PlatformRefundID,
+			NothingToReverse: true,
 		}, nil
 	}
 
@@ -993,6 +1070,9 @@ func (uc *ImportOrdersUseCase) IngestRefund(ctx context.Context, req RefundReque
 		Remark:      remark,
 		Items:       items,
 	})
+	if errors.Is(err, ErrNothingToReverse) {
+		return uc.refundNothingToReverse(ctx, req)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("importing: create refund bill for %s: %w", req.PlatformRefundID, err)
 	}
@@ -1003,6 +1083,9 @@ func (uc *ImportOrdersUseCase) IngestRefund(ctx context.Context, req RefundReque
 		BillID:    out.BillID,
 		CreatorID: req.CreatorID,
 	}); err != nil {
+		if errors.Is(err, ErrNothingToReverse) {
+			return uc.refundNothingToReverse(ctx, req)
+		}
 		return nil, fmt.Errorf("importing: approve refund bill for %s: %w", req.PlatformRefundID, err)
 	}
 
@@ -1022,6 +1105,19 @@ func (uc *ImportOrdersUseCase) IngestRefund(ctx context.Context, req RefundReque
 		PlatformRefundID: req.PlatformRefundID,
 		BillID:           out.BillID,
 		BillNo:           out.BillNo,
+	}, nil
+}
+
+// refundNothingToReverse records a refund that put no stock back (a cancellation already
+// did) so a redelivery short-circuits, and answers success.
+func (uc *ImportOrdersUseCase) refundNothingToReverse(ctx context.Context, req RefundRequest) (*RefundResult, error) {
+	if merr := uc.repo.MarkRefundSeen(ctx, req.TenantID, string(req.Platform), req.PlatformOrderNo, req.PlatformRefundID, uuid.Nil); merr != nil {
+		return nil, fmt.Errorf("importing: mark_refund_seen for %s: %w", req.PlatformRefundID, merr)
+	}
+	return &RefundResult{
+		PlatformOrderNo:  req.PlatformOrderNo,
+		PlatformRefundID: req.PlatformRefundID,
+		NothingToReverse: true,
 	}, nil
 }
 
@@ -1238,4 +1334,10 @@ func buildRow(rec []string, idx map[string]int) (OrderRow, error) {
 		Currency:        strings.ToUpper(get("currency")),
 		OrderDate:       orderDate,
 	}, nil
+}
+
+// reversalBillNoLookup is an optional capability of ImportRepo: it resolves a bill's
+// number so a replayed cancellation reports the same reversal_bill_no as the first call.
+type reversalBillNoLookup interface {
+	ReversalBillNo(ctx context.Context, tenantID, billID uuid.UUID) (string, error)
 }

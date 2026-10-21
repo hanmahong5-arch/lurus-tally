@@ -8,6 +8,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -77,6 +78,28 @@ func (r *Repo) AcquireAdvisoryLock(ctx context.Context, tx *sql.Tx, tenantID, pr
 		return fmt.Errorf("stock repo: advisory lock: %w", err)
 	}
 	return nil
+}
+
+// CheckOwned implements appstock.OwnershipChecker. Explicit tenant_id predicates are
+// used on top of RLS because the FK checks that guard the inserts are not tenant-scoped.
+func (r *Repo) CheckOwned(ctx context.Context, tx *sql.Tx, tenantID, warehouseID uuid.UUID, productIDs []uuid.UUID) (bool, int, error) {
+	var whCount int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM tally.warehouse WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL`,
+		tenantID, warehouseID).Scan(&whCount); err != nil {
+		return false, 0, fmt.Errorf("stock repo: check warehouse: %w", err)
+	}
+	ids := make([]string, len(productIDs))
+	for i, id := range productIDs {
+		ids[i] = id.String()
+	}
+	var n int
+	if err := tx.QueryRowContext(ctx,
+		`SELECT count(*) FROM tally.product WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL`,
+		tenantID, "{"+strings.Join(ids, ",")+"}").Scan(&n); err != nil {
+		return false, 0, fmt.Errorf("stock repo: check products: %w", err)
+	}
+	return whCount == 1, n, nil
 }
 
 // ----- Snapshot -----

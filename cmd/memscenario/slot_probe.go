@@ -80,7 +80,7 @@ func runSlotProbe(ctx context.Context, appDB dbHandle, sales *repoai.SQLSaleRepo
 	}
 	llm, err := llmclient.New(llmclient.Config{
 		BaseURL: os.Getenv("NEWAPI_BASE_URL"), APIKey: os.Getenv("NEWAPI_API_KEY"),
-		HTTPTimeout: 120 * time.Second,
+		DefaultModel: probeModel(), HTTPTimeout: 120 * time.Second,
 	})
 	must(err, "llm client")
 	mc, err := memorusclient.New(memorusclient.Config{BaseURL: os.Getenv("MEMORUS_URL"), APIKey: "probekey"})
@@ -89,7 +89,7 @@ func runSlotProbe(ctx context.Context, appDB dbHandle, sales *repoai.SQLSaleRepo
 	}
 	reg := ai.NewRegistry(repoai.NewSQLProductRepo(appDB.db), repoai.NewSQLStockRepo(appDB.db), sales,
 		repoai.NewSQLExchangeRateRepo(appDB.db))
-	model := os.Getenv("MODEL")
+	model := probeModel()
 	o := ai.NewOrchestrator(llm, reg, &memPlans{m: map[uuid.UUID]*domainai.Plan{}}, model).
 		WithMemory(mc).WithCustomerResolver(sales)
 

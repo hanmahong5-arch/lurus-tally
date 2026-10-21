@@ -115,7 +115,7 @@ func TestReporter_NoAccount_EnqueuesForRetry(t *testing.T) {
 	r.Start()
 	defer r.Stop(context.Background())
 
-	r.Record(ctxWithTenant(tid), "deepseek-v4", 5, 5)
+	r.Record(ctxWithTenant(tid), "test-model", 5, 5)
 
 	select {
 	case <-store.enqueueCh:

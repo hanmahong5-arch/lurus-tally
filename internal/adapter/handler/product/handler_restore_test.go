@@ -79,7 +79,7 @@ func (m *mockProductRepo) Restore(_ context.Context, tenantID, id uuid.UUID) (*d
 
 const testTenantID = "11111111-1111-1111-1111-111111111111"
 
-func newTestProductHandler(repo *mockProductRepo) *handlerproduct.Handler {
+func newTestProductHandler(repo appproduct.Repository) *handlerproduct.Handler {
 	return handlerproduct.New(
 		appproduct.NewCreateUseCase(repo),
 		appproduct.NewListUseCase(repo),

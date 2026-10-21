@@ -22,7 +22,6 @@ import (
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
-	domainpayment "github.com/hanmahong5-arch/lurus-tally/internal/domain/payment"
 	domainstock "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
 )
 
@@ -314,7 +313,8 @@ func TestCreatePurchaseDraft_CreateBillError_Propagates(t *testing.T) {
 }
 
 // TestCreatePurchaseDraft_LineAmountDecimalPrecision hand-computes
-// 3 * 12.3456 = 37.0368 to prove line_amount uses decimal (not float) math.
+// 3 * 12.3456 = 37.0368 to prove line_amount uses decimal (not float) math and
+// lands on the cent: 37.04.
 func TestCreatePurchaseDraft_LineAmountDecimalPrecision(t *testing.T) {
 	repo := newMockBillRepo()
 	uc := appbill.NewCreatePurchaseDraftUseCase(repo)
@@ -329,7 +329,7 @@ func TestCreatePurchaseDraft_LineAmountDecimalPrecision(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	want := decimal.RequireFromString("37.0368")
+	want := decimal.RequireFromString("37.04")
 	got := repo.storedItems[0].LineAmount
 	if !got.Equal(want) {
 		t.Errorf("LineAmount = %s, want exact decimal %s (no float drift)", got, want)
@@ -776,10 +776,9 @@ func TestApproveSale_NonStockError_ShortCircuitsImmediately(t *testing.T) {
 	}
 }
 
-// TestApproveSale_InvalidPayType_FallsBackToCash verifies that an
-// unrecognised PayType with PaidAmount > 0 falls back to PayTypeCash rather
-// than erroring (approve_sale.go:216-220).
-func TestApproveSale_InvalidPayType_FallsBackToCash(t *testing.T) {
+// TestApproveSale_InvalidPayType_Rejected verifies that an unrecognised PayType with
+// PaidAmount > 0 is rejected with ErrInvalidPayMethod instead of booking cash.
+func TestApproveSale_InvalidPayType_Rejected(t *testing.T) {
 	repo := newMockBillRepo()
 	stockUC := newMockStockUC()
 	unitRepo := newMockProductUnitRepo()
@@ -797,14 +796,11 @@ func TestApproveSale_InvalidPayType_FallsBackToCash(t *testing.T) {
 		PaidAmount: decimal.NewFromInt(30),
 		PayType:    "not_a_real_pay_type",
 	})
-	if err != nil {
-		t.Fatalf("Execute: %v", err)
+	if !errors.Is(err, appbill.ErrInvalidPayMethod) {
+		t.Fatalf("err = %v, want ErrInvalidPayMethod", err)
 	}
-	if len(payRepo.recorded) != 1 {
-		t.Fatalf("payment records = %d, want 1", len(payRepo.recorded))
-	}
-	if payRepo.recorded[0].PayType != domainpayment.PayTypeCash {
-		t.Errorf("PayType = %q, want fallback to %q", payRepo.recorded[0].PayType, domainpayment.PayTypeCash)
+	if len(payRepo.recorded) != 0 {
+		t.Errorf("payment records = %d, want 0", len(payRepo.recorded))
 	}
 }
 
@@ -1370,6 +1366,7 @@ func TestQuickCheckout_NextBillNoError_Propagates(t *testing.T) {
 // an overpayment must never yield a negative receivable.
 func TestQuickCheckout_ReceivableClampedToZero_WhenOverpaid(t *testing.T) {
 	repo := newMockBillRepo()
+	repo.defaultWH = &testWarehouseID
 	uc := newQuickCheckoutUC(repo, newMockStockUC(), newMockProductUnitRepo(), newMockPaymentRepo())
 	result, err := uc.Execute(context.Background(), appbill.QuickCheckoutRequest{
 		TenantID:      testTenantID,
@@ -1393,6 +1390,7 @@ func TestQuickCheckout_ReceivableClampedToZero_WhenOverpaid(t *testing.T) {
 // share one transaction, so an approve failure must fail the whole checkout).
 func TestQuickCheckout_ApproveNonStockError_Propagates(t *testing.T) {
 	repo := newMockBillRepo()
+	repo.defaultWH = &testWarehouseID
 	boom := errors.New("stock infra failure")
 	stockUC := &genericErrStockUC{err: boom}
 	unitRepo := newMockProductUnitRepo()

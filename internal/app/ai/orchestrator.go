@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,26 +34,46 @@ type Orchestrator struct {
 	llm       *llmclient.Client
 	registry  *Registry
 	planStore PlanStore
-	executor  PlanExecutor     // nil → ConfirmPlan flips status only (dev / tests)
-	audit     AuditWriter      // nil → AI plan executions are not audited
-	memory    MemoryClient     // nil when memorus disabled
-	customers CustomerResolver // nil → memories are not attributed to customers
-	tracer    llmobs.Tracer    // nil → spans silently skipped
-	log       *slog.Logger     // nil → slog.Default()
+	executor  PlanExecutor      // nil → ConfirmPlan flips status only (dev / tests)
+	audit     AuditWriter       // nil → AI plan executions are not audited
+	memory    MemoryClient      // nil when memorus disabled
+	customers CustomerResolver  // nil → memories are not attributed to customers
+	tracer    llmobs.Tracer     // nil → spans silently skipped
+	log       *slog.Logger      // nil → slog.Default()
+	router    *llmclient.Router // nil → every task uses model
+	extractor *Extractor        // nil → drafts are not cross-checked by a second reading
 	model     string
 }
 
 // NewOrchestrator constructs an Orchestrator.
 func NewOrchestrator(llm *llmclient.Client, registry *Registry, planStore PlanStore, model string) *Orchestrator {
-	if model == "" {
-		model = "deepseek-v4-flash"
-	}
 	return &Orchestrator{
 		llm:       llm,
 		registry:  registry,
 		planStore: planStore,
 		model:     model,
 	}
+}
+
+// WithModelRouter routes tasks to their own models (chat loop, extraction).
+// Passing nil — or a router with no entries — keeps every task on the default
+// model, identical to a deployment without routing.
+func (o *Orchestrator) WithModelRouter(r *llmclient.Router) *Orchestrator {
+	o.router = r
+	return o
+}
+
+// WithExtractor attaches the dictation extractor: a freshly proposed purchase
+// draft is cross-checked against an independent JSON reading of what the owner
+// said (on AI_MODEL_EXTRACT when routed). Passing nil disables the cross-check.
+func (o *Orchestrator) WithExtractor(e *Extractor) *Orchestrator {
+	o.extractor = e
+	return o
+}
+
+// chatModel is the model the tool-calling loop runs on.
+func (o *Orchestrator) chatModel() string {
+	return o.router.Model(llmclient.TaskChat, o.model)
 }
 
 // WithMemory attaches a MemoryClient to the orchestrator for recall + write-back.
@@ -181,7 +202,7 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 	inAugmented.UserMessage = augmented
 
 	messages := withAliasNote(o.withMemoryPolicy(buildMessages(inAugmented)), in.UserMessage, about)
-	tools := o.toolDefs()
+	tools := o.toolDefsFor(ctx)
 	remembered := false
 
 	var plans []*domainai.Plan
@@ -190,8 +211,9 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 	for round := 0; round < maxToolRounds; round++ {
 		// Open an LLM span for this inference call. span is nil when no tracer
 		// is attached; all span.* calls are guarded by the nil check below.
-		span, spanCtx := o.startSpan(ctx, op, o.model, in.UserMessage)
-		resp, err := o.llm.Chat(spanCtx, o.model, messages, tools)
+		model := o.chatModel()
+		span, spanCtx := o.startSpan(ctx, op, model, in.UserMessage)
+		resp, err := o.llm.Chat(spanCtx, model, messages, tools)
 		if err != nil {
 			if span != nil {
 				span.End("", llmobs.TokenCount{}, err)
@@ -245,6 +267,7 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 
 			// Persist plan if this was a destructive tool.
 			if result.Plan != nil {
+				o.checkPlan(ctx, in, result.Plan)
 				if span != nil {
 					result.Plan.TraceID = span.TraceID()
 				}
@@ -272,6 +295,42 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 	return nil, fmt.Errorf("orchestrator: exceeded %d tool rounds without final answer", maxToolRounds)
 }
 
+// recentUserTurns is how many of the latest user messages (this one included)
+// count as "what the owner said" when a draft is checked: "对，建吧" confirms
+// the quantities of the turn before.
+const recentUserTurns = 4
+
+// spokenText joins the latest user messages, oldest first, one per line.
+func spokenText(in ChatInput) string {
+	var turns []string
+	for _, m := range in.History {
+		if m.Role == "user" {
+			if c, _ := extractContent(m.Content); strings.TrimSpace(c) != "" {
+				turns = append(turns, c)
+			}
+		}
+	}
+	turns = append(turns, in.UserMessage)
+	if len(turns) > recentUserTurns {
+		turns = turns[len(turns)-recentUserTurns:]
+	}
+	return strings.Join(turns, "\n")
+}
+
+// checkPlan runs the deterministic draft rules and, when an extractor is
+// attached and the owner actually dictated numbers, the second-reading
+// cross-check. Extraction failure never blocks the plan.
+func (o *Orchestrator) checkPlan(ctx context.Context, in ChatInput, plan *domainai.Plan) {
+	spoken := spokenText(in)
+	checkPlanAgainstSpoken(plan, spoken)
+	if o.extractor == nil || plan.Type != domainai.PlanTypeCreatePurchase || len(goodsQuantities([]rune(spoken))) == 0 {
+		return
+	}
+	if lines, err := o.extractor.Extract(ctx, in.TenantID, spoken); err == nil {
+		crossCheckExtracted(plan, lines, spoken)
+	}
+}
+
 // ConfirmPlan executes a confirmed plan's real side effects (build PO draft,
 // change prices, adjust stock) via the attached PlanExecutor and returns the
 // updated plan plus an ExecutionResult.
@@ -288,6 +347,14 @@ func (o *Orchestrator) StreamChat(ctx context.Context, in ChatInput, onChunk fun
 // ExpiresAt has passed, or a wrapped error for any other failure.
 // actorID is the acting user (for bill creator + audit attribution).
 func (o *Orchestrator) ConfirmPlan(ctx context.Context, tenantID, actorID, planID uuid.UUID) (*domainai.Plan, *ExecutionResult, error) {
+	return o.ConfirmPlanAck(ctx, tenantID, actorID, planID, nil)
+}
+
+// ConfirmPlanAck confirms a plan like ConfirmPlan. A draft the rules flagged
+// (payload require_line_confirm) is refused with ErrLineConfirmRequired unless
+// acknowledged lists the index of every flag, so a client cannot skip the
+// line-by-line tick the card asks for.
+func (o *Orchestrator) ConfirmPlanAck(ctx context.Context, tenantID, actorID, planID uuid.UUID, acknowledged []int) (*domainai.Plan, *ExecutionResult, error) {
 	plan, err := o.planStore.GetPlan(ctx, tenantID, planID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("confirm plan: get: %w", err)
@@ -306,7 +373,11 @@ func (o *Orchestrator) ConfirmPlan(ctx context.Context, tenantID, actorID, planI
 		return nil, nil, ErrPlanExpired
 	}
 	if plan.Status != domainai.PlanStatusPending {
-		return nil, nil, fmt.Errorf("confirm plan: plan is %s, cannot confirm", plan.Status)
+		return nil, nil, fmt.Errorf("confirm plan: plan is %s, cannot confirm: %w", plan.Status, ErrPlanNotPending)
+	}
+
+	if !flagsAcknowledged(plan, acknowledged) {
+		return nil, nil, ErrLineConfirmRequired
 	}
 
 	// Flip to Confirmed first — acts as a lock against concurrent double-clicks.
@@ -407,10 +478,18 @@ func (o *Orchestrator) ListPlans(ctx context.Context, tenantID uuid.UUID, status
 // ErrPlanNotFound is returned when a plan cannot be found in the store.
 var ErrPlanNotFound = fmt.Errorf("plan not found")
 
+// ErrLineConfirmRequired is returned when a flagged draft is confirmed without
+// acknowledging every flag. The handler maps it to 422.
+var ErrLineConfirmRequired = fmt.Errorf("line confirmation required")
+
 // ErrPlanExpired is returned when ConfirmPlan sees a plan whose ExpiresAt has
 // passed. The handler maps this to 409 Conflict so the UI can prompt the user
 // to start a new turn rather than retrying blindly.
 var ErrPlanExpired = fmt.Errorf("plan expired")
+
+// ErrPlanNotPending is wrapped by ConfirmPlan when the plan is no longer pending
+// (already confirmed, cancelled, failed): a state conflict, not a store fault.
+var ErrPlanNotPending = fmt.Errorf("plan not pending")
 
 // ErrPlanExecutionFailed is returned when ConfirmPlan's executor call fails.
 // The plan is marked Failed (terminal); the handler maps this to 422 so the UI

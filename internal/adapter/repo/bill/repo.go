@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/shopspring/decimal"
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
@@ -20,6 +21,9 @@ import (
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 )
+
+// clientRefConstraint is the unique index (migration 000060) behind checkout idempotency.
+const clientRefConstraint = "bill_head_tenant_client_ref_uidx"
 
 // ErrNotFound is returned when a bill_head row is not found.
 var ErrNotFound = errors.New("bill repo: not found")
@@ -88,6 +92,15 @@ func (r *Repo) AcquireBillAdvisoryLock(ctx context.Context, tx *sql.Tx, tenantID
 
 // ----- bill_no sequence -----
 
+// billNoZone is the shop's wall clock: bill numbers and date filters share it so a
+// bill opened at 00:30 Beijing time carries that day's date, not the previous UTC day.
+var billNoZone = time.FixedZone("CST", 8*3600)
+
+// BillNoDay returns the YYYYMMDD part of a bill number for the instant t.
+func BillNoDay(t time.Time) string {
+	return t.In(billNoZone).Format("20060102")
+}
+
 // NextBillNo generates the next bill number for the (tenantID, prefix, today) combination.
 // Uses the existing tally.bill_sequence table (from migration 000010).
 // Schema: (id UUID PK, tenant_id UUID, prefix VARCHAR(20), current_val BIGINT, UNIQUE(tenant_id, prefix)).
@@ -95,7 +108,7 @@ func (r *Repo) AcquireBillAdvisoryLock(ctx context.Context, tx *sql.Tx, tenantID
 // We use a day-keyed prefix (prefix+date) stored as the sequence prefix so per-day reset works.
 // Format: "PO-20260423-0001"
 func (r *Repo) NextBillNo(ctx context.Context, tx *sql.Tx, tenantID uuid.UUID, prefix string) (string, error) {
-	today := time.Now().UTC().Format("20060102")
+	today := BillNoDay(time.Now())
 	seqPrefix := prefix + "-" + today // "PO-20260423"
 
 	// Upsert: insert seq=1 or increment by 1, return current value.
@@ -127,8 +140,10 @@ func (r *Repo) CreateBill(ctx context.Context, tx *sql.Tx, head *domain.BillHead
 		INSERT INTO tally.bill_head
 			(id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 			 creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount, remark,
-			 created_at, updated_at, currency, exchange_rate, amount_local)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)`
+			 created_at, updated_at, currency, exchange_rate, amount_local,
+			 client_ref, source, occurred_at)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+			NULLIF($21,''), COALESCE(NULLIF($22,''), 'web'), $23)`
 
 	// Multi-currency columns (migration 000024). Persist the rate the bill was booked
 	// at so the approval path can convert foreign-currency unit prices to base currency;
@@ -156,8 +171,13 @@ func (r *Repo) CreateBill(ctx context.Context, tx *sql.Tx, head *domain.BillHead
 		head.Subtotal.String(), head.ShippingFee.String(), head.TaxAmount.String(), head.TotalAmount.String(),
 		head.Remark, head.CreatedAt, head.UpdatedAt,
 		currency, exchangeRate.String(), amountLocal.String(),
+		head.ClientRef, head.Source, head.OccurredAt,
 	)
 	if err != nil {
+		var pg *pgconn.PgError
+		if errors.As(err, &pg) && pg.Code == "23505" && pg.ConstraintName == clientRefConstraint {
+			return fmt.Errorf("bill repo: create head: %w", appbill.ErrDuplicateClientRef)
+		}
 		return fmt.Errorf("bill repo: create head: %w", err)
 	}
 
@@ -195,7 +215,8 @@ func (r *Repo) GetBillForUpdate(ctx context.Context, tx *sql.Tx, tenantID, billI
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
 		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at,
-		       exchange_rate
+		       COALESCE(currency, 'CNY'), exchange_rate, COALESCE(amount_local, total_amount),
+			       occurred_at
 		FROM tally.bill_head
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL
 		FOR UPDATE`
@@ -208,11 +229,29 @@ func (r *Repo) GetBill(ctx context.Context, tenantID, billID uuid.UUID) (*domain
 		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
 		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
 		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at,
-		       exchange_rate
+		       COALESCE(currency, 'CNY'), exchange_rate, COALESCE(amount_local, total_amount),
+			       occurred_at
 		FROM tally.bill_head
 		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`
 
-	return scanBillHead(dbscope.From(ctx, r.db).QueryRowContext(ctx, q, billID, tenantID))
+	h, err := scanBillHead(dbscope.From(ctx, r.db).QueryRowContext(ctx, q, billID, tenantID))
+	if err != nil {
+		return nil, err
+	}
+	// Display names are best-effort: a soft-deleted reference keeps its original name; a dangling one leaves it empty.
+	if h.PartnerID != nil {
+		const pq = `SELECT name FROM tally.partner WHERE id = $1 AND tenant_id = $2`
+		if err := dbscope.From(ctx, r.db).QueryRowContext(ctx, pq, *h.PartnerID, tenantID).Scan(&h.PartnerName); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("bill repo: get partner name: %w", err)
+		}
+	}
+	if h.WarehouseID != nil {
+		const wq = `SELECT name FROM tally.warehouse WHERE id = $1 AND tenant_id = $2`
+		if err := dbscope.From(ctx, r.db).QueryRowContext(ctx, wq, *h.WarehouseID, tenantID).Scan(&h.WarehouseName); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("bill repo: get warehouse name: %w", err)
+		}
+	}
+	return h, nil
 }
 
 // ProductExists reports whether productID is an active (non-deleted) product
@@ -241,11 +280,74 @@ func (r *Repo) WarehouseExists(ctx context.Context, tenantID, warehouseID uuid.U
 	return exists, nil
 }
 
+// PartnerExists reports whether id is an active (non-deleted) partner owned by
+// tenantID.
+func (r *Repo) PartnerExists(ctx context.Context, tenantID, id uuid.UUID) (bool, error) {
+	const q = `SELECT EXISTS (
+		SELECT 1 FROM tally.partner
+		WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL)`
+	var exists bool
+	if err := dbscope.From(ctx, r.db).QueryRowContext(ctx, q, id, tenantID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("bill repo partner exists: %w", err)
+	}
+	return exists, nil
+}
+
+// DefaultWarehouseID returns the tenant's active default warehouse; with no default
+// flagged it returns the sole active warehouse. false when neither exists.
+func (r *Repo) DefaultWarehouseID(ctx context.Context, tenantID uuid.UUID) (uuid.UUID, bool, error) {
+	const q = `SELECT id, COALESCE(is_default, false) FROM tally.warehouse
+		WHERE tenant_id = $1 AND deleted_at IS NULL AND COALESCE(enabled, true)
+		ORDER BY COALESCE(is_default, false) DESC, created_at ASC
+		LIMIT 2`
+	rows, err := dbscope.From(ctx, r.db).QueryContext(ctx, q, tenantID)
+	if err != nil {
+		return uuid.Nil, false, fmt.Errorf("bill repo default warehouse: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var ids []uuid.UUID
+	var firstDefault bool
+	for rows.Next() {
+		var id uuid.UUID
+		var isDefault bool
+		if err := rows.Scan(&id, &isDefault); err != nil {
+			return uuid.Nil, false, fmt.Errorf("bill repo default warehouse scan: %w", err)
+		}
+		if len(ids) == 0 {
+			firstDefault = isDefault
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return uuid.Nil, false, fmt.Errorf("bill repo default warehouse rows: %w", err)
+	}
+	if len(ids) == 0 || (!firstDefault && len(ids) > 1) {
+		return uuid.Nil, false, nil
+	}
+	return ids[0], true, nil
+}
+
+// SetBillWarehouse writes bill_head.warehouse_id within tx.
+func (r *Repo) SetBillWarehouse(ctx context.Context, tx *sql.Tx, tenantID, billID, warehouseID uuid.UUID) error {
+	const q = `UPDATE tally.bill_head SET warehouse_id = $1, updated_at = $2
+		WHERE id = $3 AND tenant_id = $4 AND deleted_at IS NULL`
+	res, err := tx.ExecContext(ctx, q, warehouseID, time.Now().UTC(), billID, tenantID)
+	if err != nil {
+		return fmt.Errorf("bill repo set warehouse: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("bill repo set warehouse rows: %w", err)
+	} else if n == 0 {
+		return appbill.ErrBillNotFound
+	}
+	return nil
+}
+
 func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
 	var h domain.BillHead
 	var billType, subType string
 	var status int16
-	var subtotal, shippingFee, taxAmount, totalAmount, paidAmount, exchangeRate string
+	var subtotal, shippingFee, taxAmount, totalAmount, paidAmount, exchangeRate, amountLocal string
 	err := row.Scan(
 		&h.ID, &h.TenantID, &h.BillNo, &billType, &subType, &status,
 		&h.PartnerID, &h.WarehouseID,
@@ -255,7 +357,8 @@ func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
 		&h.ApprovedAt, &h.ApprovedBy,
 		&h.Revision,
 		&h.Remark, &h.CreatedAt, &h.UpdatedAt,
-		&exchangeRate,
+		&h.Currency, &exchangeRate, &amountLocal,
+		&h.OccurredAt,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, appbill.ErrBillNotFound
@@ -282,6 +385,9 @@ func scanBillHead(row *sql.Row) (*domain.BillHead, error) {
 		return nil, fmt.Errorf("bill repo: scan head: %w", err)
 	}
 	if h.ExchangeRateVal, err = decimalutil.Parse(exchangeRate, "exchange_rate"); err != nil {
+		return nil, fmt.Errorf("bill repo: scan head: %w", err)
+	}
+	if h.AmountLocal, err = decimalutil.Parse(amountLocal, "amount_local"); err != nil {
 		return nil, fmt.Errorf("bill repo: scan head: %w", err)
 	}
 	return &h, nil
@@ -372,13 +478,18 @@ func (r *Repo) UpdateBill(ctx context.Context, tx *sql.Tx, head *domain.BillHead
 			tax_amount   = $6,
 			total_amount = $7,
 			remark       = $8,
-			updated_at   = $9
+			updated_at   = $9,
+			amount_local = $12
 		WHERE id = $10 AND tenant_id = $11 AND deleted_at IS NULL`
 
+	amountLocal := head.AmountLocal
+	if amountLocal.IsZero() {
+		amountLocal = head.TotalAmount
+	}
 	_, err := tx.ExecContext(ctx, headQ,
 		head.PartnerID, head.WarehouseID, head.BillDate,
 		head.Subtotal.String(), head.ShippingFee.String(), head.TaxAmount.String(), head.TotalAmount.String(),
-		head.Remark, head.UpdatedAt, head.ID, head.TenantID,
+		head.Remark, head.UpdatedAt, head.ID, head.TenantID, amountLocal.String(),
 	)
 	if err != nil {
 		return fmt.Errorf("bill repo: update head: %w", err)
@@ -415,36 +526,149 @@ func (r *Repo) UpdateItemPurchasePrice(ctx context.Context, tx *sql.Tx, tenantID
 	return nil
 }
 
-func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domain.BillHead, int64, error) {
+// escapeLike escapes LIKE metacharacters so user input matches literally
+// (used with ESCAPE '\').
+func escapeLike(s string) string {
+	return strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(s)
+}
+
+// invoicedExpr is the amount of a bill covered by live invoices: links on issued,
+// non-deleted invoices only (void and red-struck invoices do not count).
+const invoicedExpr = `COALESCE((SELECT SUM(ib.amount) FROM tally.invoice_bill ib
+		JOIN tally.invoice iv ON iv.id = ib.invoice_id
+		WHERE ib.bill_id = b.id AND iv.status = 'issued' AND iv.deleted_at IS NULL), 0)`
+
+// buildListWhere renders the shared WHERE clause (aliases: b = bill_head, p = partner)
+// and its positional args for ListBills and SummarizeBills. The returned idx is the
+// next free placeholder number.
+func buildListWhere(f appbill.BillListFilter) (string, []any, int) {
 	args := []any{f.TenantID}
 	idx := 2
-	where := []string{"tenant_id = $1", "deleted_at IS NULL"}
+	where := []string{"b.tenant_id = $1", "b.deleted_at IS NULL"}
 
 	if f.BillType != "" {
-		where = append(where, fmt.Sprintf("bill_type = $%d", idx))
+		where = append(where, fmt.Sprintf("b.bill_type = $%d", idx))
 		args = append(args, string(f.BillType))
 		idx++
 	}
-	if f.Status != nil {
-		where = append(where, fmt.Sprintf("status = $%d", idx))
-		args = append(args, int16(*f.Status))
+	if f.SubType != "" {
+		where = append(where, fmt.Sprintf("b.sub_type = $%d", idx))
+		args = append(args, string(f.SubType))
 		idx++
 	}
+	status := f.Status
+	if f.PaymentStatus != "" || f.InvoiceStatus != "" {
+		// Payment state only exists for approved bills.
+		approved := domain.StatusApproved
+		status = &approved
+	}
+	if f.OwnRecentApprovedSince != nil {
+		where = append(where, fmt.Sprintf("(b.status = %d OR (b.status = %d AND b.approved_at >= $%d))", int(domain.StatusDraft), int(domain.StatusApproved), idx))
+		args = append(args, *f.OwnRecentApprovedSince)
+		idx++
+		status = nil
+	}
+	if status != nil {
+		where = append(where, fmt.Sprintf("b.status = $%d", idx))
+		args = append(args, int16(*status))
+		idx++
+	}
+	switch f.PaymentStatus {
+	case domain.PaymentUnpaid:
+		where = append(where, "b.paid_amount <= 0")
+	case domain.PaymentPartial:
+		where = append(where, "b.paid_amount > 0 AND b.paid_amount < "+netTotalExpr(f))
+	case domain.PaymentPaid:
+		where = append(where, "b.paid_amount > 0 AND b.paid_amount >= "+netTotalExpr(f))
+	case "open": // net of sales returns on the sale side, same rule as the receivables summary
+		where = append(where, netTotalExpr(f)+" > b.paid_amount")
+	}
+	switch f.InvoiceStatus {
+	case domain.InvoiceNone:
+		where = append(where, invoicedExpr+" <= 0")
+	case domain.InvoicePartial:
+		where = append(where, invoicedExpr+" > 0 AND "+invoicedExpr+" < TRUNC(b.total_amount, 2)")
+	case domain.InvoiceFull:
+		where = append(where, invoicedExpr+" > 0 AND "+invoicedExpr+" >= TRUNC(b.total_amount, 2)")
+	}
 	if f.PartnerID != nil {
-		where = append(where, fmt.Sprintf("partner_id = $%d", idx))
+		where = append(where, fmt.Sprintf("b.partner_id = $%d", idx))
 		args = append(args, *f.PartnerID)
 		idx++
 	}
+	if f.CreatorID != nil {
+		where = append(where, fmt.Sprintf("b.creator_id = $%d", idx))
+		args = append(args, *f.CreatorID)
+		idx++
+	}
 	if f.DateFrom != nil {
-		where = append(where, fmt.Sprintf("bill_date >= $%d", idx))
+		where = append(where, fmt.Sprintf("b.bill_date >= $%d", idx))
 		args = append(args, *f.DateFrom)
 		idx++
 	}
 	if f.DateTo != nil {
-		where = append(where, fmt.Sprintf("bill_date <= $%d", idx))
+		// DateTo is an exclusive upper bound.
+		where = append(where, fmt.Sprintf("b.bill_date < $%d", idx))
 		args = append(args, *f.DateTo)
 		idx++
 	}
+	if f.Keyword != "" {
+		where = append(where, fmt.Sprintf(`(b.bill_no ILIKE $%d ESCAPE '\' OR p.name ILIKE $%d ESCAPE '\')`, idx, idx))
+		args = append(args, "%"+escapeLike(f.Keyword)+"%")
+		idx++
+	}
+	return strings.Join(where, " AND "), args, idx
+}
+
+const listFrom = ` FROM tally.bill_head b
+		LEFT JOIN tally.partner p ON p.id = b.partner_id AND p.tenant_id = b.tenant_id`
+
+// netSales reports whether the list is the sale side, where sales returns reduce what
+// is owed (same rule as the receivables summary and the sale detail).
+func netSales(f appbill.BillListFilter) bool { return f.BillType == domain.BillTypeSale }
+
+// netTotalExpr is the bill total after sales returns (floored at zero) on the sale side,
+// the plain total elsewhere. It relies on the rsum join from listCTE / listFrom.
+func netTotalExpr(f appbill.BillListFilter) string {
+	if netSales(f) {
+		return "GREATEST(b.total_amount - COALESCE(r.amt, 0), 0)"
+	}
+	return "b.total_amount"
+}
+
+// unpaidExpr is what is still owed on one bill: net of returns, less paid, floored at zero
+// and rounded to cents per bill. It is the ageing's rule, so the summary strip and the
+// receivables panel add up to the same figure and an overpaid bill never goes negative.
+func unpaidExpr(f appbill.BillListFilter) string {
+	return "ROUND(GREATEST(" + netTotalExpr(f) + " - b.paid_amount, 0), 2)"
+}
+
+// listCTE is the WITH prefix of the list queries: the per-sale returns on the sale side.
+func listCTE(f appbill.BillListFilter) string {
+	if netSales(f) {
+		return "WITH" + saleReturnsCTE("")
+	}
+	return ""
+}
+
+// listFromFor is listFrom plus the returns join on the sale side.
+func listFromFor(f appbill.BillListFilter) string {
+	if netSales(f) {
+		return listFrom + ` LEFT JOIN rsum r ON r.sale_id = b.id`
+	}
+	return listFrom
+}
+
+// returnedExpr is the returns total for a bill (zero off the sale side).
+func returnedExpr(f appbill.BillListFilter) string {
+	if netSales(f) {
+		return "COALESCE(r.amt, 0)"
+	}
+	return "0"
+}
+
+func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domain.BillHead, int64, error) {
+	whereClause, args, idx := buildListWhere(f)
 
 	page := f.Page
 	if page <= 0 {
@@ -456,23 +680,21 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 	}
 	offset := (page - 1) * size
 
-	whereClause := strings.Join(where, " AND ")
 	dbh := dbscope.From(ctx, r.db)
-	countQ := `SELECT COUNT(*) FROM tally.bill_head WHERE ` + whereClause
+	countQ := listCTE(f) + `SELECT COUNT(*)` + listFromFor(f) + ` WHERE ` + whereClause
 	var total int64
 	if err := dbh.QueryRowContext(ctx, countQ, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("bill repo: list count: %w", err)
 	}
 
 	args = append(args, size, offset)
-	q := `
-		SELECT id, tenant_id, bill_no, bill_type, sub_type, status, partner_id, warehouse_id,
-		       creator_id, bill_date, subtotal, shipping_fee, tax_amount, total_amount,
-		       paid_amount, approved_at, approved_by, revision, remark, created_at, updated_at,
-		       exchange_rate
-		FROM tally.bill_head
+	q := listCTE(f) + `
+		SELECT b.id, b.tenant_id, b.bill_no, b.bill_type, b.sub_type, b.status, b.partner_id, b.warehouse_id,
+		       b.creator_id, b.bill_date, b.subtotal, b.shipping_fee, b.tax_amount, b.total_amount,
+		       b.paid_amount, b.approved_at, b.approved_by, b.revision, b.remark, b.created_at, b.updated_at,
+		       b.exchange_rate, COALESCE(p.name, ''), ` + invoicedExpr + `::text, ` + returnedExpr(f) + `::text` + listFromFor(f) + `
 		WHERE ` + whereClause + `
-		ORDER BY created_at DESC
+		ORDER BY ` + listOrder(f) + `
 		LIMIT $` + fmt.Sprintf("%d OFFSET $%d", idx, idx+1)
 
 	rows, err := dbh.QueryContext(ctx, q, args...)
@@ -486,7 +708,7 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 		var h domain.BillHead
 		var billType, subType string
 		var status int16
-		var subtotal, shippingFee, taxAmount, totalAmount, paidAmount, exchangeRate string
+		var subtotal, shippingFee, taxAmount, totalAmount, paidAmount, exchangeRate, invoiced, returned string
 		if err := rows.Scan(
 			&h.ID, &h.TenantID, &h.BillNo, &billType, &subType, &status,
 			&h.PartnerID, &h.WarehouseID,
@@ -496,7 +718,7 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 			&h.ApprovedAt, &h.ApprovedBy,
 			&h.Revision,
 			&h.Remark, &h.CreatedAt, &h.UpdatedAt,
-			&exchangeRate,
+			&exchangeRate, &h.PartnerName, &invoiced, &returned,
 		); err != nil {
 			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
 		}
@@ -521,10 +743,99 @@ func (r *Repo) ListBills(ctx context.Context, f appbill.BillListFilter) ([]domai
 		if h.ExchangeRateVal, err = decimalutil.Parse(exchangeRate, "exchange_rate"); err != nil {
 			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
 		}
+		if h.InvoicedAmount, err = decimalutil.Parse(invoiced, "invoiced_amount"); err != nil {
+			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
+		}
+		if h.ReturnedAmount, err = decimalutil.Parse(returned, "returned_amount"); err != nil {
+			return nil, 0, fmt.Errorf("bill repo: list scan: %w", err)
+		}
 		bills = append(bills, h)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, 0, fmt.Errorf("bill repo: list bills rows: %w", err)
 	}
 	return bills, total, nil
+}
+
+// listOrder is the ORDER BY of ListBills: newest first, or oldest first for the
+// "who has owed longest" view.
+func listOrder(f appbill.BillListFilter) string {
+	if f.OldestFirst {
+		return "b.bill_date ASC, b.created_at ASC"
+	}
+	return "b.bill_date DESC, b.created_at DESC"
+}
+
+// SummarizeBills aggregates the bills matching f with the same WHERE as ListBills.
+// count, total, paid and unpaid all cover approved bills only. On the sale side returned
+// is what sales returns take off the totals (never more than a bill's total), so
+// total - returned - paid = unpaid.
+func (r *Repo) SummarizeBills(ctx context.Context, f appbill.BillListFilter) (appbill.BillListSummary, error) {
+	whereClause, args, _ := buildListWhere(f)
+	q := listCTE(f) + `
+		SELECT COUNT(*) FILTER (WHERE b.status = 2),
+		       COALESCE(SUM(b.total_amount) FILTER (WHERE b.status = 2), 0)::text,
+		       COALESCE(SUM(b.paid_amount) FILTER (WHERE b.status = 2), 0)::text,
+		       COALESCE(SUM(b.total_amount - ` + netTotalExpr(f) + `) FILTER (WHERE b.status = 2), 0)::text,
+		       COALESCE(SUM(` + unpaidExpr(f) + `) FILTER (WHERE b.status = 2), 0)::text` +
+		listFromFor(f) + ` WHERE ` + whereClause
+
+	var s appbill.BillListSummary
+	var total, paid, returned, unpaid string
+	if err := dbscope.From(ctx, r.db).QueryRowContext(ctx, q, args...).Scan(&s.Count, &total, &paid, &returned, &unpaid); err != nil {
+		return s, fmt.Errorf("bill repo: summarize: %w", err)
+	}
+	var err error
+	if s.TotalAmount, err = decimalutil.Parse(total, "total_amount"); err != nil {
+		return s, fmt.Errorf("bill repo: summarize: %w", err)
+	}
+	if s.PaidAmount, err = decimalutil.Parse(paid, "paid_amount"); err != nil {
+		return s, fmt.Errorf("bill repo: summarize: %w", err)
+	}
+	if s.ReturnedAmount, err = decimalutil.Parse(returned, "returned_amount"); err != nil {
+		return s, fmt.Errorf("bill repo: summarize: %w", err)
+	}
+	if s.UnpaidAmount, err = decimalutil.Parse(unpaid, "unpaid_amount"); err != nil {
+		return s, fmt.Errorf("bill repo: summarize: %w", err)
+	}
+	return s, nil
+}
+
+// FindBillByClientRef returns the bill booked under (tenant, client_ref), if any.
+// Voided / deleted bills count too: the unique index ignores deleted_at.
+func (r *Repo) FindBillByClientRef(ctx context.Context, tenantID uuid.UUID, clientRef string) (uuid.UUID, string, bool, error) {
+	const q = `SELECT id, bill_no FROM tally.bill_head WHERE tenant_id = $1 AND client_ref = $2`
+	var (
+		id     uuid.UUID
+		billNo string
+	)
+	err := dbscope.From(ctx, r.db).QueryRowContext(ctx, q, tenantID, clientRef).Scan(&id, &billNo)
+	if errors.Is(err, sql.ErrNoRows) {
+		return uuid.Nil, "", false, nil
+	}
+	if err != nil {
+		return uuid.Nil, "", false, fmt.Errorf("bill repo: find by client_ref: %w", err)
+	}
+	return id, billNo, true, nil
+}
+
+// RecordNegativeStock leaves an operation-log row on the offline sale that took a product
+// below zero, worded as the to-do the shop should act on ("count it"). The to-do list is
+// derived from live data and has no table of its own, so the operation log carries the note.
+func (r *Repo) RecordNegativeStock(ctx context.Context, tx *sql.Tx, tenantID, billID, userID, productID uuid.UUID, onHandAfter decimal.Decimal) error {
+	const q = `
+		INSERT INTO tally.audit_log (tenant_id, user_id, action, resource, resource_id, changes)
+		SELECT $1, $2, 'stock.negative', 'sale_bill', $3,
+		       jsonb_build_object('reason', '离线销售导致负库存，请盘点：' || p.name || '（当前 ' || $5::text || '）',
+		                          'product_id', p.id::text)
+		FROM tally.product p
+		WHERE p.id = $4 AND p.tenant_id = $1`
+	var uid any // NULL = system
+	if userID != uuid.Nil {
+		uid = userID
+	}
+	if _, err := tx.ExecContext(ctx, q, tenantID, uid, billID, productID, onHandAfter.String()); err != nil {
+		return fmt.Errorf("bill repo: record negative stock: %w", err)
+	}
+	return nil
 }

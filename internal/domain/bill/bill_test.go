@@ -155,3 +155,73 @@ func TestBillHead_CanTransitionTo_IllegalPairs(t *testing.T) {
 		})
 	}
 }
+
+// TestBillHead_PaymentStatus covers draft, unpaid, partial, paid and the zero-total edge.
+func TestBillHead_PaymentStatus(t *testing.T) {
+	cases := []struct {
+		name   string
+		status domain.BillStatus
+		total  int64
+		paid   int64
+		want   string
+	}{
+		{"draft has no status", domain.StatusDraft, 100, 0, ""},
+		{"cancelled has no status", domain.StatusCancelled, 100, 0, ""},
+		{"approved unpaid", domain.StatusApproved, 100, 0, "unpaid"},
+		{"approved partial", domain.StatusApproved, 100, 40, "partial"},
+		{"approved paid exact", domain.StatusApproved, 100, 100, "paid"},
+		{"approved overpaid", domain.StatusApproved, 100, 120, "paid"},
+		{"approved zero total", domain.StatusApproved, 0, 0, "unpaid"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := &domain.BillHead{
+				Status:      tc.status,
+				TotalAmount: decimal.NewFromInt(tc.total),
+				PaidAmount:  decimal.NewFromInt(tc.paid),
+			}
+			if got := h.PaymentStatus(); got != tc.want {
+				t.Errorf("PaymentStatus = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestBillHead_PaymentStatus_NetOfReturns(t *testing.T) {
+	h := &domain.BillHead{
+		Status:         domain.StatusApproved,
+		TotalAmount:    decimal.NewFromInt(100),
+		ReturnedAmount: decimal.NewFromInt(30),
+		PaidAmount:     decimal.NewFromInt(70),
+	}
+	if got := h.PaymentStatus(); got != "paid" {
+		t.Errorf("100 total, 30 returned, 70 paid: got %q, want paid", got)
+	}
+	h.PaidAmount = decimal.NewFromInt(50)
+	if got := h.PaymentStatus(); got != "partial" {
+		t.Errorf("50 of net 70 paid: got %q, want partial", got)
+	}
+}
+
+// A total with a sub-cent tail (9.9999) is fully invoiced once 9.99 is invoiced:
+// invoices cannot be issued for fractions of a cent.
+func TestBillHead_InvoiceStatus_SubCentTail(t *testing.T) {
+	d := func(s string) decimal.Decimal { return decimal.RequireFromString(s) }
+	cases := []struct {
+		name            string
+		total, invoiced string
+		want            string
+	}{
+		{"none", "9.9999", "0", domain.InvoiceNone},
+		{"partial", "9.9999", "5", domain.InvoicePartial},
+		{"full at 9.99", "9.9999", "9.99", domain.InvoiceFull},
+		{"full exact", "100", "100", domain.InvoiceFull},
+		{"partial just short", "100.00", "99.99", domain.InvoicePartial},
+	}
+	for _, tc := range cases {
+		h := &domain.BillHead{TotalAmount: d(tc.total), InvoicedAmount: d(tc.invoiced)}
+		if got := h.InvoiceStatus(); got != tc.want {
+			t.Errorf("%s: InvoiceStatus = %s, want %s", tc.name, got, tc.want)
+		}
+	}
+}

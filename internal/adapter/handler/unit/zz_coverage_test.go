@@ -356,7 +356,7 @@ func TestHandler_List_UseCaseErrorMapsTo500ViaHttperr(t *testing.T) {
 	if body["error"] != "internal_error" {
 		t.Fatalf("body = %+v, want error=internal_error (httperr.WriteInternal contract)", body)
 	}
-	if body["message"] != "an internal error occurred" {
+	if body["message"] != "系统出了点问题，请稍后再试；一直不行请联系客服" {
 		t.Fatalf("body = %+v, want the generic safe message (cause must not leak)", body)
 	}
 }

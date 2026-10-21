@@ -13,6 +13,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strconv"
 
@@ -32,6 +34,18 @@ type ChatOrchestrator interface {
 	ConfirmPlan(ctx context.Context, tenantID, actorID, planID uuid.UUID) (*domainai.Plan, *appai.ExecutionResult, error)
 	CancelPlan(ctx context.Context, tenantID, planID uuid.UUID) error
 	ListPlans(ctx context.Context, tenantID uuid.UUID, statusFilter string) ([]*domainai.Plan, error)
+}
+
+// lineConfirmer is the optional orchestrator surface that takes the flags the
+// client acknowledged; the production orchestrator has it.
+type lineConfirmer interface {
+	ConfirmPlanAck(ctx context.Context, tenantID, actorID, planID uuid.UUID, acknowledged []int) (*domainai.Plan, *appai.ExecutionResult, error)
+}
+
+// confirmRequest is the optional body of POST /plans/:plan_id/confirm.
+// AcknowledgedFlags lists the index of each flag the owner ticked.
+type confirmRequest struct {
+	AcknowledgedFlags []int `json:"acknowledged_flags"`
 }
 
 // PlanReverter is the surface the handler uses for server-side plan revert (undo).
@@ -96,7 +110,7 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 func (h *Handler) ListPlans(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
 	if tenantID == uuid.Nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "tenant_id required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "请先登录"})
 		return
 	}
 	status := c.Query("status")
@@ -104,6 +118,16 @@ func (h *Handler) ListPlans(c *gin.Context) {
 	if err != nil {
 		httperr.WriteInternal(c, err)
 		return
+	}
+	if !middleware.CanViewCost(c) {
+		// A purchase draft plan lists purchase prices: hidden from people without cost.view.
+		visible := make([]*domainai.Plan, 0, len(plans))
+		for _, p := range plans {
+			if p.Type != domainai.PlanTypeCreatePurchase {
+				visible = append(visible, p)
+			}
+		}
+		plans = visible
 	}
 	if plans == nil {
 		plans = []*domainai.Plan{}
@@ -145,7 +169,7 @@ const (
 func (h *Handler) Chat(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
 	if tenantID == uuid.Nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "tenant_id required"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "请先登录"})
 		return
 	}
 
@@ -160,7 +184,7 @@ func (h *Handler) Chat(c *gin.Context) {
 			c.Header("Retry-After", strconv.Itoa(seconds))
 			c.AbortWithStatusJSON(http.StatusTooManyRequests, gin.H{
 				"error":   "llm_rate_limited",
-				"detail":  "per-tenant LLM call budget exceeded; retry after window resets",
+				"detail":  "智能助手问得太频繁了，请稍等一会儿再试",
 				"retry_s": seconds,
 			})
 			return
@@ -170,7 +194,7 @@ func (h *Handler) Chat(c *gin.Context) {
 
 	var req chatRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "请输入要问的内容"})
 		return
 	}
 
@@ -204,12 +228,13 @@ func (h *Handler) Chat(c *gin.Context) {
 		UserMessage: req.Message,
 	}
 
-	out, err := h.orchestrator.StreamChat(c.Request.Context(), input, func(chunk string) {
+	out, err := h.orchestrator.StreamChat(h.reqCtx(c), input, func(chunk string) {
 		b, _ := json.Marshal(map[string]string{"content": chunk})
 		writeSSE(sseEventChunk, string(b))
 	})
 	if err != nil {
-		b, _ := json.Marshal(map[string]string{"error": err.Error()})
+		slog.Error("ai chat stream failed", "err", err)
+		b, _ := json.Marshal(map[string]string{"error": "智能助手暂时没有响应，请稍后再试"})
 		writeSSE(sseEventError, string(b))
 		return
 	}
@@ -233,13 +258,13 @@ func (h *Handler) Chat(c *gin.Context) {
 func (h *Handler) ConfirmPlan(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
 	if tenantID == uuid.Nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "请先登录"})
 		return
 	}
 
 	planID, err := uuid.Parse(c.Param("plan_id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "invalid plan_id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "找不到这条建议，请刷新后再试"})
 		return
 	}
 
@@ -250,26 +275,63 @@ func (h *Handler) ConfirmPlan(c *gin.Context) {
 		actorID = tenantID
 	}
 
-	plan, result, err := h.orchestrator.ConfirmPlan(c.Request.Context(), tenantID, actorID, planID)
+	var req confirmRequest
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "请求内容格式不对"})
+			return
+		}
+	}
+
+	var (
+		plan   *domainai.Plan
+		result *appai.ExecutionResult
+	)
+	if lc, ok := h.orchestrator.(lineConfirmer); ok {
+		plan, result, err = lc.ConfirmPlanAck(c.Request.Context(), tenantID, actorID, planID, req.AcknowledgedFlags)
+	} else {
+		plan, result, err = h.orchestrator.ConfirmPlan(c.Request.Context(), tenantID, actorID, planID)
+	}
 	if err != nil {
 		switch {
+		case errors.Is(err, appai.ErrLineConfirmRequired):
+			c.JSON(http.StatusUnprocessableEntity, gin.H{
+				"error":  "line_confirm_required",
+				"detail": "这张草稿有需要核对的行，请逐行勾选确认后再提交",
+			})
+			return
 		case errors.Is(err, appai.ErrPlanNotFound):
-			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "plan not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "找不到这条建议，可能已被处理或已过期"})
 			return
 		case errors.Is(err, appai.ErrPlanExpired):
-			c.JSON(http.StatusConflict, gin.H{"error": "plan_expired", "detail": "plan TTL elapsed; ask AI again to generate a fresh plan"})
+			c.JSON(http.StatusConflict, gin.H{"error": "plan_expired", "detail": "这条建议已过期，请让助手重新生成一次"})
 			return
 		case errors.Is(err, appai.ErrPlanExecutionFailed):
+			var nf *appai.ProductNotFoundError
+			if errors.As(err, &nf) {
+				c.JSON(http.StatusUnprocessableEntity, gin.H{
+					"error":  "execution_failed",
+					"detail": fmt.Sprintf("找不到商品「%s」，请先建这个商品，或者换成商品库里的名字", nf.Name),
+				})
+				return
+			}
 			// Execution left the plan in Failed (terminal) state. Partial side effects
 			// may have already been applied, so a retry is unsafe. The user must cancel
 			// this plan and request a new suggestion.
+			slog.Error("ai plan execution failed", "plan_id", planID, "err", err)
 			c.JSON(http.StatusUnprocessableEntity, gin.H{
 				"error":  "execution_failed",
-				"detail": err.Error(),
+				"detail": "执行没有成功，请关闭这条建议后重新发起一次",
 			})
 			return
 		}
-		c.JSON(http.StatusConflict, gin.H{"error": "conflict", "detail": err.Error()})
+		if !errors.Is(err, appai.ErrPlanNotPending) {
+			slog.Error("ai plan confirm store failure", "plan_id", planID, "err", err)
+			httperr.WriteInternal(c, err)
+			return
+		}
+		slog.Warn("ai plan confirm refused", "plan_id", planID, "err", err)
+		c.JSON(http.StatusConflict, gin.H{"error": "conflict", "detail": "这条建议现在不能执行，请刷新后再试"})
 		return
 	}
 
@@ -300,19 +362,7 @@ func (h *Handler) ConfirmPlan(c *gin.Context) {
 // the audit / bill creator by setting it themselves. Only the middleware-
 // injected sub is trusted.
 func resolveActorID(c *gin.Context) uuid.UUID {
-	sub, ok := c.Get(middleware.CtxKeyIDPSubject)
-	if !ok {
-		return uuid.Nil
-	}
-	s, ok := sub.(string)
-	if !ok {
-		return uuid.Nil
-	}
-	id, err := uuid.Parse(s)
-	if err != nil {
-		return uuid.Nil
-	}
-	return id
+	return middleware.ActorUUID(c)
 }
 
 // RevertPlan handles POST /api/v1/ai/plans/:plan_id/revert.
@@ -322,19 +372,19 @@ func resolveActorID(c *gin.Context) uuid.UUID {
 // status has been flipped to cancelled returns 409 ErrAlreadyReverted.
 func (h *Handler) RevertPlan(c *gin.Context) {
 	if h.reverter == nil {
-		c.JSON(http.StatusNotImplemented, gin.H{"error": "not_implemented", "detail": "plan revert not enabled"})
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "not_implemented", "detail": "撤销功能暂未开启"})
 		return
 	}
 
 	tenantID := middleware.GetTenantID(c)
 	if tenantID == uuid.Nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "请先登录"})
 		return
 	}
 
 	planID, err := uuid.Parse(c.Param("plan_id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "invalid plan_id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "找不到这条建议，请刷新后再试"})
 		return
 	}
 
@@ -347,13 +397,13 @@ func (h *Handler) RevertPlan(c *gin.Context) {
 	if err != nil {
 		switch err {
 		case appai.ErrPlanNotFound:
-			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "plan not found"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "找不到这条建议，可能已被处理或已过期"})
 		case appai.ErrAlreadyReverted:
-			c.JSON(http.StatusConflict, gin.H{"error": "already_reverted", "detail": "plan already reverted"})
+			c.JSON(http.StatusConflict, gin.H{"error": "already_reverted", "detail": "这条建议已经撤销过了"})
 		case appai.ErrRevertWindowClosed:
-			c.JSON(http.StatusConflict, gin.H{"error": "revert_window_closed", "detail": "undo window has closed (>30 s since execution)"})
+			c.JSON(http.StatusConflict, gin.H{"error": "revert_window_closed", "detail": "已超过可撤销的时间，不能再撤销了"})
 		case appai.ErrPlanNotRevertible:
-			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "not_revertible", "detail": "plan type does not support undo"})
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "not_revertible", "detail": "这类建议不支持撤销"})
 		default:
 			httperr.WriteInternal(c, err)
 		}
@@ -367,19 +417,19 @@ func (h *Handler) RevertPlan(c *gin.Context) {
 func (h *Handler) CancelPlan(c *gin.Context) {
 	tenantID := middleware.GetTenantID(c)
 	if tenantID == uuid.Nil {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": "请先登录"})
 		return
 	}
 
 	planID, err := uuid.Parse(c.Param("plan_id"))
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "invalid plan_id"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "bad_request", "detail": "找不到这条建议，请刷新后再试"})
 		return
 	}
 
 	if err := h.orchestrator.CancelPlan(c.Request.Context(), tenantID, planID); err != nil {
 		if err == appai.ErrPlanNotFound {
-			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "plan not found or expired"})
+			c.JSON(http.StatusNotFound, gin.H{"error": "not_found", "detail": "找不到这条建议，可能已被处理或已过期"})
 			return
 		}
 		httperr.WriteInternal(c, err)
@@ -438,4 +488,14 @@ func (b *byteReader) Read(p []byte) (int, error) {
 	n := copy(p, b.data[b.offset:])
 	b.offset += n
 	return n, nil
+}
+
+// reqCtx is the request context, marked cost-hidden for callers without cost.view
+// so the assistant leaves cost, purchase price and margin out of its answers.
+func (h *Handler) reqCtx(c *gin.Context) context.Context {
+	ctx := c.Request.Context()
+	if !middleware.CanViewCost(c) {
+		ctx = appai.WithCostHidden(ctx)
+	}
+	return ctx
 }

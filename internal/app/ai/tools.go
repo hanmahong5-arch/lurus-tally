@@ -1,5 +1,5 @@
 // Package ai implements the AI assistant use cases.
-// Tools follow the OpenAI function-calling protocol (tools array).
+// Tools follow the chat-completions function-calling protocol (tools array).
 // SAFE (read-only) tools execute immediately.
 // DESTRUCTIVE tools return a Plan for user confirmation before executing.
 package ai
@@ -9,7 +9,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -132,7 +134,7 @@ func NewRegistry(p ProductRepo, s StockRepo, sl SaleRepo, e ExchangeRateRepo) *R
 	}
 }
 
-// ToolDefs returns the OpenAI-compatible tool definitions to include in every chat request.
+// ToolDefs returns the chat-completions-compatible tool definitions to include in every chat request.
 func ToolDefs() []llmclient.Tool {
 	return []llmclient.Tool{
 		{Type: "function", Function: llmclient.FunctionDef{
@@ -215,6 +217,11 @@ func (r *Registry) Dispatch(ctx context.Context, tenantID uuid.UUID, call llmcli
 	var plan *domainai.Plan
 	var err error
 
+	if costHidden(ctx) && (costToolNames[call.Function.Name] || isMarginTop(call)) {
+		res.Content = costDeniedResult
+		return res
+	}
+
 	switch call.Function.Name {
 	case "search_products":
 		resultJSON, err = r.searchProducts(ctx, tenantID, call.Function.Arguments)
@@ -248,9 +255,24 @@ func (r *Registry) Dispatch(ctx context.Context, tenantID uuid.UUID, call llmcli
 		resultJSON = jsonError(err.Error())
 	}
 
+	if costHidden(ctx) {
+		resultJSON = trimCostResult(resultJSON)
+	}
 	res.Content = resultJSON
 	res.Plan = plan
 	return res
+}
+
+// isMarginTop reports whether a recent_sales_top call ranks by margin.
+func isMarginTop(call llmclient.ToolCall) bool {
+	if call.Function.Name != "recent_sales_top" {
+		return false
+	}
+	var a struct {
+		Metric string `json:"metric"`
+	}
+	_ = json.Unmarshal([]byte(call.Function.Arguments), &a)
+	return a.Metric == "margin"
 }
 
 // --- Safe tool implementations ---
@@ -648,9 +670,18 @@ func (r *Registry) proposePriceChange(ctx context.Context, tenantID uuid.UUID, a
 		return nil, "", fmt.Errorf("propose_price_change: invalid args: %w", err)
 	}
 
+	actionText, ok := priceActionText(args.Action)
+	if !ok {
+		return nil, "", fmt.Errorf("propose_price_change: action %q must look like +5%%, -10%% or =199.00", args.Action)
+	}
+
 	products, err := r.productRepo.SearchProducts(ctx, tenantID, args.Filter)
 	if err != nil {
 		return nil, "", fmt.Errorf("propose_price_change: search: %w", err)
+	}
+
+	if len(products) == 0 {
+		return noProductsFound(args.Filter)
 	}
 
 	samples := make([]domainai.SampleRow, 0, min(len(products), 10))
@@ -660,8 +691,8 @@ func (r *Registry) proposePriceChange(ctx context.Context, tenantID uuid.UUID, a
 		}
 		samples = append(samples, domainai.SampleRow{
 			Name:   p.Name,
-			Before: "(current price)",
-			After:  args.Action,
+			Before: "当前售价",
+			After:  actionText,
 		})
 	}
 
@@ -675,7 +706,7 @@ func (r *Registry) proposePriceChange(ctx context.Context, tenantID uuid.UUID, a
 			"action": args.Action,
 		},
 		Preview: domainai.PlanPreview{
-			Description:   fmt.Sprintf("Change price of %d products matching '%s' by %s", len(products), args.Filter, args.Action),
+			Description:   fmt.Sprintf("按「%s」调整 %d 个商品的价格：%s", args.Filter, len(products), actionText),
 			AffectedCount: len(products),
 			SampleRows:    samples,
 		},
@@ -688,9 +719,47 @@ func (r *Registry) proposePriceChange(ctx context.Context, tenantID uuid.UUID, a
 		"affected_count":        len(products),
 		"description":           plan.Preview.Description,
 		"requires_confirmation": true,
-		"message":               "This operation requires user confirmation. A plan card has been shown to the user.",
+		"message":               "需要店主确认后才会执行，确认卡片已经展示给店主。",
 	})
 	return plan, result, err
+}
+
+var priceActionRe = regexp.MustCompile(`^([+-]?)\s*(\d+(?:\.\d+)?)\s*%$|^=\s*(\d+(?:\.\d+)?)$`)
+
+// noProductsFound is the tool answer when a filter matches nothing: no card is
+// raised, so the shopkeeper is never asked to confirm a change to zero items.
+func noProductsFound(filter string) (*domainai.Plan, string, error) {
+	result, err := jsonMarshal(map[string]interface{}{
+		"affected_count": 0,
+		"message":        fmt.Sprintf("没找到符合「%s」的商品，没有生成确认卡片，请换个关键词再试。", filter),
+	})
+	return nil, result, err
+}
+
+// stockDeltaText words a stock change for the card ("增加 5", "减少 2.5").
+func stockDeltaText(delta float64) string {
+	if delta < 0 {
+		return "减少 " + strconv.FormatFloat(-delta, 'f', -1, 64)
+	}
+	return "增加 " + strconv.FormatFloat(delta, 'f', -1, 64)
+}
+
+// priceActionText words a price action ("+10%", "-5%", "=199.00") for the
+// shopkeeper; ok is false when the action is none of those shapes, so a free
+// text action from the model never reaches the card.
+func priceActionText(action string) (string, bool) {
+	m := priceActionRe.FindStringSubmatch(strings.TrimSpace(action))
+	if m == nil {
+		return "", false
+	}
+	switch {
+	case m[3] != "":
+		return "改为 " + m[3] + " 元", true
+	case m[1] == "+" || m[1] == "":
+		return "涨价 " + m[2] + "%", true
+	default:
+		return "降价 " + m[2] + "%", true
+	}
 }
 
 func (r *Registry) proposeCreatePurchaseDraft(ctx context.Context, tenantID uuid.UUID, argsJSON string) (*domainai.Plan, string, error) {
@@ -704,7 +773,7 @@ func (r *Registry) proposeCreatePurchaseDraft(ctx context.Context, tenantID uuid
 		samples = append(samples, domainai.SampleRow{
 			Name:   it.ProductName,
 			Before: "",
-			After:  fmt.Sprintf("qty: %.2f", it.Qty),
+			After:  fmt.Sprintf("数量 %.2f", it.Qty),
 		})
 	}
 
@@ -715,22 +784,43 @@ func (r *Registry) proposeCreatePurchaseDraft(ctx context.Context, tenantID uuid
 		Status:   domainai.PlanStatusPending,
 		Payload:  map[string]interface{}{"items": args.Items},
 		Preview: domainai.PlanPreview{
-			Description:   fmt.Sprintf("Create purchase draft with %d line items", len(args.Items)),
+			Description:   fmt.Sprintf("新建采购草稿，共 %d 行", len(args.Items)),
 			AffectedCount: len(args.Items),
 			SampleRows:    samples,
 		},
 		CreatedAt: time.Now(),
 		ExpiresAt: time.Now().Add(30 * time.Minute),
 	}
+	attachDraftFlags(plan, r.historyFlags(ctx, tenantID, args.Items))
 
 	result, err := jsonMarshal(map[string]interface{}{
 		"plan_id":               plan.ID.String(),
 		"item_count":            len(args.Items),
 		"description":           plan.Preview.Description,
 		"requires_confirmation": true,
-		"message":               "This operation requires user confirmation. A plan card has been shown to the user.",
+		"message":               "需要店主确认后才会执行，确认卡片已经展示给店主。",
 	})
 	return plan, result, err
+}
+
+// historyFlags flags draft lines far above the product's total sales of the
+// last histWindowDays days (a restock is compared with what the shop sold, not
+// with one sale line, which is usually 1-2 pieces). Best effort: no sales repo or a failed read
+// means no flags, never a failed proposal.
+func (r *Registry) historyFlags(ctx context.Context, tenantID uuid.UUID, items []purchaseDraftItem) []DraftFlag {
+	if r.saleRepo == nil || len(items) == 0 {
+		return nil
+	}
+	rows, err := r.saleRepo.ListRecentSaleLines(ctx, tenantID, histWindowDays)
+	if err != nil {
+		return nil
+	}
+	soldByName := make(map[string]decimal.Decimal, len(rows))
+	for _, row := range rows {
+		name := strings.TrimSpace(row.ProductName)
+		soldByName[name] = soldByName[name].Add(row.Qty)
+	}
+	return CheckHistoryQty(checkLines(items), soldByName)
 }
 
 func (r *Registry) proposeBulkStockAdjust(ctx context.Context, tenantID uuid.UUID, argsJSON string) (*domainai.Plan, string, error) {
@@ -744,6 +834,10 @@ func (r *Registry) proposeBulkStockAdjust(ctx context.Context, tenantID uuid.UUI
 		return nil, "", fmt.Errorf("propose_bulk_stock_adjust: search: %w", err)
 	}
 
+	if len(products) == 0 {
+		return noProductsFound(args.Filter)
+	}
+
 	samples := make([]domainai.SampleRow, 0, min(len(products), 10))
 	for i, p := range products {
 		if i >= 10 {
@@ -751,8 +845,8 @@ func (r *Registry) proposeBulkStockAdjust(ctx context.Context, tenantID uuid.UUI
 		}
 		samples = append(samples, domainai.SampleRow{
 			Name:   p.Name,
-			Before: "(current qty)",
-			After:  fmt.Sprintf("Δ%+.2f", args.Delta),
+			Before: "当前库存",
+			After:  stockDeltaText(args.Delta),
 		})
 	}
 
@@ -766,7 +860,7 @@ func (r *Registry) proposeBulkStockAdjust(ctx context.Context, tenantID uuid.UUI
 			"delta":  args.Delta,
 		},
 		Preview: domainai.PlanPreview{
-			Description:   fmt.Sprintf("Adjust stock of %d products matching '%s' by %+.2f", len(products), args.Filter, args.Delta),
+			Description:   fmt.Sprintf("按「%s」调整 %d 个商品的库存：%s", args.Filter, len(products), stockDeltaText(args.Delta)),
 			AffectedCount: len(products),
 			SampleRows:    samples,
 		},
@@ -779,7 +873,7 @@ func (r *Registry) proposeBulkStockAdjust(ctx context.Context, tenantID uuid.UUI
 		"affected_count":        len(products),
 		"description":           plan.Preview.Description,
 		"requires_confirmation": true,
-		"message":               "This operation requires user confirmation. A plan card has been shown to the user.",
+		"message":               "需要店主确认后才会执行，确认卡片已经展示给店主。",
 	})
 	return plan, result, err
 }

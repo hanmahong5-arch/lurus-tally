@@ -60,6 +60,15 @@ type Movement struct {
 	CreatedBy     *uuid.UUID      `json:"created_by,omitempty"`
 	Note          string          `json:"note,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
+
+	// ExplicitCost makes an outbound movement leave at UnitCost instead of the prevailing
+	// cost: a purchase return hands goods back at the price they came in at.
+	ExplicitCost bool `json:"-"`
+
+	// AllowNegative lets an outbound movement drive on-hand below zero instead of failing with
+	// ErrInsufficientStock. Only the offline-till replay sets it: the goods already left the
+	// shop, so refusing the sale would only lose the record.
+	AllowNegative bool `json:"-"`
 }
 
 // Snapshot represents the current materialised state of inventory for one SKU in one warehouse.

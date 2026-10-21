@@ -89,7 +89,7 @@ func TestReporter_HappyPath_PostsAttributedEvent(t *testing.T) {
 	r.Start()
 	defer r.Stop(context.Background())
 
-	r.Record(ctxWithTenant(tid), "deepseek-v4", 100, 30)
+	r.Record(ctxWithTenant(tid), "test-model", 100, 30)
 	waitForPosts(t, poster, 1)
 
 	calls := poster.calls()
@@ -109,7 +109,7 @@ func TestReporter_HappyPath_PostsAttributedEvent(t *testing.T) {
 	if got.IdempotencyKey == "" {
 		t.Error("expected a non-empty idempotency key")
 	}
-	if got.Metadata["model"] != "deepseek-v4" ||
+	if got.Metadata["model"] != "test-model" ||
 		got.Metadata["prompt_tokens"] != 100 || got.Metadata["completion_tokens"] != 30 {
 		t.Errorf("metadata mismatch: %+v", got.Metadata)
 	}
@@ -124,7 +124,7 @@ func TestReporter_UnknownTenant_NeverPosts(t *testing.T) {
 	r.Start()
 	defer r.Stop(context.Background())
 
-	r.Record(context.Background(), "deepseek-v4", 100, 30) // no WithTenant
+	r.Record(context.Background(), "test-model", 100, 30) // no WithTenant
 
 	// Give a worker a chance; nothing should be posted or even resolved.
 	time.Sleep(50 * time.Millisecond)
@@ -146,7 +146,7 @@ func TestReporter_NoAccountPinned_SkipsInShadow(t *testing.T) {
 	r.Start()
 	defer r.Stop(context.Background())
 
-	r.Record(ctxWithTenant(tid), "deepseek-v4", 10, 5)
+	r.Record(ctxWithTenant(tid), "test-model", 10, 5)
 	time.Sleep(50 * time.Millisecond)
 	if len(poster.calls()) != 0 {
 		t.Errorf("expected no post for unprovisioned tenant, got %d", len(poster.calls()))
@@ -164,7 +164,7 @@ func TestReporter_PostFailure_IsFailOpen(t *testing.T) {
 	r.Start()
 	defer r.Stop(context.Background())
 
-	r.Record(ctxWithTenant(tid), "deepseek-v4", 10, 5)
+	r.Record(ctxWithTenant(tid), "test-model", 10, 5)
 	waitForPosts(t, poster, 1) // attempt happened despite the error
 	if len(poster.calls()) != 1 {
 		t.Fatalf("expected the failing post to be attempted once, got %d", len(poster.calls()))
@@ -181,8 +181,8 @@ func TestReporter_ResolverCached(t *testing.T) {
 	r.Start()
 	defer r.Stop(context.Background())
 
-	r.Record(ctxWithTenant(tid), "deepseek-v4", 1, 1)
-	r.Record(ctxWithTenant(tid), "deepseek-v4", 2, 2)
+	r.Record(ctxWithTenant(tid), "test-model", 1, 1)
+	r.Record(ctxWithTenant(tid), "test-model", 2, 2)
 	waitForPosts(t, poster, 2)
 
 	if resolver.calls() != 1 {
@@ -199,7 +199,7 @@ func TestReporter_ZeroTokens_NoOp(t *testing.T) {
 	r.Start()
 	defer r.Stop(context.Background())
 
-	r.Record(ctxWithTenant(tid), "deepseek-v4", 0, 0)
+	r.Record(ctxWithTenant(tid), "test-model", 0, 0)
 	time.Sleep(50 * time.Millisecond)
 	if len(poster.calls()) != 0 {
 		t.Errorf("expected no post for zero-token call, got %d", len(poster.calls()))
@@ -220,7 +220,7 @@ func TestReporter_RecordNeverBlocks(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		for i := 0; i < 50; i++ {
-			r.Record(ctxWithTenant(tid), "deepseek-v4", 1, 1)
+			r.Record(ctxWithTenant(tid), "test-model", 1, 1)
 		}
 		close(done)
 	}()

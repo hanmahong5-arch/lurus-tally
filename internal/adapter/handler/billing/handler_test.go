@@ -10,9 +10,12 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
+	"github.com/hanmahong5-arch/lurus-tally/internal/app/entitlement"
+	"github.com/hanmahong5-arch/lurus-tally/internal/app/subscription"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 )
 
@@ -254,5 +257,94 @@ func TestOverview_IgnoresClientIDPSubjectHeader(t *testing.T) {
 	}
 	if stub.in == "victim-sub" {
 		t.Fatalf("SECURITY: attacker-controlled X-IDP-Subject header reached the overview use case: %q", stub.in)
+	}
+}
+
+func TestOverview_LockedFlag(t *testing.T) {
+	ov := &platformclient.AccountOverview{}
+	ov.Subscription = &platformclient.SubscriptionSnapshot{PlanCode: "pro", Status: "expired"}
+
+	cases := []struct {
+		name     string
+		lock     subscription.Checker
+		wantLock string
+	}{
+		{"locked", subscription.Fixed{Locked: true}, `"locked":true`},
+		{"open", subscription.Never{}, `"locked":false`},
+		{"no checker", nil, `"locked":false`},
+	}
+	for _, tc := range cases {
+		h := handlerbilling.New(&stubSubscribe{}, &stubOverview{out: ov})
+		if tc.lock != nil {
+			h = h.WithLock(tc.lock)
+		}
+		e := newEngine(h, "sub-abc")
+		req, _ := http.NewRequest(http.MethodGet, "/api/v1/billing/overview", nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		body := rec.Body.String()
+		if rec.Code != http.StatusOK || !strings.Contains(body, tc.wantLock) || !strings.Contains(body, `"plan_code":"pro"`) {
+			t.Errorf("%s: %d %s", tc.name, rec.Code, body)
+		}
+		if tc.name == "locked" && !strings.Contains(body, "套餐已到期") {
+			t.Errorf("locked: missing lock_message: %s", body)
+		}
+	}
+}
+
+type lockStub struct{ locked bool }
+
+func (l lockStub) State(context.Context, uuid.UUID) subscription.State {
+	return subscription.State{Locked: l.locked}
+}
+
+func TestLockState_ReportsLockWithoutPlatform(t *testing.T) {
+	for _, tc := range []struct {
+		locked bool
+		want   string
+	}{{true, `"locked":true`}, {false, `"locked":false`}} {
+		h := handlerbilling.New(nil, nil).WithLock(lockStub{locked: tc.locked})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/v1/subscription/state", nil)
+		newEngine(h, "").ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), tc.want) {
+			t.Errorf("locked=%v: %d %s", tc.locked, rec.Code, rec.Body.String())
+		}
+	}
+}
+
+type limitsStub struct{}
+
+func (limitsStub) Status(context.Context, uuid.UUID) map[string]entitlement.LimitStatus {
+	return map[string]entitlement.LimitStatus{
+		"max_users": {Limit: 3, Used: 2, Enforced: true},
+		"max_skus":  {Limit: -1, Used: 7, Enforced: true},
+	}
+}
+func (limitsStub) Mode() entitlement.Mode { return entitlement.ModeEnforce }
+
+func TestLockState_CarriesPlanLimits(t *testing.T) {
+	h := handlerbilling.New(nil, nil).WithLock(lockStub{}).WithLimits(limitsStub{})
+	rec := httptest.NewRecorder()
+	newEngine(h, "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/subscription/state", nil))
+	var body struct {
+		Limits map[string]entitlement.LimitStatus `json:"limits"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if got := body.Limits["max_users"]; got != (entitlement.LimitStatus{Limit: 3, Used: 2, Enforced: true}) {
+		t.Fatalf("limits = %+v (%s)", body.Limits, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"limit":-1`) {
+		t.Fatalf("unlimited must serialise as -1: %s", rec.Body.String())
+	}
+}
+
+func TestLockState_NoLimitsWithoutGuard(t *testing.T) {
+	rec := httptest.NewRecorder()
+	newEngine(handlerbilling.New(nil, nil).WithLock(lockStub{}), "").ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/v1/subscription/state", nil))
+	if strings.Contains(rec.Body.String(), "limits") {
+		t.Fatalf("no guard, no limits: %s", rec.Body.String())
 	}
 }

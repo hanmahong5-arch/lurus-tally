@@ -3,6 +3,7 @@ package bill_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -12,6 +13,7 @@ import (
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	domain "github.com/hanmahong5-arch/lurus-tally/internal/domain/bill"
+	domainpayment "github.com/hanmahong5-arch/lurus-tally/internal/domain/payment"
 	domainstock "github.com/hanmahong5-arch/lurus-tally/internal/domain/stock"
 )
 
@@ -293,5 +295,241 @@ func TestApprovePurchase_WAC_CostUpdated(t *testing.T) {
 	}
 	if !stockUC.calls[0].UnitCost.Equal(decimal.NewFromFloat(12)) {
 		t.Errorf("UnitCost = %s, want 12", stockUC.calls[0].UnitCost)
+	}
+}
+
+// 网页端建的采购单不带仓库：有默认仓时审核要成功，库存流水记在默认仓，且单据回写仓库。
+func TestApprovePurchase_NoWarehouse_UsesDefaultWarehouse(t *testing.T) {
+	repo := newMockBillRepo()
+	stockUC := newMockStockUC()
+	unitRepo := newMockProductUnitRepo()
+	defaultWH := uuid.New()
+	repo.defaultWH = &defaultWH
+
+	billID := seedDraftBill(repo, 2, uuid.New())
+	repo.billsByID[billID].WarehouseID = nil
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	if err := newApproveUC(repo, stockUC, unitRepo).Execute(context.Background(), testTenantID, billID, uuid.New()); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if len(stockUC.calls) != 2 {
+		t.Fatalf("stock movements = %d, want 2", len(stockUC.calls))
+	}
+	for _, c := range stockUC.calls {
+		if c.WarehouseID != defaultWH {
+			t.Errorf("movement warehouse = %s, want default %s", c.WarehouseID, defaultWH)
+		}
+	}
+	if repo.setWHCalls != 1 {
+		t.Errorf("SetBillWarehouse calls = %d, want 1", repo.setWHCalls)
+	}
+	if wh := repo.billsByID[billID].WarehouseID; wh == nil || *wh != defaultWH {
+		t.Errorf("bill warehouse = %v, want %s", wh, defaultWH)
+	}
+}
+
+// 没仓库也没默认仓：返回 ErrWarehouseRequired，不动库存、不改状态。
+func TestApprovePurchase_NoWarehouseNoDefault_ReturnsWarehouseRequired(t *testing.T) {
+	repo := newMockBillRepo()
+	stockUC := newMockStockUC()
+	unitRepo := newMockProductUnitRepo()
+
+	billID := seedDraftBill(repo, 2, uuid.New())
+	repo.billsByID[billID].WarehouseID = nil
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	err := newApproveUC(repo, stockUC, unitRepo).Execute(context.Background(), testTenantID, billID, uuid.New())
+
+	if !errors.Is(err, appbill.ErrWarehouseRequired) {
+		t.Fatalf("err = %v, want ErrWarehouseRequired", err)
+	}
+	if len(stockUC.calls) != 0 {
+		t.Errorf("stock movements = %d, want 0", len(stockUC.calls))
+	}
+	if repo.setWHCalls != 0 {
+		t.Errorf("SetBillWarehouse calls = %d, want 0", repo.setWHCalls)
+	}
+	if repo.billsByID[billID].Status != domain.StatusDraft {
+		t.Errorf("status = %d, want draft", repo.billsByID[billID].Status)
+	}
+}
+
+// ----- approve with payment -----
+
+func newApprovePayUC(repo *mockBillRepo, unitRepo *mockProductUnitRepo, payRepo *mockPaymentRepo) *appbill.ApprovePurchaseUseCase {
+	return appbill.NewApprovePurchaseUseCase(repo, newMockStockUC(), unitRepo).WithPayments(payRepo)
+}
+
+// TestApprovePurchase_WithPayment_RecordsPaymentAndPaidAmount verifies paying 100 on
+// approval writes one payment and lifts bill_head.paid_amount, so AP drops by 100.
+func TestApprovePurchase_WithPayment_RecordsPaymentAndPaidAmount(t *testing.T) {
+	repo := newMockBillRepo()
+	unitRepo := newMockProductUnitRepo()
+	payRepo := newMockPaymentRepo()
+	billID := seedDraftBill(repo, 1, uuid.New())
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	err := newApprovePayUC(repo, unitRepo, payRepo).ExecuteWithPayment(context.Background(), appbill.ApprovePurchaseRequest{
+		TenantID: testTenantID, BillID: billID, ApprovedBy: testCreatorID,
+		PaidAmount: decimal.NewFromInt(100), PayType: "transfer",
+	})
+	if err != nil {
+		t.Fatalf("ExecuteWithPayment: %v", err)
+	}
+	if len(payRepo.recorded) != 1 {
+		t.Fatalf("payments = %d, want 1", len(payRepo.recorded))
+	}
+	p := payRepo.recorded[0]
+	if !p.Amount.Equal(decimal.NewFromInt(100)) || p.PayType != domainpayment.PayTypeTransfer || p.BillID != billID {
+		t.Errorf("payment = %+v", p)
+	}
+	if got := repo.billsByID[billID].PaidAmount; !got.Equal(decimal.NewFromInt(100)) {
+		t.Errorf("paid_amount = %s, want 100", got)
+	}
+}
+
+// TestApprovePurchase_PaidExceedsTotal_RejectedBeforeAnyWrite verifies an over-payment
+// leaves the draft untouched.
+func TestApprovePurchase_PaidExceedsTotal_RejectedBeforeAnyWrite(t *testing.T) {
+	repo := newMockBillRepo()
+	unitRepo := newMockProductUnitRepo()
+	payRepo := newMockPaymentRepo()
+	billID := seedDraftBill(repo, 1, uuid.New())
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	err := newApprovePayUC(repo, unitRepo, payRepo).ExecuteWithPayment(context.Background(), appbill.ApprovePurchaseRequest{
+		TenantID: testTenantID, BillID: billID, ApprovedBy: testCreatorID,
+		PaidAmount: decimal.NewFromInt(301),
+	})
+	if !errors.Is(err, appbill.ErrPaidExceedsTotal) {
+		t.Fatalf("err = %v, want ErrPaidExceedsTotal", err)
+	}
+	if repo.billsByID[billID].Status != domain.StatusDraft || len(payRepo.recorded) != 0 {
+		t.Errorf("status=%d payments=%d, want draft/0", repo.billsByID[billID].Status, len(payRepo.recorded))
+	}
+}
+
+// TestApprovePurchase_InvalidPayMethod_Rejected verifies an unknown method is rejected.
+func TestApprovePurchase_InvalidPayMethod_Rejected(t *testing.T) {
+	repo := newMockBillRepo()
+	unitRepo := newMockProductUnitRepo()
+	payRepo := newMockPaymentRepo()
+	billID := seedDraftBill(repo, 1, uuid.New())
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	err := newApprovePayUC(repo, unitRepo, payRepo).ExecuteWithPayment(context.Background(), appbill.ApprovePurchaseRequest{
+		TenantID: testTenantID, BillID: billID, ApprovedBy: testCreatorID,
+		PaidAmount: decimal.NewFromInt(50), PayType: "bitcoin",
+	})
+	if !errors.Is(err, appbill.ErrInvalidPayMethod) {
+		t.Fatalf("err = %v, want ErrInvalidPayMethod", err)
+	}
+	if repo.billsByID[billID].Status != domain.StatusDraft {
+		t.Errorf("status = %d, want draft", repo.billsByID[billID].Status)
+	}
+}
+
+// TestApprovePurchase_AlreadyApproved_WithPayment_ReturnsConflict verifies a retry that
+// carries a payment is told the payment was not booked.
+func TestApprovePurchase_AlreadyApproved_WithPayment_ReturnsConflict(t *testing.T) {
+	repo := newMockBillRepo()
+	unitRepo := newMockProductUnitRepo()
+	payRepo := newMockPaymentRepo()
+	billID := seedDraftBill(repo, 1, uuid.New())
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+	repo.billsByID[billID].Status = domain.StatusApproved
+
+	err := newApprovePayUC(repo, unitRepo, payRepo).ExecuteWithPayment(context.Background(), appbill.ApprovePurchaseRequest{
+		TenantID: testTenantID, BillID: billID, ApprovedBy: testCreatorID,
+		PaidAmount: decimal.NewFromInt(50),
+	})
+	if !errors.Is(err, appbill.ErrBillAlreadyApproved) {
+		t.Fatalf("err = %v, want ErrBillAlreadyApproved", err)
+	}
+	if len(payRepo.recorded) != 0 {
+		t.Errorf("payments = %d, want 0", len(payRepo.recorded))
+	}
+}
+
+// 赊账不是实付方式：采购审核同时付款时选「赊账」会被拒绝，单据保持草稿。
+func TestApprovePurchase_CreditAsPaymentMethod_Rejected(t *testing.T) {
+	repo := newMockBillRepo()
+	unitRepo := newMockProductUnitRepo()
+	payRepo := newMockPaymentRepo()
+	billID := seedDraftBill(repo, 1, uuid.New())
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	err := newApprovePayUC(repo, unitRepo, payRepo).ExecuteWithPayment(context.Background(), appbill.ApprovePurchaseRequest{
+		TenantID: testTenantID, BillID: billID, ApprovedBy: testCreatorID,
+		PaidAmount: decimal.NewFromInt(50), PayType: "credit",
+	})
+	if !errors.Is(err, appbill.ErrInvalidPayMethod) {
+		t.Fatalf("err = %v, want ErrInvalidPayMethod", err)
+	}
+	if repo.billsByID[billID].Status != domain.StatusDraft || len(payRepo.recorded) != 0 {
+		t.Errorf("status=%d payments=%d, want draft/0", repo.billsByID[billID].Status, len(payRepo.recorded))
+	}
+}
+
+// ----- zero unit price guard -----
+
+// TestApprovePurchase_ZeroPriceLine_RejectedBeforeAnyWrite verifies a draft with a
+// zero-priced line is refused, naming the line, and nothing is booked.
+func TestApprovePurchase_ZeroPriceLine_RejectedBeforeAnyWrite(t *testing.T) {
+	repo := newMockBillRepo()
+	stockUC := newMockStockUC()
+	unitRepo := newMockProductUnitRepo()
+
+	billID := seedDraftBill(repo, 3, uuid.New())
+	repo.itemsByBillID[billID][1].UnitPrice = decimal.Zero
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	err := newApproveUC(repo, stockUC, unitRepo).Execute(context.Background(), testTenantID, billID, uuid.New())
+
+	if !errors.Is(err, appbill.ErrZeroPriceLines) {
+		t.Fatalf("err = %v, want ErrZeroPriceLines", err)
+	}
+	var zerr *appbill.ZeroPriceLinesError
+	if !errors.As(err, &zerr) || len(zerr.Lines) != 1 || zerr.Lines[0].LineNo != 2 {
+		t.Fatalf("lines = %+v, want only line 2", zerr)
+	}
+	if zerr.Lines[0].ProductID != repo.itemsByBillID[billID][1].ProductID {
+		t.Errorf("product id not carried on the zero-price line")
+	}
+	if len(stockUC.calls) != 0 {
+		t.Errorf("stock movements = %d, want 0", len(stockUC.calls))
+	}
+	if repo.billsByID[billID].Status != domain.StatusDraft {
+		t.Errorf("status = %d, want draft", repo.billsByID[billID].Status)
+	}
+}
+
+// TestApprovePurchase_ZeroPriceLine_AllowedWhenConfirmedAsGift verifies the explicit
+// allow flag books the line at cost 0.
+func TestApprovePurchase_ZeroPriceLine_AllowedWhenConfirmedAsGift(t *testing.T) {
+	repo := newMockBillRepo()
+	stockUC := newMockStockUC()
+	unitRepo := newMockProductUnitRepo()
+
+	billID := seedDraftBill(repo, 2, uuid.New())
+	repo.itemsByBillID[billID][0].UnitPrice = decimal.Zero
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	err := newApproveUC(repo, stockUC, unitRepo).ExecuteWithPayment(context.Background(), appbill.ApprovePurchaseRequest{
+		TenantID: testTenantID, BillID: billID, ApprovedBy: uuid.New(), AllowZeroPrice: true,
+	})
+	if err != nil {
+		t.Fatalf("ExecuteWithPayment: %v", err)
+	}
+	if len(stockUC.calls) != 2 {
+		t.Fatalf("stock movements = %d, want 2", len(stockUC.calls))
+	}
+	if !stockUC.calls[0].UnitCost.IsZero() {
+		t.Errorf("gift line cost = %s, want 0", stockUC.calls[0].UnitCost)
+	}
+	if repo.billsByID[billID].Status != domain.StatusApproved {
+		t.Errorf("status = %d, want approved", repo.billsByID[billID].Status)
 	}
 }

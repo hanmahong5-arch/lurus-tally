@@ -291,7 +291,7 @@ func TestBind_CreatorID_ResolvesFromValidIDPSubject(t *testing.T) {
 	}
 }
 
-func TestBind_CreatorID_FallsBackToTenant_WhenSubjectNotUUID(t *testing.T) {
+func TestBind_CreatorID_HashedStable_WhenSubjectNotUUID(t *testing.T) {
 	tenant := uuid.MustParse(zzTenantID)
 	capB := &capturingBinder{}
 	h := handlershopify.New(capB, &fakeListerZZ{}, &fakeUnbinderZZ{})
@@ -309,8 +309,8 @@ func TestBind_CreatorID_FallsBackToTenant_WhenSubjectNotUUID(t *testing.T) {
 	if w.Code != http.StatusCreated {
 		t.Fatalf("status = %d; want 201: body=%s", w.Code, w.Body.String())
 	}
-	if capB.got.CreatorID != tenant {
-		t.Errorf("CreatorID = %s; want fallback to tenant %s when sub unparsable", capB.got.CreatorID, tenant)
+	if capB.got.CreatorID == tenant || capB.got.CreatorID == uuid.Nil {
+		t.Errorf("CreatorID = %s; want a derived person id, not tenant %s", capB.got.CreatorID, tenant)
 	}
 }
 

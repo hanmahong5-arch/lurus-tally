@@ -204,6 +204,10 @@ func (f *fakeBillRepo) UpdateBill(ctx context.Context, tx *sql.Tx, head *domainb
 	return fmt.Errorf("not implemented in fake")
 }
 
+func (f *fakeBillRepo) SummarizeBills(_ context.Context, _ appbill.BillListFilter) (appbill.BillListSummary, error) {
+	return appbill.BillListSummary{}, nil
+}
+
 func (f *fakeBillRepo) ListBills(ctx context.Context, filter appbill.BillListFilter) ([]domainbill.BillHead, int64, error) {
 	return nil, 0, fmt.Errorf("not implemented in fake")
 }
@@ -225,6 +229,18 @@ func (f *fakeBillRepo) UpdatePaidAmount(ctx context.Context, tx *sql.Tx, tenantI
 
 func (f *fakeBillRepo) ProductExists(ctx context.Context, tenantID, productID uuid.UUID) (bool, error) {
 	return f.productExists, f.productExistsErr
+}
+
+func (f *fakeBillRepo) PartnerExists(ctx context.Context, tenantID, id uuid.UUID) (bool, error) {
+	return true, nil
+}
+
+func (f *fakeBillRepo) DefaultWarehouseID(ctx context.Context, tenantID uuid.UUID) (uuid.UUID, bool, error) {
+	return uuid.Nil, false, nil
+}
+
+func (f *fakeBillRepo) SetBillWarehouse(ctx context.Context, tx *sql.Tx, tenantID, billID, warehouseID uuid.UUID) error {
+	return nil
 }
 
 func (f *fakeBillRepo) WarehouseExists(ctx context.Context, tenantID, warehouseID uuid.UUID) (bool, error) {

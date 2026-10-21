@@ -80,7 +80,7 @@ func (uc *CreateSaleUseCase) Execute(ctx context.Context, req CreateSaleRequest)
 		if it.UnitPrice.IsNegative() {
 			return nil, fmt.Errorf("%w: item unit_price must be non-negative", ErrValidation)
 		}
-		lineAmt := it.Qty.Mul(it.UnitPrice).Round(4)
+		lineAmt := it.Qty.Mul(it.UnitPrice).Round(2)
 		subtotal = subtotal.Add(lineAmt)
 
 		bi := &domain.BillItem{
@@ -105,7 +105,7 @@ func (uc *CreateSaleUseCase) Execute(ctx context.Context, req CreateSaleRequest)
 	}
 	shippingFee := req.ShippingFee
 	taxAmount := req.TaxAmount
-	totalAmount := subtotal.Add(shippingFee).Add(taxAmount).Round(4)
+	totalAmount := subtotal.Add(shippingFee).Add(taxAmount).Round(2)
 
 	// Resolve warehouse: prefer per-item warehouse if bill-level is absent.
 	warehouseID := req.WarehouseID
@@ -122,6 +122,9 @@ func (uc *CreateSaleUseCase) Execute(ctx context.Context, req CreateSaleRequest)
 		productIDs = append(productIDs, it.ProductID)
 	}
 	if err := validateRefs(ctx, uc.repo, req.TenantID, productIDs, warehouseID); err != nil {
+		return nil, err
+	}
+	if err := validatePartner(ctx, uc.repo, req.TenantID, req.PartnerID); err != nil {
 		return nil, err
 	}
 

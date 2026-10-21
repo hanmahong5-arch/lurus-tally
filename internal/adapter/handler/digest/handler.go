@@ -34,7 +34,12 @@ type WeeklySummaryUseCase interface {
 
 // Handler groups the weekly summary HTTP endpoints.
 type Handler struct {
-	uc WeeklySummaryUseCase
+	uc   WeeklySummaryUseCase
+	todo TodoUseCase
+	// aiEnabled reports whether the AI assistant is wired; nil falls back to the env switch.
+	aiEnabled func() bool
+	// cloudPrint reports whether cloud receipt printing is wired; nil means no.
+	cloudPrint func() bool
 }
 
 // New constructs a Handler. uc must be non-nil.
@@ -45,6 +50,9 @@ func New(uc WeeklySummaryUseCase) *Handler {
 // RegisterRoutes mounts the weekly summary route onto the given router group.
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/weekly-summary", h.GetWeeklySummary)
+	if h.todo != nil {
+		rg.GET("/todo/summary", h.GetTodoSummary)
+	}
 }
 
 // replenishResp is the JSON shape for the replenishment section.

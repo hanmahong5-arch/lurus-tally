@@ -19,11 +19,17 @@ import (
 // of the requirement, and matching the exact route template fails closed: a
 // renamed route drops out of the set rather than silently matching a prefix.
 var requireIdempotencyKeyRoutes = map[string]struct{}{
-	"POST /api/v1/payments":                   {},
+	"POST /api/v1/payments": {},
+	// A lump-sum receipt books one payment per settled bill; a replay would pay them twice.
+	"POST /api/v1/receipts":                   {},
 	"POST /api/v1/purchase-bills/:id/approve": {},
 	"POST /api/v1/sale-bills/:id/approve":     {},
 	"POST /api/v1/sale-bills/quick-checkout":  {},
-	"POST /api/v1/ai/plans/:plan_id/confirm":  {},
+	// A return puts stock back (or sends it out) and may hand money back; a replayed
+	// request would do it twice.
+	"POST /api/v1/sale-bills/:id/return":     {},
+	"POST /api/v1/purchase-bills/:id/return": {},
+	"POST /api/v1/ai/plans/:plan_id/confirm": {},
 	// Subscription checkout debits the wallet / creates a payment order on
 	// platform; platform itself mandates an Idempotency-Key on this financial
 	// mutation, so a key-less retry would 400 downstream. Make it mandatory at
@@ -56,7 +62,7 @@ func RequireIdempotencyKey() gin.HandlerFunc {
 		if c.GetHeader(HeaderIdempotencyKey) == "" {
 			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 				"error":   "missing_idempotency_key",
-				"message": "this endpoint requires an Idempotency-Key header so a retry cannot double-apply the operation",
+				"message": "提交请求缺少防重复标识，请刷新页面后重试",
 			})
 			return
 		}

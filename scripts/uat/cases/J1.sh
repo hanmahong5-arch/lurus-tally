@@ -3,14 +3,13 @@
 #
 # Flow: /me 401 contract → create warehouse → seed-demo → create unit /
 # supplier / product (+ read each back, field round-trip) → weekly-summary
-# → clear-demo → cleanup of UAT-created masters.
+# → clear-demo (200 + cleared/converted counts) → cleanup of UAT-created masters.
 #
 # Contract sources (all `git show da399443:<path>`):
 #   internal/adapter/middleware/auth.go:96-112       PAT path sets tenant_id only, never an OIDC subject
 #   internal/adapter/handler/auth/handler.go:126-134 GetMe: empty sub → 401 (expected under PAT)
 #   internal/adapter/handler/onboarding/handler.go:104-145 SeedDemo: {persona, warehouse_id} → 200 {products_created}
-#   internal/adapter/handler/onboarding/handler.go:147-162 ClearDemo: no body → 204 No Content
-#       (NOTE: deployed contract returns NO deletion counts — 204 empty body is the intended shape)
+#   internal/adapter/handler/onboarding/handler.go ClearDemo: no body → 200 {cleared_products, converted_products, hint?}
 #   internal/adapter/handler/warehouse/handler.go:39-46 createRequest {code,name,...} → 201 DTO
 #   internal/adapter/handler/supplier/handler.go:40-48  createRequest {code,name,...} → 201 DTO
 #   internal/adapter/handler/unit/handler.go:33-64      createRequest {code,name,unit_type} → 201; list = {items}
@@ -53,13 +52,7 @@ check "warehouse round-trip: name" jq -e --arg v "${P}-warehouse" '.name == $v' 
 # Seeded product codes are server-defined (DEMO-RT-*, app/onboarding/usecase.go:130+,
 # remark="DEMO") — clear-demo below removes exactly those rows.
 #
-# PRODUCT BUG (STAGE da399443): the intended contract is 200 {products_created},
-# but seed-demo returns 500. Root cause is NOT a test artifact — the onboarding
-# stock adapter (onboarding/handler.go:36-48) sets ReferenceType=RefInit but
-# never sets ReferenceID, so the stock_movement insert (repo/stock/repo.go:226-234)
-# writes NULL into the NOT NULL reference_id column (SQLSTATE 23502). The product
-# row IS created first, the stock movement then fails and aborts. We assert the
-# INTENDED 200 contract so this stays RED as evidence; we do NOT green-wash it.
+# seed-demo returns 200 {products_created} (the stock movement now carries its reference_id).
 http seed-demo POST /api/v1/onboarding/seed-demo \
   -H 'Content-Type: application/json' \
   -d "{\"persona\":\"retail\",\"warehouse_id\":\"$WH_ID\"}"
@@ -126,12 +119,14 @@ check "weekly-summary shape: generated_at present" \
   jq -e '.generated_at | type == "string" and length > 0' "$HTTP_BODY_FILE"
 
 # --- Step 8: clear demo --------------------------------------------------------
-# Deployed contract is 204 No Content with EMPTY body (onboarding/handler.go:161
-# c.Status(http.StatusNoContent)) — the deployed API returns no deletion counts.
+# Contract: 200 {cleared_products, converted_products, hint?}
+# (app/onboarding/usecase.go ClearResult). Demo products that approved bills still
+# use are kept as real products and listed in converted_products; this journey
+# has no such bills, so the list is empty and every seeded product is cleared.
 http clear-demo POST /api/v1/onboarding/clear-demo
-expect_status 204
-check "clear-demo body is empty (deployed contract has no deletion counts)" \
-  [ ! -s "$HTTP_BODY_FILE" ]
+expect_status 200
+check "clear-demo body has cleared_products (number) and converted_products key"   jq -e '(.cleared_products | type == "number") and has("converted_products")' "$HTTP_BODY_FILE"
+check "clear-demo converted_products is empty (no approved bill uses the demo rows)"   jq -e '(.converted_products // []) | length == 0' "$HTTP_BODY_FILE"
 
 # Verify demo products are actually gone: list filtered by demo code prefix.
 http prod-list-demo GET "/api/v1/products?q=DEMO-RT-"

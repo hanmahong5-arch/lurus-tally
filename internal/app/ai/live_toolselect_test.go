@@ -25,7 +25,7 @@ import (
 // Skipped unless TALLY_LLM_LIVE=1, so the normal hermetic suite never touches
 // the network. Model / key / base / repeat come from env:
 //
-//	TALLY_LLM_LIVE=1 TALLY_LLM_KEY=sk-... TALLY_LLM_MODEL=deepseek-v4-flash \
+//	TALLY_LLM_LIVE=1 TALLY_LLM_KEY=sk-... TALLY_LLM_MODEL=<model> \
 //	  TALLY_LLM_REPEAT=3 go test ./internal/app/ai/ -run TestLive_ToolSelection -v -count=1
 func TestLive_ToolSelection(t *testing.T) {
 	if os.Getenv("TALLY_LLM_LIVE") != "1" {
@@ -41,7 +41,7 @@ func TestLive_ToolSelection(t *testing.T) {
 	}
 	model := os.Getenv("TALLY_LLM_MODEL")
 	if model == "" {
-		model = "deepseek-v4-flash"
+		t.Fatal("TALLY_LLM_MODEL required")
 	}
 	repeat := 1
 	if v := os.Getenv("TALLY_LLM_REPEAT"); v != "" {

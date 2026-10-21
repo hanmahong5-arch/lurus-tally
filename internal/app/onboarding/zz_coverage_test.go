@@ -508,19 +508,19 @@ type zzDemoDeleter struct {
 	err      error
 }
 
-func (f *zzDemoDeleter) DeleteDemoProducts(_ context.Context, tenantID uuid.UUID) error {
+func (f *zzDemoDeleter) ClearDemo(_ context.Context, tenantID uuid.UUID) (*ClearResult, error) {
 	f.called = true
 	f.tenantID = tenantID
-	return f.err
+	return nil, f.err
 }
 
 func TestZZClearDemoUseCase_NilTenantNeverCallsRepo(t *testing.T) {
 	del := &zzDemoDeleter{}
 	uc := NewClearDemoUseCase(del)
-	if err := uc.Execute(context.Background(), uuid.Nil); err == nil {
+	if _, err := uc.Execute(context.Background(), uuid.Nil); err == nil {
 		t.Fatal("want error for nil tenant_id, got nil")
 	}
 	if del.called {
-		t.Error("want repo.DeleteDemoProducts NOT called when tenant_id is nil")
+		t.Error("want repo.ClearDemo NOT called when tenant_id is nil")
 	}
 }

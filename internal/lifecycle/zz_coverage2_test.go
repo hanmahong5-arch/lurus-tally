@@ -417,7 +417,7 @@ func TestAiDraftCreator_CreatePurchaseDraft_RepoErrorPassthrough(t *testing.T) {
 	defer db.Close() //nolint:errcheck
 
 	productID := uuid.New()
-	rows := sqlmock.NewRows([]string{"id", "product_id", "retail_price", "purchase_price"})
+	rows := sqlmock.NewRows([]string{"id", "product_id", "retail_price", "purchase_price", "wholesale_price", "unit_name"})
 	mock.ExpectQuery("SELECT DISTINCT ON").WillReturnRows(rows)
 
 	wantErr := errors.New("insert failed")
@@ -457,8 +457,8 @@ func TestAiPriceChanger_ApplyPriceChange_TableDriven(t *testing.T) {
 		}
 		defer db.Close() //nolint:errcheck
 
-		rows := sqlmock.NewRows([]string{"id", "product_id", "retail_price", "purchase_price"}).
-			AddRow(skuID, productID, "100", "80")
+		rows := sqlmock.NewRows([]string{"id", "product_id", "retail_price", "purchase_price", "wholesale_price", "unit_name"}).
+			AddRow(skuID, productID, "100", "80", "0", "")
 		mock.ExpectQuery("SELECT DISTINCT ON").WillReturnRows(rows)
 		mock.ExpectExec("UPDATE tally.product_sku").WillReturnResult(sqlmock.NewResult(0, 1))
 
@@ -496,8 +496,8 @@ func TestAiPriceChanger_ApplyPriceChange_TableDriven(t *testing.T) {
 		}
 		defer db.Close() //nolint:errcheck
 
-		rows := sqlmock.NewRows([]string{"id", "product_id", "retail_price", "purchase_price"}).
-			AddRow(skuID, productID, "100", "80")
+		rows := sqlmock.NewRows([]string{"id", "product_id", "retail_price", "purchase_price", "wholesale_price", "unit_name"}).
+			AddRow(skuID, productID, "100", "80", "0", "")
 		mock.ExpectQuery("SELECT DISTINCT ON").WillReturnRows(rows)
 		mock.ExpectExec("UPDATE tally.product_sku").WillReturnError(errors.New("write conflict"))
 
@@ -811,8 +811,8 @@ func TestAiPriceCapturer_CaptureBeforePrices(t *testing.T) {
 
 	productID := uuid.New()
 	skuID := uuid.New()
-	rows := sqlmock.NewRows([]string{"id", "product_id", "retail_price", "purchase_price"}).
-		AddRow(skuID, productID, "199.50", "150")
+	rows := sqlmock.NewRows([]string{"id", "product_id", "retail_price", "purchase_price", "wholesale_price", "unit_name"}).
+		AddRow(skuID, productID, "199.50", "150", "0", "")
 	mock.ExpectQuery("SELECT DISTINCT ON").WillReturnRows(rows)
 
 	c := &aiPriceCapturer{skuRepo: reposku.New(db)}
@@ -1138,6 +1138,8 @@ func TestNewApp_NewAPIKeySet_RedisURLEmpty_ReturnsError(t *testing.T) {
 	cfg := baseTestConfig()
 	cfg.RedisURL = ""
 	cfg.NewAPIKey = "test-newapi-key"
+	cfg.NewAPIBaseURL = "http://newapi.test.local/v1"
+	cfg.DefaultAIModel = "test-model"
 
 	app, err := NewApp(cfg)
 	if err == nil {
@@ -1187,6 +1189,7 @@ func TestNewApp_AIAssistantAndMemoryEnabled_WiresSuccessfully(t *testing.T) {
 	cfg.PlatformInternalKey = "test-internal-key"
 	cfg.PlatformBaseURL = "http://127.0.0.1:1"
 	cfg.NewAPIKey = "test-newapi-key"
+	cfg.DefaultAIModel = "test-model"
 	cfg.NewAPIBaseURL = "http://127.0.0.1:1"
 	cfg.DefaultAIModel = "test-model"
 	cfg.AIPlanTTLSeconds = 1800
@@ -1212,17 +1215,18 @@ func TestNewApp_AIAssistantAndMemoryEnabled_WiresSuccessfully(t *testing.T) {
 	}
 }
 
-func TestNewApp_PlatformInternalKeySet_EmptyBaseURL_ReturnsError(t *testing.T) {
+// 空 PLATFORM_BASE_URL = 降级(不接 platform)，不应让启动失败。
+func TestNewApp_PlatformInternalKeySet_EmptyBaseURL_Degrades(t *testing.T) {
 	cfg := baseTestConfig()
 	cfg.PlatformInternalKey = "test-internal-key"
-	cfg.PlatformBaseURL = "" // platform.New requires both APIKey and BaseURL
+	cfg.PlatformBaseURL = ""
 
 	app, err := NewApp(cfg)
-	if err == nil {
-		t.Fatal("expected platform client init error for empty PlatformBaseURL, got nil")
+	if err != nil {
+		t.Fatalf("expected degrade (no error) for empty PlatformBaseURL, got %v", err)
 	}
-	if app != nil {
-		t.Errorf("expected nil App on error, got %+v", app)
+	if app == nil {
+		t.Fatal("expected non-nil App")
 	}
 }
 
@@ -1239,23 +1243,26 @@ func TestNewApp_NATSURLEmpty_NoOpNotifyMode(t *testing.T) {
 	}
 }
 
-func TestNewApp_AIAssistant_EmptyNewAPIBaseURL_ReturnsError(t *testing.T) {
+// 空 NEWAPI_BASE_URL = AI 助手降级关闭，不应让启动失败。
+func TestNewApp_AIAssistant_EmptyNewAPIBaseURL_Degrades(t *testing.T) {
 	cfg := baseTestConfig()
 	cfg.NewAPIKey = "test-newapi-key"
-	cfg.NewAPIBaseURL = "" // llmclient.New requires BaseURL
+	cfg.DefaultAIModel = "test-model"
+	cfg.NewAPIBaseURL = ""
 
 	app, err := NewApp(cfg)
-	if err == nil {
-		t.Fatal("expected LLM client init error for empty NewAPIBaseURL, got nil")
+	if err != nil {
+		t.Fatalf("expected degrade (no error) for empty NewAPIBaseURL, got %v", err)
 	}
-	if app != nil {
-		t.Errorf("expected nil App on error, got %+v", app)
+	if app == nil {
+		t.Fatal("expected non-nil App")
 	}
 }
 
 func TestNewApp_AIAssistantEnabled_MemoryDisabled(t *testing.T) {
 	cfg := baseTestConfig()
 	cfg.NewAPIKey = "test-newapi-key"
+	cfg.DefaultAIModel = "test-model"
 	cfg.NewAPIBaseURL = "http://127.0.0.1:1"
 	cfg.MemoryAPIKey = "" // memorus stays disabled
 
@@ -1382,8 +1389,8 @@ func TestAiDraftCreator_CreatePurchaseDraft_SkuPriceFound_UsesPurchasePrice(t *t
 
 	productID := uuid.New()
 	skuID := uuid.New()
-	rows := sqlmock.NewRows([]string{"id", "product_id", "retail_price", "purchase_price"}).
-		AddRow(skuID, productID, "199.00", "88.50")
+	rows := sqlmock.NewRows([]string{"id", "product_id", "retail_price", "purchase_price", "wholesale_price", "unit_name"}).
+		AddRow(skuID, productID, "199.00", "88.50", "0", "")
 	mock.ExpectQuery("SELECT DISTINCT ON").WillReturnRows(rows)
 
 	repo := &fakeBillRepo{productExists: true}

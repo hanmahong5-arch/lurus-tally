@@ -38,12 +38,12 @@ func TestRecordUsage_FanOutsToSink(t *testing.T) {
 	SetUsageSink(cs)
 
 	ctx := WithTenant(context.Background(), "tenant-xyz")
-	RecordUsage(ctx, "deepseek-v4", 12, 7)
+	RecordUsage(ctx, "test-model", 12, 7)
 
 	if cs.calls != 1 {
 		t.Fatalf("expected sink called once, got %d", cs.calls)
 	}
-	if cs.tenant != "tenant-xyz" || cs.model != "deepseek-v4" || cs.in != 12 || cs.out != 7 {
+	if cs.tenant != "tenant-xyz" || cs.model != "test-model" || cs.in != 12 || cs.out != 7 {
 		t.Errorf("sink received wrong tuple: tenant=%s model=%s in=%d out=%d",
 			cs.tenant, cs.model, cs.in, cs.out)
 	}
@@ -65,7 +65,7 @@ func TestSetUsageSink_NilIsNoOp(t *testing.T) {
 	SetUsageSink(marker)
 	SetUsageSink(nil) // must not clear the marker
 
-	RecordUsage(WithTenant(context.Background(), "t"), "deepseek-v4", 1, 1)
+	RecordUsage(WithTenant(context.Background(), "t"), "test-model", 1, 1)
 	if marker.calls != 1 {
 		t.Errorf("nil SetUsageSink should not clear the installed sink; calls=%d", marker.calls)
 	}

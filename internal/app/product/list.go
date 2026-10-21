@@ -32,8 +32,8 @@ func (uc *ListUseCase) Execute(ctx context.Context, filter domain.ListFilter) (*
 	if filter.Limit <= 0 {
 		filter.Limit = 20
 	}
-	if filter.Limit > 200 {
-		filter.Limit = 200
+	if filter.Limit > 500 {
+		filter.Limit = 500
 	}
 
 	items, total, err := uc.repo.List(ctx, filter)

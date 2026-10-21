@@ -19,6 +19,8 @@ type Handler struct {
 	create *appunit.CreateUseCase
 	list   *appunit.ListUseCase
 	delete *appunit.DeleteUseCase
+	// productUnits is optional; see WithProductUnits.
+	productUnits ProductUnitLister
 }
 
 // New creates a Handler wired to the provided use cases.

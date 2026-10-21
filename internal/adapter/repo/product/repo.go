@@ -98,11 +98,12 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Product
 
 	if f.Query != "" {
 		where = append(where, fmt.Sprintf(
-			"(name ILIKE $%d OR code ILIKE $%d OR mnemonic ILIKE $%d)",
-			idx, idx, idx,
+			"(name ILIKE $%d OR code ILIKE $%d OR mnemonic ILIKE $%d OR attributes->>'barcode' = $%d)",
+			idx, idx, idx, idx+1,
 		))
-		args = append(args, "%"+f.Query+"%")
-		idx++
+		// 第二个参数为原始查询串(不带 %),用于条码精确匹配。
+		args = append(args, "%"+f.Query+"%", f.Query)
+		idx += 2
 	}
 
 	if f.Enabled != nil {

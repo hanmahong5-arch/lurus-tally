@@ -137,6 +137,68 @@ type BillHead struct {
 	Remark    string    `json:"remark,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// ClientRef is the client-generated idempotency reference of a POS checkout (<= 64 chars);
+	// (tenant, ClientRef) is unique when set. Empty = none.
+	ClientRef string `json:"client_ref,omitempty"`
+	// Source is where the bill came from: web / pos / pos_offline. Empty keeps the column default.
+	Source string `json:"source,omitempty"`
+	// OccurredAt is when the sale really happened at the till (an offline replay arrives later). Nil = CreatedAt.
+	OccurredAt *time.Time `json:"occurred_at,omitempty"`
+
+	// Read-only display names resolved by JOIN on list/detail reads; never persisted.
+	PartnerName   string `json:"partner_name,omitempty"`
+	WarehouseName string `json:"warehouse_name,omitempty"`
+
+	// InvoicedAmount is the amount covered by live (issued) invoices; derived on list reads only.
+	InvoicedAmount decimal.Decimal `json:"-"`
+
+	// ReturnedAmount is what approved sales returns take off a sale; derived on sale list reads only.
+	ReturnedAmount decimal.Decimal `json:"-"`
+}
+
+// Invoice status values reported by BillHead.InvoiceStatus.
+const (
+	InvoiceNone    = "none"
+	InvoicePartial = "partial"
+	InvoiceFull    = "full"
+)
+
+// InvoiceStatus classifies how much of the bill total is covered by live invoices.
+func (b *BillHead) InvoiceStatus() string {
+	if !b.InvoicedAmount.IsPositive() {
+		return InvoiceNone
+	}
+	// Invoices are issued in whole cents, so a sub-cent tail on the total (9.9999)
+	// must not keep the bill "partial" forever: compare against the total cut to cents.
+	if b.InvoicedAmount.LessThan(b.TotalAmount.Truncate(2)) {
+		return InvoicePartial
+	}
+	return InvoiceFull
+}
+
+// Payment status values reported by BillHead.PaymentStatus.
+const (
+	PaymentUnpaid  = "unpaid"
+	PaymentPartial = "partial"
+	PaymentPaid    = "paid"
+)
+
+// PaymentStatus classifies how much of an approved bill has been settled.
+// Only approved bills carry a payment status; draft and cancelled bills return "".
+// paid <= 0 is unpaid, 0 < paid < net total is partial, otherwise paid; the net total is the
+// bill total after sales returns (ReturnedAmount), floored at zero.
+func (b *BillHead) PaymentStatus() string {
+	if b.Status != StatusApproved {
+		return ""
+	}
+	if !b.PaidAmount.IsPositive() {
+		return PaymentUnpaid
+	}
+	if b.PaidAmount.LessThan(decimal.Max(b.TotalAmount.Sub(b.ReturnedAmount), decimal.Zero)) {
+		return PaymentPartial
+	}
+	return PaymentPaid
 }
 
 // BillItem maps to the tally.bill_item table.

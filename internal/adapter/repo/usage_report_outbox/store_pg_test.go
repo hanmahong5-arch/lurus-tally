@@ -47,7 +47,7 @@ func TestUsageOutboxPG_RoundTrip(t *testing.T) {
 	tid := uuid.New()
 	occurred := time.Now().UTC().Truncate(time.Second)
 	row := usagereport.PendingUsageRow{
-		ID: id, TenantID: tid, Model: "deepseek-v4",
+		ID: id, TenantID: tid, Model: "test-model",
 		PromptTokens: 12, CompletionTokens: 8, OccurredAt: occurred, Reason: "no_account",
 	}
 
@@ -60,7 +60,7 @@ func TestUsageOutboxPG_RoundTrip(t *testing.T) {
 
 	// Drain returns our row with fields intact (proves the service-pin bypass).
 	got := findRow(t, store, id)
-	if got.TenantID != tid || got.Model != "deepseek-v4" ||
+	if got.TenantID != tid || got.Model != "test-model" ||
 		got.PromptTokens != 12 || got.CompletionTokens != 8 || got.Reason != "no_account" {
 		t.Errorf("drained row = %+v, want the enqueued values", got)
 	}

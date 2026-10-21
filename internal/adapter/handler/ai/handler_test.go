@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -456,5 +458,122 @@ func TestAIHandler_RevertPlan_NoTenantID_Returns401(t *testing.T) {
 
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("expected 401, got %d", rec.Code)
+	}
+}
+
+// ackOrchestrator is a stubOrchestrator that also takes acknowledged flags.
+type ackOrchestrator struct {
+	stubOrchestrator
+	gotAck []int
+	calls  int
+}
+
+func (a *ackOrchestrator) ConfirmPlanAck(_ context.Context, _, _, _ uuid.UUID, ack []int) (*domainai.Plan, *appai.ExecutionResult, error) {
+	a.calls++
+	a.gotAck = ack
+	if a.confirmErr != nil {
+		return nil, nil, a.confirmErr
+	}
+	return a.confirmOut, a.confirmResult, nil
+}
+
+func postConfirm(e http.Handler, planID uuid.UUID, body string) *httptest.ResponseRecorder {
+	req, _ := http.NewRequest(http.MethodPost, "/api/v1/ai/plans/"+planID.String()+"/confirm", strings.NewReader(body))
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	return rec
+}
+
+// A flagged draft confirmed without acknowledged_flags is refused with 422.
+func TestAIHandler_ConfirmPlan_LineConfirmRequired_Returns422(t *testing.T) {
+	tenantID, planID := uuid.New(), uuid.New()
+	stub := &ackOrchestrator{stubOrchestrator: stubOrchestrator{confirmErr: appai.ErrLineConfirmRequired}}
+	e := newTestEngine(handlerai.New(stub), tenantID)
+
+	for _, body := range []string{"", "{}", `{"acknowledged_flags":[]}`} {
+		rec := postConfirm(e, planID, body)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("body %q: want 422, got %d %s", body, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "line_confirm_required") {
+			t.Errorf("body %q: missing stable error code: %s", body, rec.Body.String())
+		}
+	}
+}
+
+// The plain ConfirmPlan path (an orchestrator without the ack method) maps the
+// same sentinel to 422 too.
+func TestAIHandler_ConfirmPlan_PlainOrchestratorLineConfirmRequired_Returns422(t *testing.T) {
+	tenantID, planID := uuid.New(), uuid.New()
+	e := newTestEngine(handlerai.New(&stubOrchestrator{confirmErr: appai.ErrLineConfirmRequired}), tenantID)
+	if rec := postConfirm(e, planID, ""); rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("want 422, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// acknowledged_flags reaches the orchestrator and an acknowledged draft confirms.
+func TestAIHandler_ConfirmPlan_PassesAcknowledgedFlags(t *testing.T) {
+	tenantID, planID := uuid.New(), uuid.New()
+	stub := &ackOrchestrator{stubOrchestrator: stubOrchestrator{
+		confirmOut: &domainai.Plan{ID: planID, TenantID: tenantID, Type: domainai.PlanTypeCreatePurchase, Status: domainai.PlanStatusConfirmed},
+	}}
+	e := newTestEngine(handlerai.New(stub), tenantID)
+	rec := postConfirm(e, planID, `{"acknowledged_flags":[0,1]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d %s", rec.Code, rec.Body.String())
+	}
+	if len(stub.gotAck) != 2 || stub.gotAck[0] != 0 || stub.gotAck[1] != 1 {
+		t.Fatalf("ack not passed through: %v", stub.gotAck)
+	}
+}
+
+func TestAIHandler_ConfirmPlan_MalformedBody_Returns400(t *testing.T) {
+	tenantID, planID := uuid.New(), uuid.New()
+	stub := &ackOrchestrator{}
+	e := newTestEngine(handlerai.New(stub), tenantID)
+	if rec := postConfirm(e, planID, `{"acknowledged_flags":"x"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("want 400, got %d %s", rec.Code, rec.Body.String())
+	}
+	if stub.calls != 0 {
+		t.Fatal("a malformed body must not reach the orchestrator")
+	}
+}
+
+// Confirm failures reach a shopkeeper's card: the detail is Chinese and never
+// carries the internal error text.
+func TestAIHandler_ConfirmPlan_ErrorDetailsAreChinese(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		code int
+	}{
+		{"not_found", appai.ErrPlanNotFound, http.StatusNotFound},
+		{"expired", appai.ErrPlanExpired, http.StatusConflict},
+		{"execution_failed", fmt.Errorf("confirm plan: %w: %w", appai.ErrPlanExecutionFailed, errors.New("pq: duplicate key value")), http.StatusUnprocessableEntity},
+		{"other", fmt.Errorf("plan is confirmed: %w", appai.ErrPlanNotPending), http.StatusConflict},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tenantID := uuid.New()
+			e := newTestEngine(handlerai.New(&stubOrchestrator{confirmErr: tc.err}), tenantID)
+			rec := postConfirm(e, uuid.New(), "")
+			if rec.Code != tc.code {
+				t.Fatalf("code=%d want %d body=%s", rec.Code, tc.code, rec.Body.String())
+			}
+			var body map[string]string
+			_ = json.Unmarshal(rec.Body.Bytes(), &body)
+			detail := body["detail"]
+			if detail == "" {
+				t.Fatalf("no detail: %s", rec.Body.String())
+			}
+			for _, r := range detail {
+				if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' {
+					t.Fatalf("detail has ASCII letters: %q", detail)
+				}
+			}
+		})
 	}
 }

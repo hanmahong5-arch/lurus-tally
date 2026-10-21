@@ -2,7 +2,7 @@
   {
     "path": "/v1/chat/completions",
     "request": {
-      "model": "deepseek-v4-flash",
+      "model": "test-model",
       "messages": [
         {
           "role": "system",

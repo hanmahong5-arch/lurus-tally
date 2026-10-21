@@ -231,9 +231,9 @@ func (s *nameCapturingStore) SetPlatformAccountID(_ context.Context, _ uuid.UUID
 	return nil
 }
 
-// TestDeriveTenantName_TableDriven covers all four branches of the unexported
-// deriveTenantName helper: displayName wins, then email, then sub>=8 chars
-// (truncated to 8), then sub<8 chars (used verbatim).
+// TestDeriveTenantName_TableDriven covers the unexported deriveTenantName
+// helper: a plain display name becomes "<name>的店"; emails and internal ids
+// never reach the shop name (it shows on shared invite links).
 func TestDeriveTenantName_TableDriven(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -242,10 +242,10 @@ func TestDeriveTenantName_TableDriven(t *testing.T) {
 		sub         string
 		wantName    string
 	}{
-		{"display_name_wins", "Alice Co", "alice@example.com", "sub-12345678", "Alice Co 的企业"},
-		{"email_used_when_no_display_name", "", "bob@example.com", "sub-12345678", "bob@example.com 的企业"},
-		{"long_sub_truncated_to_8", "", "", "abcdefghij", "Tenant abcdefgh"},
-		{"short_sub_used_verbatim", "", "", "abc123", "Tenant abc123"},
+		{"display_name_wins", "Alice", "alice@example.com", "sub-12345678", "Alice的店"},
+		{"email_like_display_name_ignored", "bob@example.com", "bob@example.com", "sub-12345678", "我的店铺"},
+		{"email_never_in_name", "", "bob@example.com", "sub-12345678", "我的店铺"},
+		{"no_identity_no_internal_id", "", "", "abcdefghij", "我的店铺"},
 	}
 
 	for _, tc := range cases {

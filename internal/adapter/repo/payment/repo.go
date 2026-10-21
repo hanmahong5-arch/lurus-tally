@@ -5,6 +5,7 @@ package payment
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
@@ -55,6 +56,25 @@ func (r *Repo) WithTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 		return fmt.Errorf("payment repo: commit tx: %w", err)
 	}
 	return nil
+}
+
+// LatestPayType returns the pay_type of the most recent live payment recorded
+// against a bill; ok is false when the bill has none.
+func (r *Repo) LatestPayType(ctx context.Context, tenantID, billID uuid.UUID) (string, bool, error) {
+	const q = `
+		SELECT pay_type FROM tally.payment_head
+		WHERE tenant_id = $1 AND related_bill_id = $2 AND deleted_at IS NULL
+		ORDER BY pay_date DESC, created_at DESC
+		LIMIT 1`
+	var pt string
+	err := dbscope.From(ctx, r.db).QueryRowContext(ctx, q, tenantID, billID).Scan(&pt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("payment repo: latest pay type: %w", err)
+	}
+	return pt, true, nil
 }
 
 // ----- payment_head CRUD -----

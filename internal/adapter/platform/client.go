@@ -22,6 +22,10 @@ const defaultTimeout = 5 * time.Second
 // cannot blow up Tally logs.
 const maxBodyBytes = 4 * 1024
 
+// maxSuccessBodyBytes bounds a 2xx body. Larger than maxBodyBytes because
+// list endpoints (organization members) legitimately exceed a few KB.
+const maxSuccessBodyBytes = 1 << 20
+
 // Client calls lurus-platform's /internal/v1/* endpoints.
 // Construct it via New and reuse across requests — Client is safe for concurrent use.
 type Client struct {
@@ -117,7 +121,11 @@ func (c *Client) doWithIdem(ctx context.Context, method, path string, payload an
 	}
 	defer func() { _ = res.Body.Close() }()
 
-	rawBody, _ := io.ReadAll(io.LimitReader(res.Body, maxBodyBytes))
+	limit := int64(maxBodyBytes)
+	if res.StatusCode >= 200 && res.StatusCode < 300 {
+		limit = maxSuccessBodyBytes
+	}
+	rawBody, _ := io.ReadAll(io.LimitReader(res.Body, limit))
 
 	if res.StatusCode >= 200 && res.StatusCode < 300 {
 		if out == nil || len(rawBody) == 0 {

@@ -1115,7 +1115,7 @@ func TestListPlans_ErrorAndHappyFiltering(t *testing.T) {
 
 func newCxLLMClient(t *testing.T, srv *httptest.Server) *llmclient.Client {
 	t.Helper()
-	cli, err := llmclient.New(llmclient.Config{BaseURL: srv.URL, APIKey: "test-key"})
+	cli, err := llmclient.New(llmclient.Config{BaseURL: srv.URL, APIKey: "test-key", DefaultModel: "test-model"})
 	if err != nil {
 		t.Fatalf("llmclient.New: %v", err)
 	}

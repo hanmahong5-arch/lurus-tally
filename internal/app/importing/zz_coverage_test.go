@@ -936,6 +936,7 @@ func TestZZ_IngestRefund_DedupCheckError(t *testing.T) {
 
 func TestZZ_IngestRefund_ResolveSKUError(t *testing.T) {
 	repo := newZZFakeRepo()
+	repo.seen["shopify:#1"] = uuid.New()
 	repo.getMappingErr = errors.New("mapping down")
 	uc := zzBuildWithReturn(repo, &zzFakeReturnCreator{}, &zzFakeReturnApprover{})
 	_, err := uc.IngestRefund(context.Background(), zzRefundReq(nil))
@@ -946,6 +947,7 @@ func TestZZ_IngestRefund_ResolveSKUError(t *testing.T) {
 
 func TestZZ_IngestRefund_FXError(t *testing.T) {
 	repo := newZZFakeRepo()
+	repo.seen["shopify:#1"] = uuid.New()
 	repo.addMapping("shopify", "S1", uuid.New())
 	rater := &zzFakeRater{err: errors.New("fx down")}
 	uc := NewImportOrdersUseCase(repo, &zzFakeCreator{}, &zzFakeApprover{}, newZZFakeStockChecker(), nil, rater, "CNY").
@@ -959,6 +961,7 @@ func TestZZ_IngestRefund_FXError(t *testing.T) {
 
 func TestZZ_IngestRefund_CreateError(t *testing.T) {
 	repo := newZZFakeRepo()
+	repo.seen["shopify:#1"] = uuid.New()
 	repo.addMapping("shopify", "S1", uuid.New())
 	retCreator := &zzFakeReturnCreator{err: errors.New("create failed")}
 	uc := zzBuildWithReturn(repo, retCreator, &zzFakeReturnApprover{})
@@ -970,6 +973,7 @@ func TestZZ_IngestRefund_CreateError(t *testing.T) {
 
 func TestZZ_IngestRefund_ApproveError(t *testing.T) {
 	repo := newZZFakeRepo()
+	repo.seen["shopify:#1"] = uuid.New()
 	repo.addMapping("shopify", "S1", uuid.New())
 	retApprover := &zzFakeReturnApprover{err: errors.New("approve failed")}
 	uc := zzBuildWithReturn(repo, &zzFakeReturnCreator{}, retApprover)
@@ -982,6 +986,7 @@ func TestZZ_IngestRefund_ApproveError(t *testing.T) {
 // MarkRefundSeen failure is soft: bill committed, non-nil result + error.
 func TestZZ_IngestRefund_MarkRefundSeenFailure_SoftFail(t *testing.T) {
 	repo := newZZFakeRepo()
+	repo.seen["shopify:#1"] = uuid.New()
 	repo.addMapping("shopify", "S1", uuid.New())
 	repo.markRefundSeenErr = errors.New("dedup write failed")
 	retCreator := &zzFakeReturnCreator{}

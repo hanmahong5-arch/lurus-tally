@@ -3,6 +3,7 @@ package bill_test
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"testing"
 	"time"
 
@@ -420,5 +421,193 @@ func TestApproveSale_AlreadyApproved_ReturnsNilIdempotent(t *testing.T) {
 	// No stock movements must have been recorded.
 	if len(stockUC.calls) != 0 {
 		t.Errorf("expected 0 stock movements on idempotent approve, got %d", len(stockUC.calls))
+	}
+}
+
+// 销售单不带仓库：有默认仓时审核成功，出库流水记在默认仓，且单据回写仓库。
+func TestApproveSale_NoWarehouse_UsesDefaultWarehouse(t *testing.T) {
+	repo := newMockBillRepo()
+	stockUC := newMockStockUC()
+	unitRepo := newMockProductUnitRepo()
+	defaultWH := uuid.New()
+	repo.defaultWH = &defaultWH
+
+	billID := seedSaleDraftBill(repo, 2, uuid.New())
+	repo.billsByID[billID].WarehouseID = nil
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	uc := newApproveSaleUC(repo, stockUC, unitRepo, &mockPaymentRepo{})
+	if err := uc.Execute(context.Background(), appbill.ApproveSaleRequest{TenantID: testTenantID, BillID: billID, CreatorID: testCreatorID}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+
+	if len(stockUC.calls) != 2 {
+		t.Fatalf("stock movements = %d, want 2", len(stockUC.calls))
+	}
+	for _, c := range stockUC.calls {
+		if c.WarehouseID != defaultWH {
+			t.Errorf("movement warehouse = %s, want default %s", c.WarehouseID, defaultWH)
+		}
+	}
+	if repo.setWHCalls != 1 {
+		t.Errorf("SetBillWarehouse calls = %d, want 1", repo.setWHCalls)
+	}
+}
+
+// 没仓库也没默认仓：返回 ErrWarehouseRequired，库存零调用，状态不变。
+func TestApproveSale_NoWarehouseNoDefault_ReturnsWarehouseRequired(t *testing.T) {
+	repo := newMockBillRepo()
+	stockUC := newMockStockUC()
+	unitRepo := newMockProductUnitRepo()
+
+	billID := seedSaleDraftBill(repo, 2, uuid.New())
+	repo.billsByID[billID].WarehouseID = nil
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	uc := newApproveSaleUC(repo, stockUC, unitRepo, &mockPaymentRepo{})
+	err := uc.Execute(context.Background(), appbill.ApproveSaleRequest{TenantID: testTenantID, BillID: billID, CreatorID: testCreatorID})
+
+	if !errors.Is(err, appbill.ErrWarehouseRequired) {
+		t.Fatalf("err = %v, want ErrWarehouseRequired", err)
+	}
+	if len(stockUC.calls) != 0 {
+		t.Errorf("stock movements = %d, want 0", len(stockUC.calls))
+	}
+	if repo.billsByID[billID].Status != domain.StatusDraft {
+		t.Errorf("status = %d, want draft", repo.billsByID[billID].Status)
+	}
+}
+
+// ----- paid amount guards -----
+
+func seedSaleBillTotal(repo *mockBillRepo, billID uuid.UUID, total int64) {
+	repo.billsByID[billID].TotalAmount = decimal.NewFromInt(total)
+}
+
+// TestApproveSale_PaidExceedsTotal_RejectedBeforeAnyWrite verifies an over-tender is rejected
+// with ErrPaidExceedsTotal and leaves no stock movement, payment or status change behind.
+func TestApproveSale_PaidExceedsTotal_RejectedBeforeAnyWrite(t *testing.T) {
+	repo := newMockBillRepo()
+	stockUC := newMockStockUC()
+	unitRepo := newMockProductUnitRepo()
+	payRepo := newMockPaymentRepo()
+
+	billID := seedSaleDraftBill(repo, 1, uuid.New())
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+	seedSaleBillTotal(repo, billID, 20)
+
+	uc := newApproveSaleUC(repo, stockUC, unitRepo, payRepo)
+	err := uc.Execute(context.Background(), appbill.ApproveSaleRequest{
+		TenantID: testTenantID, BillID: billID, CreatorID: testCreatorID,
+		PaidAmount: decimal.NewFromInt(999),
+	})
+	if !errors.Is(err, appbill.ErrPaidExceedsTotal) {
+		t.Fatalf("err = %v, want ErrPaidExceedsTotal", err)
+	}
+	if len(stockUC.calls) != 0 {
+		t.Errorf("stock movements = %d, want 0", len(stockUC.calls))
+	}
+	if len(payRepo.recorded) != 0 {
+		t.Errorf("payments = %d, want 0", len(payRepo.recorded))
+	}
+	if repo.billsByID[billID].Status != domain.StatusDraft {
+		t.Errorf("status = %v, want draft", repo.billsByID[billID].Status)
+	}
+}
+
+// TestApproveSale_NegativePaid_ReturnsErrValidation verifies a negative payment is rejected.
+func TestApproveSale_NegativePaid_ReturnsErrValidation(t *testing.T) {
+	repo := newMockBillRepo()
+	stockUC := newMockStockUC()
+	billID := seedSaleDraftBill(repo, 1, uuid.New())
+
+	uc := newApproveSaleUC(repo, stockUC, newMockProductUnitRepo(), newMockPaymentRepo())
+	err := uc.Execute(context.Background(), appbill.ApproveSaleRequest{
+		TenantID: testTenantID, BillID: billID, CreatorID: testCreatorID,
+		PaidAmount: decimal.NewFromInt(-1),
+	})
+	if !errors.Is(err, appbill.ErrValidation) {
+		t.Fatalf("err = %v, want ErrValidation", err)
+	}
+	if len(stockUC.calls) != 0 {
+		t.Errorf("stock movements = %d, want 0", len(stockUC.calls))
+	}
+}
+
+// TestApproveSale_AlreadyApproved_WithPayment_ReturnsConflict verifies a repeat approval that
+// carries a payment is reported instead of dropping the payment, while a bare repeat stays idempotent.
+func TestApproveSale_AlreadyApproved_WithPayment_ReturnsConflict(t *testing.T) {
+	repo := newMockBillRepo()
+	stockUC := newMockStockUC()
+	unitRepo := newMockProductUnitRepo()
+	payRepo := newMockPaymentRepo()
+
+	billID := seedSaleDraftBill(repo, 1, uuid.New())
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+	seedSaleBillTotal(repo, billID, 20)
+
+	uc := newApproveSaleUC(repo, stockUC, unitRepo, payRepo)
+	base := appbill.ApproveSaleRequest{TenantID: testTenantID, BillID: billID, CreatorID: testCreatorID}
+	if err := uc.Execute(context.Background(), base); err != nil {
+		t.Fatalf("first approve: %v", err)
+	}
+
+	withPay := base
+	withPay.PaidAmount = decimal.NewFromInt(10)
+	if err := uc.Execute(context.Background(), withPay); !errors.Is(err, appbill.ErrBillAlreadyApproved) {
+		t.Fatalf("repeat with payment: err = %v, want ErrBillAlreadyApproved", err)
+	}
+	if len(payRepo.recorded) != 0 {
+		t.Errorf("payments = %d, want 0", len(payRepo.recorded))
+	}
+
+	if err := uc.Execute(context.Background(), base); err != nil {
+		t.Errorf("repeat without payment: err = %v, want nil", err)
+	}
+}
+
+// TestApproveSale_InvalidPayMethod_RejectedBeforeAnyWrite verifies an unknown payment
+// method is rejected instead of being silently booked as cash.
+func TestApproveSale_InvalidPayMethod_RejectedBeforeAnyWrite(t *testing.T) {
+	repo := newMockBillRepo()
+	stockUC := newMockStockUC()
+	unitRepo := newMockProductUnitRepo()
+	payRepo := newMockPaymentRepo()
+	billID := seedSaleDraftBill(repo, 1, uuid.New())
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	uc := newApproveSaleUC(repo, stockUC, unitRepo, payRepo)
+	err := uc.Execute(context.Background(), appbill.ApproveSaleRequest{
+		TenantID: testTenantID, BillID: billID, CreatorID: testCreatorID,
+		PaidAmount: decimal.NewFromInt(100), PayType: "bitcoin",
+	})
+	if !errors.Is(err, appbill.ErrInvalidPayMethod) {
+		t.Fatalf("err = %v, want ErrInvalidPayMethod", err)
+	}
+	if len(stockUC.calls) != 0 || len(payRepo.recorded) != 0 {
+		t.Errorf("stock calls = %d, payments = %d, want 0/0", len(stockUC.calls), len(payRepo.recorded))
+	}
+	if repo.billsByID[billID].Status != domain.StatusDraft {
+		t.Errorf("status changed to %d, want draft", repo.billsByID[billID].Status)
+	}
+}
+
+// TestApproveSale_EmptyPayMethod_DefaultsToCash keeps the unspecified method valid.
+func TestApproveSale_EmptyPayMethod_DefaultsToCash(t *testing.T) {
+	repo := newMockBillRepo()
+	unitRepo := newMockProductUnitRepo()
+	payRepo := newMockPaymentRepo()
+	billID := seedSaleDraftBill(repo, 1, uuid.New())
+	seedProductUnitFactors(unitRepo, repo.itemsByBillID[billID])
+
+	uc := newApproveSaleUC(repo, newMockStockUC(), unitRepo, payRepo)
+	if err := uc.Execute(context.Background(), appbill.ApproveSaleRequest{
+		TenantID: testTenantID, BillID: billID, CreatorID: testCreatorID,
+		PaidAmount: decimal.NewFromInt(100),
+	}); err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(payRepo.recorded) != 1 || payRepo.recorded[0].PayType != domainpayment.PayTypeCash {
+		t.Errorf("payments = %+v, want one cash payment", payRepo.recorded)
 	}
 }

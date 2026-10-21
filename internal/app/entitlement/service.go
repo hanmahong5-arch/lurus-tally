@@ -10,6 +10,8 @@ import (
 	"errors"
 	"log/slog"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -45,6 +47,10 @@ type Service struct {
 	tenants  TenantResolver
 	platform EntitlementsPort
 	log      *slog.Logger
+
+	// limits caches the parsed quota limits per tenant (see Limit).
+	limits sync.Map // uuid.UUID -> limitEntry
+	now    func() time.Time
 }
 
 // NewService constructs a Service. log may be nil (falls back to slog default).
@@ -52,7 +58,7 @@ func NewService(tenants TenantResolver, platform EntitlementsPort, log *slog.Log
 	if log == nil {
 		log = slog.Default()
 	}
-	return &Service{tenants: tenants, platform: platform, log: log}
+	return &Service{tenants: tenants, platform: platform, log: log, now: time.Now}
 }
 
 // Has reports whether the calling tenant's plan grants a truthy entitlement for

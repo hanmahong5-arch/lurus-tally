@@ -10,6 +10,7 @@ import (
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appsearch "github.com/hanmahong5-arch/lurus-tally/internal/app/search"
+	"github.com/hanmahong5-arch/lurus-tally/internal/domain/permission"
 )
 
 // Repo implements appsearch.EntityRepo using PostgreSQL.
@@ -68,17 +69,30 @@ func (r *Repo) SearchCustomers(ctx context.Context, tenantID uuid.UUID, q string
 }
 
 // SearchBills queries tally.bill_head by bill_no (ILIKE). Sublabel carries bill_type + sub_type.
+//
+// A caller without cost.view (permission.CostHidden) never gets purchase-side
+// bills (purchase and supplier returns): their numbers and ids lead to documents
+// that carry purchase prices.
 func (r *Repo) SearchBills(ctx context.Context, tenantID uuid.UUID, q string, limit int) ([]appsearch.EntityResult, error) {
-	const stmt = `
+	stmt := billSearchSQL(permission.CostHidden(ctx))
+	return r.scan(ctx, stmt, appsearch.EntityBill, tenantID, "%"+q+"%", limit)
+}
+
+// billSearchSQL builds the bill lookup; hidePurchase drops the purchase side
+// (purchase bills and supplier returns).
+func billSearchSQL(hidePurchase bool) string {
+	filter := ""
+	if hidePurchase {
+		filter = " AND sub_type NOT LIKE '采购%'"
+	}
+	return `
 		SELECT id::text, bill_no, bill_type || ' · ' || sub_type
 		FROM tally.bill_head
 		WHERE tenant_id = $1
 		  AND deleted_at IS NULL
-		  AND bill_no ILIKE $2
+		  AND bill_no ILIKE $2` + filter + `
 		ORDER BY created_at DESC
 		LIMIT $3`
-
-	return r.scan(ctx, stmt, appsearch.EntityBill, tenantID, "%"+q+"%", limit)
 }
 
 // scan is a shared scanner for the standard (id, label, sublabel) projection.

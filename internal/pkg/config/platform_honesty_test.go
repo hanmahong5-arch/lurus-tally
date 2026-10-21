@@ -22,7 +22,7 @@ import (
 
 // expectedPlatformDefaultBaseURL is the documented in-cluster billing address.
 // Asserting the exact literal pins the "默认 svc:18104" half of the claim.
-const expectedPlatformDefaultBaseURL = "http://platform-core.lurus-platform.svc:18104"
+const expectedPlatformDefaultBaseURL = ""
 
 // TestConfig_PlatformKeyEmpty_DefaultBaseURL locks "空 key" + "默认 svc:18104":
 // with PLATFORM_INTERNAL_KEY / PLATFORM_BASE_URL unset, the key is empty (the

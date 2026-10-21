@@ -354,8 +354,8 @@ func TestZZ_Chat_OrchestratorError_EmitsSSEErrorEvent_NotHTTP500(t *testing.T) {
 	for _, ev := range events {
 		if ev.Event == "error" {
 			sawError = true
-			if !strings.Contains(ev.Data, "upstream llm timeout") {
-				t.Errorf("expected error event data to contain the error message, got %q", ev.Data)
+			if strings.Contains(ev.Data, "upstream llm timeout") || !strings.Contains(ev.Data, "智能助手暂时没有响应") {
+				t.Errorf("expected a Chinese prompt without the internal error text, got %q", ev.Data)
 			}
 		}
 		if ev.Event == "done" {
@@ -460,7 +460,7 @@ func TestZZ_ConfirmPlan_ErrorMapping(t *testing.T) {
 		{"not_found", appai.ErrPlanNotFound, http.StatusNotFound},
 		{"expired", appai.ErrPlanExpired, http.StatusConflict},
 		{"execution_failed", appai.ErrPlanExecutionFailed, http.StatusUnprocessableEntity},
-		{"other_conflict", errors.New("some other domain conflict"), http.StatusConflict},
+		{"other_conflict", fmt.Errorf("conflict: %w", appai.ErrPlanNotPending), http.StatusConflict},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

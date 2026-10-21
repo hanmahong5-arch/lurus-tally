@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
@@ -62,7 +64,8 @@ type NotificationConfig struct {
 	// NATSPublisher is the NATS publisher used for async events. Required.
 	NATSPublisher adapternats.Publisher
 	// NotifyURL is the base URL for POST /internal/v1/notify.
-	// Defaults to "http://notification.lurus-platform.svc:18900".
+	// Empty disables the synchronous HTTP path (NotifySync returns
+	// ErrNotifyHTTPDisabled); the K8s configmap supplies the in-cluster URL.
 	NotifyURL string
 	// APIKey is the bearer token for the notification service.
 	APIKey string
@@ -70,15 +73,15 @@ type NotificationConfig struct {
 	HTTPTimeout time.Duration
 }
 
-const defaultNotifyURL = "http://notification.lurus-platform.svc:18900"
 const defaultHTTPTimeout = 5 * time.Second
+
+// ErrNotifyHTTPDisabled is returned by NotifySync when no NotifyURL is configured
+// (private bundles / local runs without the platform notification service).
+var ErrNotifyHTTPDisabled = errors.New("notification sync: PLATFORM_NOTIFY_URL not configured")
 
 // NewNotificationClient constructs a NotificationClient.
 func NewNotificationClient(cfg NotificationConfig) *NotificationClient {
-	notifyURL := cfg.NotifyURL
-	if notifyURL == "" {
-		notifyURL = defaultNotifyURL
-	}
+	notifyURL := strings.TrimRight(cfg.NotifyURL, "/")
 	timeout := cfg.HTTPTimeout
 	if timeout <= 0 {
 		timeout = defaultHTTPTimeout
@@ -116,6 +119,9 @@ func (c *NotificationClient) NotifyAsync(ctx context.Context, evt PSIEvent) erro
 // and waits for an HTTP 2xx response. Use for user-visible notifications that
 // need to appear immediately (e.g. payment confirmation).
 func (c *NotificationClient) NotifySync(ctx context.Context, req NotifyRequest) error {
+	if c.notifyURL == "" {
+		return ErrNotifyHTTPDisabled
+	}
 	data, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("notification sync: marshal request: %w", err)

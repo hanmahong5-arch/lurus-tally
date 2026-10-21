@@ -612,24 +612,27 @@ func TestIngestCancelOrder_Dedup_ReturnsExisting(t *testing.T) {
 	}
 }
 
-func TestIngestCancelOrder_MissingOriginal_ReturnsError(t *testing.T) {
+func TestIngestCancelOrder_MissingOriginal_SoftSkips(t *testing.T) {
 	repo := newMockRepo()
 	retCreator := &mockReturnCreator{}
 	retApprover := &mockReturnApprover{}
 
 	uc := buildUseCaseWithReturn(repo, &mockCreator{}, &mockApprover{}, retCreator, retApprover, newMockStockChecker(), newMockRater())
 
-	_, err := uc.IngestCancelOrder(context.Background(), appimporting.CancelRequest{
+	res, err := uc.IngestCancelOrder(context.Background(), appimporting.CancelRequest{
 		TenantID:        mustUUID(t),
 		CreatorID:       mustUUID(t),
 		Platform:        appimporting.PlatformShopify,
 		PlatformOrderNo: "#NEVER-IMPORTED",
 	})
-	if err == nil {
-		t.Fatal("expected error for unimported order, got nil")
+	if err != nil {
+		t.Fatalf("an order Tally never imported must not fail the webhook: %v", err)
 	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("expected 'not found' error, got: %v", err)
+	if !res.NothingToReverse {
+		t.Error("expected NothingToReverse for an unimported order")
+	}
+	if len(retCreator.created) != 0 {
+		t.Error("no reversal bill may be created for an unimported order")
 	}
 }
 
@@ -637,6 +640,7 @@ func TestIngestCancelOrder_MissingOriginal_ReturnsError(t *testing.T) {
 
 func TestIngestRefund_Happy(t *testing.T) {
 	repo := newMockRepo()
+	repo.seen["shopify:#3001"] = mustUUID(t)
 	retCreator := &mockReturnCreator{}
 	retApprover := &mockReturnApprover{}
 	rater := newMockRater()
@@ -717,6 +721,7 @@ func TestIngestRefund_Dedup_ReturnsExistingBillID(t *testing.T) {
 
 func TestIngestRefund_MissingOriginal_ReturnsError(t *testing.T) {
 	repo := newMockRepo()
+	repo.seen["shopify:#3003"] = mustUUID(t)
 	retCreator := &mockReturnCreator{}
 	retApprover := &mockReturnApprover{}
 

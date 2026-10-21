@@ -17,18 +17,22 @@ import (
 	"github.com/google/uuid"
 	handleracct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/account"
 	handlerai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/ai"
+	handleraudit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/audit"
 	handlerAuth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/auth"
 	handlerbill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/bill"
 	handlerbilling "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/billing"
 	handlercurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/currency"
+	handlercust "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/customer"
 	handlerdigest "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/digest"
 	handlerexport "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/export"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/health"
 	handlerhorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/horticulture"
 	handlerimporting "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/importing"
+	handlerinvoice "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/invoice"
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
 	handleronboarding "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/onboarding"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
+	handlerprint "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/print"
 	handlerprivacy "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/privacy"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
@@ -39,23 +43,28 @@ import (
 	handlershopify "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/shopify"
 	handlerstock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/stock"
 	handlersupp "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/supplier"
+	handlerteam "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/team"
 	handlertelemetry "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/telemetry"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
 	handlerwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/warehouse"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	adapternats "github.com/hanmahong5-arch/lurus-tally/internal/adapter/nats"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/platform"
+	adapterprint "github.com/hanmahong5-arch/lurus-tally/internal/adapter/print"
 	repoacct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/account"
 	repoai "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/ai"
+	repoaudit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/audit"
 	repoauth "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/auth"
 	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	repocurrency "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/currency"
+	repocustomer "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/customer"
 	repodau "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dau"
 	repodigest "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/digest"
 	repoerasure "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/erasure"
 	repooutbox "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/event_outbox"
 	repohorticulture "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/horticulture"
 	repoimporting "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/importing"
+	repoinvoice "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/invoice"
 	repoonboarding "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/onboarding"
 	repopayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/payment"
 	repoproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/product"
@@ -64,26 +73,34 @@ import (
 	reporeports "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/reports"
 	reposearch "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/search"
 	reposhopify "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/shopify"
+	reposku "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/sku"
 	repostock "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/stock"
 	reposupplier "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/supplier"
+	repoteam "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/team"
 	repotenant "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/tenant"
+	repotodo "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/todo"
 	repounit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/unit"
+	repousage "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/usage"
 	repousageoutbox "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/usage_report_outbox"
 	repowarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/warehouse"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/usagereport"
 	appacct "github.com/hanmahong5-arch/lurus-tally/internal/app/account"
 	appai "github.com/hanmahong5-arch/lurus-tally/internal/app/ai"
+	appaudit "github.com/hanmahong5-arch/lurus-tally/internal/app/audit"
 	appauth "github.com/hanmahong5-arch/lurus-tally/internal/app/auth"
 	appbill "github.com/hanmahong5-arch/lurus-tally/internal/app/bill"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
 	appcurrency "github.com/hanmahong5-arch/lurus-tally/internal/app/currency"
+	appcust "github.com/hanmahong5-arch/lurus-tally/internal/app/customer"
 	appdigest "github.com/hanmahong5-arch/lurus-tally/internal/app/digest"
 	appentitlement "github.com/hanmahong5-arch/lurus-tally/internal/app/entitlement"
 	apperasure "github.com/hanmahong5-arch/lurus-tally/internal/app/erasure"
 	appexport "github.com/hanmahong5-arch/lurus-tally/internal/app/export"
 	apphorticulture "github.com/hanmahong5-arch/lurus-tally/internal/app/horticulture"
 	appimporting "github.com/hanmahong5-arch/lurus-tally/internal/app/importing"
+	appinvoice "github.com/hanmahong5-arch/lurus-tally/internal/app/invoice"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
+	appprint "github.com/hanmahong5-arch/lurus-tally/internal/app/print"
 	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
 	appprojectuc "github.com/hanmahong5-arch/lurus-tally/internal/app/project"
 	appreplenish "github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
@@ -92,10 +109,13 @@ import (
 	appshopify "github.com/hanmahong5-arch/lurus-tally/internal/app/shopify"
 	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 	appsupp "github.com/hanmahong5-arch/lurus-tally/internal/app/supplier"
+	appteam "github.com/hanmahong5-arch/lurus-tally/internal/app/team"
 	apptenant "github.com/hanmahong5-arch/lurus-tally/internal/app/tenant"
+	apptodo "github.com/hanmahong5-arch/lurus-tally/internal/app/todo"
 	appunit "github.com/hanmahong5-arch/lurus-tally/internal/app/unit"
 	appwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/app/warehouse"
 	domainauth "github.com/hanmahong5-arch/lurus-tally/internal/domain/auth"
+	domainteam "github.com/hanmahong5-arch/lurus-tally/internal/domain/team"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/config"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmclient"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/llmgateway"
@@ -163,14 +183,17 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 	// Wire product use cases.
 	productRepo := repoproduct.New(db)
+	skuRepo := reposku.New(db)
+	productCreateUC := appproduct.NewCreateUseCase(productRepo).WithPriceWriter(skuRepo).WithTx(skuRepo)
+	productUpdateUC := appproduct.NewUpdateUseCase(productRepo).WithPriceWriter(skuRepo).WithTx(skuRepo)
 	productHandler := handlerproduct.New(
-		appproduct.NewCreateUseCase(productRepo),
+		productCreateUC,
 		appproduct.NewListUseCase(productRepo),
 		appproduct.NewGetUseCase(productRepo),
-		appproduct.NewUpdateUseCase(productRepo),
+		productUpdateUC,
 		appproduct.NewDeleteUseCase(productRepo),
 		appproduct.NewRestoreUseCase(productRepo),
-	)
+	).WithPriceLookup(skuRepo) // retail_price on product rows feeds the POS cart
 
 	// Wire unit use cases.
 	unitRepo := repounit.New(db)
@@ -178,7 +201,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appunit.NewCreateUseCase(unitRepo),
 		appunit.NewListUseCase(unitRepo),
 		appunit.NewDeleteUseCase(unitRepo),
-	)
+	).WithProductUnits(unitRepo)
 
 	// Wire tenant onboarding store. The BootstrapStore wraps *sql.DB and
 	// provides the atomic tenant+mapping+profile creation needed for first
@@ -189,7 +212,9 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// ChooseProfile (account provisioning) and the billing handler. Empty
 	// PLATFORM_INTERNAL_KEY → nil client → both code paths degrade gracefully.
 	var platClient *platform.Client
-	if cfg.PlatformInternalKey != "" {
+	if cfg.PlatformInternalKey != "" && cfg.PlatformBaseURL == "" {
+		l.Warn("platform integration disabled (PLATFORM_INTERNAL_KEY set but PLATFORM_BASE_URL empty)")
+	} else if cfg.PlatformInternalKey != "" {
 		pc, perr := platform.New(platform.Config{
 			BaseURL: cfg.PlatformBaseURL,
 			APIKey:  cfg.PlatformInternalKey,
@@ -203,6 +228,19 @@ func NewApp(cfg *config.Config) (*App, error) {
 	} else {
 		l.Warn("platform integration disabled (PLATFORM_INTERNAL_KEY not set)")
 	}
+
+	// Plan quota guard (members / SKUs / warehouses). PLAN_LIMITS=off|shadow|enforce;
+	// needs the platform client to read the plan's limits, so without it there is no guard.
+	planMode := appentitlement.ParseMode(cfg.PlanLimits)
+	var planGuard *appentitlement.Guard
+	if platClient != nil && planMode != appentitlement.ModeOff {
+		planGuard = appentitlement.NewGuard(
+			appentitlement.NewService(repotenant.NewTenantRepo(db), platClient, l),
+			planMode, repousage.New(db), l)
+		productCreateUC.WithPlanGuard(planGuard)
+		productUpdateUC.WithPlanGuard(planGuard)
+	}
+	l.Info("plan limits: " + string(planMode))
 
 	// Wire NATS publisher + notification client. When NATS_URL is empty or
 	// unreachable, NoOpFallback keeps the service bootable in dev.
@@ -255,11 +293,53 @@ func NewApp(cfg *config.Config) (*App, error) {
 		acctSetAvatar,
 		acctGetAvatar,
 	)
+	// Cloud receipt printer (Feie). No FEIE_USER/FEIE_UKEY -> nil: till prints through the browser.
+	cloudPrinter, err := adapterprint.NewPrinter(adapterprint.Config{User: cfg.FeieUser, UKey: cfg.FeieUKey, APIURL: cfg.FeieAPIURL})
+	if err != nil {
+		return nil, fmt.Errorf("cloud-print: %w", err)
+	}
+	var printBinder appacct.PrinterBinder
+	if cloudPrinter != nil {
+		printBinder = cloudPrinter
+		l.Info("cloud-print: enabled")
+	} else {
+		l.Info("cloud-print: disabled (FEIE_USER/FEIE_UKEY not set)")
+	}
+	acctPrintRepo := repoacct.NewPrintSettingsRepo(db)
+	accountHandler.WithPrintSettings(appacct.NewGetPrintSettings(acctPrintRepo), appacct.NewPutPrintSettings(acctPrintRepo).WithBinder(printBinder))
+	accountHandler.WithCashierMode(appacct.NewGetCashierMode(acctPrintRepo), appacct.NewSetCashierMode(acctPrintRepo))
+
+	// Shop team (members, roles, invites). Membership truth is the platform
+	// organization behind each shop: the real client when the platform internal
+	// key is configured, the local stand-in only under explicit TALLY_DEV_MODE,
+	// otherwise no client and the team endpoints answer 503 (everything else is
+	// unaffected). Role resolution then falls back to the stored role.
+	var teamOrg appteam.OrgClient
+	var teamAccounts appteam.AccountResolver
+	switch {
+	case platClient != nil:
+		teamOrg = platform.NewOrgClient(platClient)
+		teamAccounts = platform.NewAccountResolver(platClient)
+		l.Info("team: enabled (mode=platform)")
+	case cfg.DevMode:
+		devOrg, derr := platform.NewDevOrgClient(db, true)
+		if derr != nil {
+			return nil, fmt.Errorf("lifecycle: cannot init dev team stand-in: %w", derr)
+		}
+		teamOrg, teamAccounts = devOrg, devOrg
+		l.Warn("team: enabled (mode=dev-local) — local stand-in for platform organizations, never prod")
+	default:
+		l.Warn("team: disabled (PLATFORM_INTERNAL_KEY not set); team endpoints return 503")
+	}
+	teamSvc := appteam.NewService(repoteam.New(db), teamOrg, teamAccounts, l)
+	if planGuard != nil {
+		teamSvc.WithPlanGuard(planGuard)
+	}
 
 	authHandler := handlerAuth.New(
-		apptenant.NewChooseProfileUseCase(tenantStore, platClient, l),
-		apptenant.NewGetMeUseCase(tenantStore).WithProfileGetter(acctGetProfile),
-	)
+		apptenant.NewChooseProfileUseCase(tenantStore, platClient, l).WithOrgProvisioner(teamSvc),
+		apptenant.NewGetMeUseCase(tenantStore).WithProfileGetter(acctGetProfile).WithRoleResolver(teamSvc).WithShopNamer(teamSvc),
+	).WithTeam(handlerteam.New(teamSvc))
 
 	// Wire transactional outbox store. Shared between the use case (Enqueue) and
 	// the background drain worker. Using the same *sql.DB pool is safe — Enqueue
@@ -281,19 +361,45 @@ func NewApp(cfg *config.Config) (*App, error) {
 		// reusing the replenish engine's learned demand + lead-time intelligence
 		// (zero-config). Same tenant-pinned RLS access as /replenish/suggestions.
 		appreplenish.NewListLowStockUseCase(reporepl.NewSQLSuggestionRepo(db)),
+	).WithAdjust(appstock.NewAdjustUseCase(stockRepo, recordMovementUC)).WithProductNames(stockRepo) // stock count: POST /stock/adjustments; names the unpriced products in a clerk's refusal
+
+	// Bulk product import (POST /products/import): product + default SKU + barcode + opening
+	// stock per row in one transaction. The route rides the stock handler's router group so
+	// router.New keeps its signature; it still passes auth, tenant-DB and idempotency middleware.
+	productImportUC := appproduct.NewImportUseCase(
+		appproduct.NewCreateUseCase(productRepo).WithPriceWriter(skuRepo).WithTx(skuRepo),
+		productRepo,
+		importUnits{repo: unitRepo},
+		importWarehouses{repo: repowarehouse.New(db)},
+		importOpeningStock{uc: recordMovementUC},
+		skuRepo,
 	)
+	if planGuard != nil {
+		productImportUC.WithPlanGuard(planGuard)
+	}
+	productHandler.WithImporter(productImportUC)
+	stockHandler.WithExtraRoutes(productHandler.RegisterImportRoutes)
 
 	// Wire bill use cases (Story 6.1: purchase receipt baseline).
 	billRepo := repobill.New(db)
+	// Cloud receipt printing: POST /print/receipts + /tenant/printer/{status,test} ride the stock
+	// handler's router group (auth, tenant-DB, permission middleware) so router.New keeps its signature.
+	printUC := appprint.New(billRepo, stockRepo, appacct.NewGetPrintSettings(acctPrintRepo), cloudPrinter).
+		WithReceiptExtras(repopayment.New(db), repoteam.New(db))
+	stockHandler.WithExtraRoutes(handlerprint.New(printUC).RegisterRoutes)
+	paymentRepo := repopayment.New(db)
 	billHandler := handlerbill.New(
 		appbill.NewCreatePurchaseDraftUseCase(billRepo),
-		appbill.NewUpdatePurchaseDraftUseCase(billRepo),
-		appbill.NewApprovePurchaseUseCase(billRepo, recordMovementUC, unitRepo),
+		appbill.NewUpdatePurchaseDraftUseCase(billRepo).WithUnitRepo(unitRepo),
+		appbill.NewApprovePurchaseUseCase(billRepo, recordMovementUC, unitRepo).WithPayments(paymentRepo),
 		appbill.NewCancelPurchaseUseCase(billRepo),
 		appbill.NewListPurchasesUseCase(billRepo),
 		appbill.NewGetPurchaseUseCase(billRepo),
 		appbill.NewRestorePurchaseUseCase(billRepo),
-	)
+	).WithReceivables(appbill.NewReceivablesUseCase(billRepo)).
+		WithPurchaseReturn(appbill.NewPurchaseReturnUseCase(billRepo, recordMovementUC).WithUnitRepo(unitRepo).WithPayments(paymentRepo)).
+		WithLastPrices(appbill.NewLastPricesUseCase(billRepo).WithDefaultPrices(skuRepo)).
+		WithProductNames(stockRepo) // names the products in a 422 zero_price_lines refusal
 
 	// Wire currency use cases (Story 9.1: multi-currency + manual exchange rate entry).
 	currencyRepo := repocurrency.New(db)
@@ -305,12 +411,16 @@ func NewApp(cfg *config.Config) (*App, error) {
 	)
 
 	// Wire sale + payment use cases (Story 7.1: sales shipment + POS checkout).
-	paymentRepo := repopayment.New(db)
 	approveSaleUC := appbill.NewApproveSaleUseCase(billRepo, recordMovementUC, unitRepo, paymentRepo)
 	quickCheckoutUC := appbill.NewQuickCheckoutUseCase(billRepo, approveSaleUC)
 	recordPaymentUC := apppayment.NewRecordPaymentUseCase(billRepo, paymentRepo)
 	listPaymentsUC := apppayment.NewListPaymentsUseCase(paymentRepo)
 
+	saleReturnUC := appbill.NewReturnSaleUseCase(
+		billRepo,
+		appbill.NewCreateReturnBillUseCase(billRepo).WithUnitRepo(unitRepo),
+		appbill.NewApproveReturnBillUseCase(billRepo, recordMovementUC).WithUnitRepo(unitRepo),
+	).WithUnitRepo(unitRepo)
 	saleHandler := handlerbill.NewSaleHandler(
 		appbill.NewCreateSaleUseCase(billRepo),
 		approveSaleUC,
@@ -319,18 +429,27 @@ func NewApp(cfg *config.Config) (*App, error) {
 		billRepo,
 		quickCheckoutUC,
 		listPaymentsUC,
-	)
-	paymentHandler := handlerpayment.New(recordPaymentUC, listPaymentsUC)
+	).WithReturn(saleReturnUC).WithRefunds(appbill.NewSaleRefundUseCase(billRepo, saleReturnUC, paymentRepo)).
+		WithMemberNames(repoteam.New(db))
+	paymentHandler := handlerpayment.New(recordPaymentUC, listPaymentsUC).
+		WithReceipts(apppayment.NewReceiptUseCase(billRepo, billRepo, paymentRepo), apppayment.NewStatementUseCase(billRepo))
 
 	// Wire billing → platform integration. Uses the same platClient already
 	// built above for account provisioning. nil client → 501 on /billing/*.
-	var billingHandler *handlerbilling.Handler
+	subLock := buildSubscriptionLock(cfg.DevMode, platClient, db)
+	// The handler is always mounted: /subscription/state must answer without a
+	// platform (never locked); the platform-backed routes answer 501 until it is wired.
+	billingHandler := handlerbilling.New(handlerbilling.UnconfiguredSubscribe{}, handlerbilling.UnconfiguredOverview{}).WithLock(subLock)
 	if platClient != nil {
 		billingHandler = handlerbilling.New(
 			appbilling.NewSubscribeUseCase(platClient),
 			appbilling.NewOverviewUseCase(platClient),
-		)
+		).WithLock(subLock)
 		l.Info("billing integration enabled")
+	}
+
+	if planGuard != nil {
+		billingHandler = billingHandler.WithLimits(planGuard)
 	}
 
 	// Hoisted Redis client. Per-user DAU counting, the idempotency dedup layer,
@@ -347,12 +466,16 @@ func NewApp(cfg *config.Config) (*App, error) {
 		rdb = redis.NewClient(rdbOpts)
 	}
 
-	// Wire AI assistant. Requires NEWAPI_API_KEY; when absent, AI routes return 501.
+	// Wire AI assistant. Requires NEWAPI_API_KEY; when absent, AI routes return 503 ai_not_configured.
 	// The AI plan store reuses the hoisted Redis client above.
 	var aiHandler *handlerai.Handler
 	var usageReporter *usagereport.Reporter
 	var usageRetryCancel context.CancelFunc // cancels the usage durable-retry worker on Stop
-	if cfg.NewAPIKey != "" {
+	llmgateway.SetModelPrices(cfg.LLMModelPricesCNY)
+	// The model name has no built-in default: key set but model unset stays off.
+	if cfg.NewAPIKey != "" && cfg.DefaultAIModel != "" && cfg.NewAPIBaseURL == "" {
+		l.Warn("AI assistant disabled (NEWAPI_API_KEY set but NEWAPI_BASE_URL empty)")
+	} else if cfg.NewAPIKey != "" && cfg.DefaultAIModel != "" {
 		if rdb == nil {
 			return nil, fmt.Errorf("lifecycle: AI assistant requires REDIS_URL (NEWAPI_API_KEY is set but Redis is unavailable)")
 		}
@@ -377,6 +500,25 @@ func NewApp(cfg *config.Config) (*App, error) {
 			repoai.NewSQLExchangeRateRepo(db),
 		)
 		orchestrator := appai.NewOrchestrator(llmClient, registry, planStore, cfg.DefaultAIModel)
+		// Per-task model routing (AI_MODEL_CHAT / AI_MODEL_EXTRACT). Both unset
+		// → nil-equivalent router → every task uses DefaultAIModel as before.
+		if modelRouter := llmclient.NewRouter(map[llmclient.Task]string{
+			llmclient.TaskChat:    cfg.AIModelChat,
+			llmclient.TaskExtract: cfg.AIModelExtract,
+		}); modelRouter.Configured() {
+			orchestrator.WithModelRouter(modelRouter)
+			chatModel := cfg.AIModelChat
+			if chatModel == "" {
+				chatModel = cfg.DefaultAIModel
+			}
+			l.Info("AI model routing enabled", slog.String("chat", chatModel))
+			// Dictated purchase drafts are cross-checked against a second,
+			// schema-bound reading on the extract model.
+			if cfg.AIModelExtract != "" {
+				orchestrator.WithExtractor(appai.NewExtractor(llmClient, modelRouter, cfg.DefaultAIModel))
+				l.Info("AI draft cross-check enabled", slog.String("extract", cfg.AIModelExtract))
+			}
+		}
 		// Attribute AI-drawer memories to the customer a message names, so
 		// recall about one customer never carries another's notes.
 		orchestrator.WithCustomerResolver(aiSaleRepo)
@@ -434,7 +576,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 			// mapping the usage reporter uses — not per-user sub. This makes the gate
 			// correct for non-owner members and PAT/automation callers too.
 			entSvc := appentitlement.NewService(repotenant.NewTenantRepo(db), platClient, l)
-			aiHandler = aiHandler.WithEntitlementGate(middleware.RequireEntitlement(entSvc, "ai_assistant"))
+			aiHandler = aiHandler.WithEntitlementGate(middleware.RequireEntitlementCode(entSvc, "ai_assistant", handlerai.ErrCodeNotEntitled))
 		}
 		// Attach LLM span tracer (env LANGFUSE_* → OTLP exporter; missing → no-op).
 		WireTracer(orchestrator, BuildTracer(cfg))
@@ -473,7 +615,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 			slog.String("newapi_url", cfg.NewAPIBaseURL),
 			slog.Int("llm_rate_limit_per_min", limiter.Limit()))
 	} else {
-		l.Warn("AI assistant disabled (NEWAPI_API_KEY not set)")
+		l.Warn("AI assistant disabled (NEWAPI_API_KEY or DEFAULT_AI_MODEL not set)")
 	}
 
 	// Build AuthMiddleware when OIDC_ISSUER is set. In dev it can be empty;
@@ -629,12 +771,34 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appsupp.NewUpdateUseCase(suppRepo),
 		appsupp.NewDeleteUseCase(suppRepo),
 		appsupp.NewRestoreUseCase(suppRepo),
+	).WithImporter(appsupp.NewImportUseCase(suppRepo, appsupp.NewCreateUseCase(suppRepo)))
+
+	// Wire customer list/get/create (rows of tally.partner, partner_type='customer').
+	custRepo := repocustomer.New(db)
+	customerHandler := handlercust.New(
+		appcust.NewCreateUseCase(custRepo),
+		appcust.NewGetByIDUseCase(custRepo),
+		appcust.NewListUseCase(custRepo),
+	).WithImporter(appcust.NewImportUseCase(custRepo, appcust.NewCreateUseCase(custRepo)))
+
+	// Wire the invoice registry (offline-issued tax invoices linked to approved bills).
+	invRepo := repoinvoice.New(db)
+	invoiceHandler := handlerinvoice.New(
+		appinvoice.NewCreateUseCase(invRepo),
+		appinvoice.NewGetUseCase(invRepo),
+		appinvoice.NewListUseCase(invRepo),
+		appinvoice.NewVoidUseCase(invRepo),
+		appinvoice.NewRedUseCase(invRepo),
 	)
 
 	// Wire warehouse CRUD (W3.D1).
 	whRepo := repowarehouse.New(db)
+	warehouseCreateUC := appwarehouse.NewCreateUseCase(whRepo)
+	if planGuard != nil {
+		warehouseCreateUC.WithPlanGuard(planGuard)
+	}
 	warehouseHandler := handlerwarehouse.New(
-		appwarehouse.NewCreateUseCase(whRepo),
+		warehouseCreateUC,
 		appwarehouse.NewGetByIDUseCase(whRepo),
 		appwarehouse.NewListUseCase(whRepo),
 		appwarehouse.NewUpdateUseCase(whRepo),
@@ -650,7 +814,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appexport.NewStockExportUseCase(db, l),
 		appexport.NewPaymentsExportUseCase(db, l),
 		l,
-	)
+	).WithAllExporter(appexport.NewAllExportUseCase(db, l))
 
 	// Build readiness probe deps. DB is required (service can't function without it);
 	// Redis is optional — only present when AI is enabled, and even then a Redis
@@ -671,6 +835,8 @@ func NewApp(cfg *config.Config) (*App, error) {
 	if rdb != nil {
 		idempotencyMW = middleware.Idempotency(middleware.NewIdempotencyRedisStore(rdb))
 	}
+	// /me tells the web whether the offline checkout queue may be used: it needs the Redis idempotency store.
+	authHandler.WithOfflineQueueAvailable(idempotencyMW != nil)
 
 	// PAT CRUD handler — reuses the same patRepo wired into the auth middleware.
 	patHandler := handlerAuth.NewPATHandler(repoauth.New(db))
@@ -709,15 +875,23 @@ func NewApp(cfg *config.Config) (*App, error) {
 		"CNY",
 	)
 	importUC.WithReturnHandlers(
-		importReturnCreator{uc: appbill.NewCreateReturnBillUseCase(billRepo)},
-		importReturnApprover{uc: appbill.NewApproveReturnBillUseCase(billRepo, recordMovementUC)},
+		importReturnCreator{uc: appbill.NewCreateReturnBillUseCase(billRepo).WithUnitRepo(unitRepo)},
+		importReturnApprover{uc: appbill.NewApproveReturnBillUseCase(billRepo, recordMovementUC).WithUnitRepo(unitRepo)},
 	)
 	importHandler := handlerimporting.New(importUC, uuid.Nil)
 
 	// Wave-2 handlers — weekly digest (Req 9) + onboarding wizard (Req 7).
 	// Monday digest reuses the replenish suggestion repo so its replenishment
 	// count + amount match the dashboard low-stock alert (one ROP definition).
-	digestHandler := handlerdigest.New(appdigest.NewWeeklySummaryUseCase(repodigest.New(db), replenishRepo))
+	digestHandler := handlerdigest.New(appdigest.NewWeeklySummaryUseCase(repodigest.New(db), replenishRepo)).
+		WithTodo(apptodo.New(
+			billRepo,
+			appreplenish.NewListLowStockUseCase(replenishRepo),
+			appbill.NewReceivablesUseCase(billRepo),
+			repotodo.New(db),
+		).WithNegativeStock(repotodo.New(db))).
+		WithAIEnabled(func() bool { return aiHandler != nil }).
+		WithCloudPrintAvailable(printUC.Available)
 	onboardingHandler := handleronboarding.New(
 		appproduct.NewCreateUseCase(productRepo),
 		recordMovementUC,
@@ -727,11 +901,25 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// Per-request tenant pin. Sets app.tenant_id on a dedicated connection so the
 	// RLS policies (migration 000042) enforce isolation at the database. Mounted
 	// after auth (needs tenant_id) and before idempotency.
-	tenantDBMW := middleware.TenantDB(db)
+	// The shop role (owner/manager/clerk/cashier/finance) is resolved in the same slot:
+	// auth middleware calls Next() itself, so the role step is composed in front of the
+	// tenant pin. A person who is no longer a member loses the tenant here.
+	tenantDBMW := middleware.WithShopRole(func(ctx context.Context, tenantID uuid.UUID, sub string) (domainteam.Role, error) {
+		role, err := teamSvc.ResolveRole(ctx, tenantID, sub)
+		if errors.Is(err, appteam.ErrNotMember) {
+			return "", middleware.ErrNotShopMember
+		}
+		return role, err
+	}, middleware.TenantDB(db))
+
+	// Operation log (who approved / voided / changed which bill): the recorder is a
+	// guard on the main /api/v1 group; the read route hangs off its own group below.
+	auditRepo := repoaudit.New(db)
 
 	r := router.New(h, authMW, tenantDBMW, idempotencyMW, productHandler, unitHandler, authHandler, patHandler, stockHandler,
 		billHandler, currencyHandler, saleHandler, paymentHandler, billingHandler, aiHandler, dictHandler, projectHandler, metricsHandler, supplierHandler, warehouseHandler, exportHandler, accountHandler,
-		replenishHandler, reportsHandler, searchHandler, importHandler, digestHandler, onboardingHandler)
+		replenishHandler, reportsHandler, searchHandler, importHandler, digestHandler, onboardingHandler, customerHandler, invoiceHandler,
+		middleware.SubscriptionGuard(subLock), handleraudit.Recorder(auditRepo))
 
 	// Per-user DAU (S0.C1). Backed by the hoisted Redis client; when Redis is
 	// absent the telemetry handler skips counting and the collector is not
@@ -783,6 +971,8 @@ func NewApp(cfg *config.Config) (*App, error) {
 		shopifyAdminGroup.Use(authMW)
 	}
 	shopifyAdminGroup.Use(tenantDBMW) // after auth, before idempotency (same order as the main group)
+	shopifyAdminGroup.Use(middleware.EnforceRoutePerms())
+	shopifyAdminGroup.Use(middleware.SubscriptionGuard(subLock)) // same checker as the main group: lapsed plan => read-only
 	if idempotencyMW != nil {
 		shopifyAdminGroup.Use(idempotencyMW)
 	}
@@ -794,6 +984,16 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appshopify.NewUnbindShopUseCase(shopRepo),
 	)
 	shopifyAdminHandler.RegisterRoutes(shopifyAdminGroup)
+
+	// /api/v1/audit — operation log (audit.view). Same middleware order as the main group.
+	auditGroup := r.Group("/api/v1")
+	if authMW != nil {
+		auditGroup.Use(authMW)
+	}
+	auditGroup.Use(tenantDBMW)
+	auditGroup.Use(middleware.EnforceRoutePerms())
+	auditGroup.Use(middleware.SubscriptionGuard(subLock)) // read-only today; keeps any future write route under the same lock
+	handleraudit.New(appaudit.NewListUseCase(auditRepo, repoteam.New(db))).RegisterRoutes(auditGroup)
 
 	srv := newServer(":"+cfg.Port, r)
 
@@ -815,6 +1015,12 @@ func NewApp(cfg *config.Config) (*App, error) {
 			l.Warn("audit subscriber: NATS connect failed, account_audit_log will not be populated",
 				slog.String("error", ncErr.Error()))
 		} else {
+			if teamSvc.Available() {
+				if _, evErr := platform.SubscribeOrgMemberEvents(nc, teamSvc, l); evErr != nil {
+					l.Warn("team: member event subscription failed, roles refresh via the 60s cache TTL",
+						slog.String("error", evErr.Error()))
+				}
+			}
 			sub, subErr := adapternats.NewAuditSubscriber(nc, acctAppendAudit, l)
 			if subErr != nil {
 				l.Warn("audit subscriber: init failed",

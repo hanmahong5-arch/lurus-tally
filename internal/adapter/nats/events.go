@@ -67,6 +67,8 @@ var AllowedWebTelemetryEvents = map[string]struct{}{
 	// web/lib/telemetry.ts and web/app/api/otel-events/route.ts VALID_EVENTS;
 	// absent here = backend 400-rejects the event = North Star never recorded.
 	"wad_increment": {},
+	// Browser-side errors, logged by the telemetry handler for per-tenant search.
+	"web_error": {},
 }
 
 // SubjectWebTelemetry returns the JetStream subject for a web telemetry

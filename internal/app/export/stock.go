@@ -14,7 +14,7 @@ import (
 
 const stockRowLimit = 50_000
 
-var stockHeader = []string{"商品编码", "商品名", "仓库", "在库", "单位成本"}
+var stockHeader = []string{"商品编码", "商品名", "仓库", "在库", "单位成本", "库存金额"}
 
 // StockExportUseCase streams stock_snapshot rows joined with product info as CSV.
 type StockExportUseCase struct {
@@ -41,11 +41,13 @@ func (uc *StockExportUseCase) Execute(ctx context.Context, tenantID uuid.UUID, w
 		SELECT
 			COALESCE(p.code, ''),
 			COALESCE(p.name, ''),
-			ss.warehouse_id::text,
+			COALESCE(wh.name, ''),
 			ss.on_hand_qty,
-			ss.unit_cost
+			ss.unit_cost,
+			ROUND(ss.on_hand_qty * ss.unit_cost, 2)
 		FROM tally.stock_snapshot ss
 		LEFT JOIN tally.product p ON p.id = ss.product_id AND p.tenant_id = ss.tenant_id
+		LEFT JOIN tally.warehouse wh ON wh.id = ss.warehouse_id AND wh.tenant_id = ss.tenant_id
 		WHERE ss.tenant_id = $1
 		ORDER BY p.code ASC NULLS LAST
 		LIMIT $2`
@@ -63,20 +65,20 @@ func (uc *StockExportUseCase) Execute(ctx context.Context, tenantID uuid.UUID, w
 
 	count := 0
 	for rows.Next() {
-		var code, name, warehouseID, onHandQty, unitCost string
-		if err := rows.Scan(&code, &name, &warehouseID, &onHandQty, &unitCost); err != nil {
+		var code, name, warehouseName, onHandQty, unitCost, value string
+		if err := rows.Scan(&code, &name, &warehouseName, &onHandQty, &unitCost, &value); err != nil {
 			return count, fmt.Errorf("export stock: scan row: %w", err)
 		}
 		if count == uc.rowLimit {
 			uc.log.Warn("export stock: result truncated at row limit",
 				slog.String("tenant_id", tenantID.String()),
 				slog.Int("limit", uc.rowLimit))
-			if err := cw.Write([]string{"[截断]", fmt.Sprintf("数据超过 %d 行限制", uc.rowLimit), "", "", ""}); err != nil {
+			if err := cw.Write([]string{"[截断]", fmt.Sprintf("数据超过 %d 行限制", uc.rowLimit), "", "", "", ""}); err != nil {
 				return count, fmt.Errorf("export stock: write truncation note: %w", err)
 			}
 			break
 		}
-		if err := cw.Write([]string{code, name, warehouseID, onHandQty, unitCost}); err != nil {
+		if err := cw.Write([]string{code, name, warehouseName, onHandQty, unitCost, value}); err != nil {
 			return count, fmt.Errorf("export stock: write row: %w", err)
 		}
 		count++

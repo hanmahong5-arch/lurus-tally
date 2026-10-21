@@ -7,10 +7,15 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/google/uuid"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	appbilling "github.com/hanmahong5-arch/lurus-tally/internal/app/billing"
+	"github.com/hanmahong5-arch/lurus-tally/internal/app/entitlement"
+	"github.com/hanmahong5-arch/lurus-tally/internal/app/subscription"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/platformclient"
 )
@@ -29,11 +34,91 @@ type OverviewExecutor interface {
 type Handler struct {
 	subscribe SubscribeExecutor
 	overview  OverviewExecutor
+	lock      subscription.Checker
+	limits    LimitsReporter
+
+	now         func() time.Time
+	refreshMu   sync.Mutex
+	lastRefresh map[uuid.UUID]time.Time
+}
+
+// RefreshInterval is the minimum gap between two real refreshes of one shop.
+const RefreshInterval = 10 * time.Second
+
+// ErrNotConfigured is returned by the executors of a deployment without a
+// billing platform; it is answered with 501.
+var ErrNotConfigured = errors.New("billing platform not configured")
+
+// UnconfiguredSubscribe is the SubscribeExecutor used when no platform is wired.
+type UnconfiguredSubscribe struct{}
+
+// Execute always reports ErrNotConfigured.
+func (UnconfiguredSubscribe) Execute(context.Context, appbilling.SubscribeInput) (*appbilling.SubscribeOutput, error) {
+	return nil, ErrNotConfigured
+}
+
+// UnconfiguredOverview is the OverviewExecutor used when no platform is wired.
+type UnconfiguredOverview struct{}
+
+// Execute always reports ErrNotConfigured.
+func (UnconfiguredOverview) Execute(context.Context, string) (*platformclient.AccountOverview, error) {
+	return nil, ErrNotConfigured
 }
 
 // New constructs a Handler.
 func New(subscribe SubscribeExecutor, overview OverviewExecutor) *Handler {
-	return &Handler{subscribe: subscribe, overview: overview}
+	return &Handler{subscribe: subscribe, overview: overview, now: time.Now, lastRefresh: map[uuid.UUID]time.Time{}}
+}
+
+// WithLock makes Overview report whether the shop is read-only because its plan lapsed.
+func (h *Handler) WithLock(c subscription.Checker) *Handler {
+	h.lock = c
+	return h
+}
+
+// LimitsReporter reports the plan limits and current usage of a shop
+// (*entitlement.Guard satisfies it).
+type LimitsReporter interface {
+	Status(ctx context.Context, tenantID uuid.UUID) map[string]entitlement.LimitStatus
+	Mode() entitlement.Mode
+}
+
+// WithLimits makes /subscription/state carry the plan limits and usage.
+func (h *Handler) WithLimits(r LimitsReporter) *Handler {
+	h.limits = r
+	return h
+}
+
+// WithClock replaces the clock used for refresh throttling (tests).
+func (h *Handler) WithClock(now func() time.Time) *Handler {
+	h.now = now
+	return h
+}
+
+// invalidate drops the cached subscription verdict of a shop, if the checker caches.
+func (h *Handler) invalidate(tenantID uuid.UUID) {
+	if inv, ok := h.lock.(subscription.Invalidator); ok {
+		inv.Invalidate(tenantID)
+	}
+}
+
+// allowRefresh reports whether a real refresh may run now, and records it.
+func (h *Handler) allowRefresh(tenantID uuid.UUID) bool {
+	h.refreshMu.Lock()
+	defer h.refreshMu.Unlock()
+	now := h.now()
+	if last, ok := h.lastRefresh[tenantID]; ok && now.Sub(last) < RefreshInterval {
+		return false
+	}
+	h.lastRefresh[tenantID] = now
+	return true
+}
+
+// overviewResponse is the platform overview plus the shop lock flag.
+type overviewResponse struct {
+	*platformclient.AccountOverview
+	Locked      bool   `json:"locked"`
+	LockMessage string `json:"lock_message,omitempty"`
 }
 
 // RegisterRoutes mounts billing endpoints onto the given router group.
@@ -42,6 +127,32 @@ func New(subscribe SubscribeExecutor, overview OverviewExecutor) *Handler {
 func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	rg.GET("/billing/overview", h.Overview)
 	rg.POST("/billing/subscribe", h.Subscribe)
+	rg.GET("/subscription/state", h.LockState)
+}
+
+// LockState handles GET /api/v1/subscription/state. Every member may read it:
+// the back-office banner needs it for all roles, and it carries no money, only
+// whether the shop is read-only. It never calls the platform on the request
+// path beyond the cached checker, and any failure reads as not locked.
+func (h *Handler) LockState(c *gin.Context) {
+	resp := gin.H{"locked": false, "refreshed": false}
+	if h.lock != nil {
+		tid := middleware.GetTenantID(c)
+		if c.Query("refresh") == "1" && h.allowRefresh(tid) {
+			h.invalidate(tid)
+			resp["refreshed"] = true
+		}
+		if st := h.lock.State(c.Request.Context(), tid); st.Locked {
+			resp["locked"] = true
+			resp["lock_message"] = subscription.LockedMessage
+		}
+	}
+	if h.limits != nil {
+		if st := h.limits.Status(c.Request.Context(), middleware.GetTenantID(c)); st != nil {
+			resp["limits"] = st
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // subscribeRequest is the body of POST /api/v1/billing/subscribe.
@@ -88,6 +199,9 @@ func (h *Handler) Subscribe(c *gin.Context) {
 		return
 	}
 
+	if out.Subscription != nil && h.lock != nil {
+		h.invalidate(middleware.GetTenantID(c))
+	}
 	c.JSON(http.StatusOK, subscribeResponse{
 		OrderNo:      out.OrderNo,
 		PayURL:       out.PayURL,
@@ -107,7 +221,14 @@ func (h *Handler) Overview(c *gin.Context) {
 		writePlatformError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, ov)
+	resp := overviewResponse{AccountOverview: ov}
+	if h.lock != nil {
+		if st := h.lock.State(c.Request.Context(), middleware.GetTenantID(c)); st.Locked {
+			resp.Locked = true
+			resp.LockMessage = subscription.LockedMessage
+		}
+	}
+	c.JSON(http.StatusOK, resp)
 }
 
 // callerSub returns the IdP subject that AuthMiddleware injected into the
@@ -127,6 +248,10 @@ func callerSub(c *gin.Context) string {
 // writePlatformError translates use-case / platform errors into HTTP responses
 // with stable error codes the frontend can branch on.
 func writePlatformError(c *gin.Context, err error) {
+	if errors.Is(err, ErrNotConfigured) {
+		c.JSON(http.StatusNotImplemented, gin.H{"error": "handler not configured"})
+		return
+	}
 	if errors.Is(err, appbilling.ErrUnauthenticated) {
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized", "detail": err.Error()})
 		return

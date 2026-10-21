@@ -195,13 +195,17 @@ func (r *Repo) IsCancelSeen(ctx context.Context, tenantID uuid.UUID, platform, o
 }
 
 // MarkCancelSeen records a processed order cancellation.
-// Duplicate inserts are silently ignored (idempotent).
+// Duplicate inserts are silently ignored (idempotent), except that a real reversal id
+// replaces a nothing-to-reverse marker left by a racing delivery.
 func (r *Repo) MarkCancelSeen(ctx context.Context, tenantID uuid.UUID, platform, orderNo string, originalBillID, reversalBillID uuid.UUID) error {
 	const q = `
 		INSERT INTO tally.import_order_cancel_seen
 			(id, tenant_id, platform, platform_order_no, original_bill_id, reversal_bill_id, cancelled_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (tenant_id, platform, platform_order_no) DO NOTHING`
+		ON CONFLICT (tenant_id, platform, platform_order_no) DO UPDATE
+		SET original_bill_id = EXCLUDED.original_bill_id, reversal_bill_id = EXCLUDED.reversal_bill_id
+		WHERE import_order_cancel_seen.reversal_bill_id = '00000000-0000-0000-0000-000000000000'
+		  AND EXCLUDED.reversal_bill_id <> '00000000-0000-0000-0000-000000000000'`
 
 	dbh := dbscope.From(ctx, r.db)
 	_, err := dbh.ExecContext(ctx, q,

@@ -1,32 +1,65 @@
 package llmgateway
 
-// modelPriceCNY is the per-1k-token price in CNY for each known model.
-// Edit here when newapi adds new models or vendor adjusts pricing.
-// Unknown models fall back to zero price + the "unknown" model label.
+import (
+	"strconv"
+	"strings"
+	"sync/atomic"
+)
+
+// pricePerKToken is the per-1k-token price in CNY for one priced model.
 type pricePerKToken struct {
 	prompt     float64
 	completion float64
 }
 
-var modelPriceCNY = map[string]pricePerKToken{
-	// DeepSeek v4 (Lurus default via newapi). Source: newapi pricing page 2026-05.
-	"deepseek-v4":       {prompt: 0.002, completion: 0.008},
-	"deepseek-chat":     {prompt: 0.002, completion: 0.008},
-	"deepseek-reasoner": {prompt: 0.004, completion: 0.016},
+// modelPrices holds the priced-model table. It has no built-in entries: model
+// names are deployment config, so the table is injected at wiring time from
+// config.Config.LLMModelPricesCNY via SetModelPrices. Unknown models fall back
+// to zero price + the "unknown" model label. atomic.Pointer so SetModelPrices
+// (wiring) and RecordUsage (hot path) never race.
+var modelPrices atomic.Pointer[map[string]pricePerKToken]
 
-	// OpenAI compatibility (kept for fallback / experiments).
-	"gpt-4o-mini": {prompt: 0.001, completion: 0.004},
-	"gpt-4o":      {prompt: 0.02, completion: 0.08},
+// SetModelPrices replaces the priced-model table from a spec of the form
+// "name:prompt:completion,name:prompt:completion" (CNY per 1k tokens). An empty
+// spec clears the table; malformed entries are skipped.
+func SetModelPrices(spec string) {
+	t := parseModelPrices(spec)
+	modelPrices.Store(&t)
+}
 
-	// Claude families (newapi router 兼容).
-	"claude-sonnet-4-6": {prompt: 0.018, completion: 0.09},
-	"claude-haiku-4-5":  {prompt: 0.005, completion: 0.025},
+// priceFor looks up the price of a model in the current table.
+func priceFor(model string) (pricePerKToken, bool) {
+	t := modelPrices.Load()
+	if t == nil {
+		return pricePerKToken{}, false
+	}
+	p, ok := (*t)[model]
+	return p, ok
+}
+
+// parseModelPrices reads "name:prompt:completion" entries separated by commas;
+// malformed or negative entries are skipped.
+func parseModelPrices(spec string) map[string]pricePerKToken {
+	out := map[string]pricePerKToken{}
+	for _, entry := range strings.Split(spec, ",") {
+		parts := strings.Split(strings.TrimSpace(entry), ":")
+		if len(parts) != 3 || parts[0] == "" {
+			continue
+		}
+		prompt, err1 := strconv.ParseFloat(parts[1], 64)
+		completion, err2 := strconv.ParseFloat(parts[2], 64)
+		if err1 != nil || err2 != nil || prompt < 0 || completion < 0 {
+			continue
+		}
+		out[parts[0]] = pricePerKToken{prompt: prompt, completion: completion}
+	}
+	return out
 }
 
 // costCNYFor returns the CNY cost for the given model + token counts.
 // Unknown model returns 0 and the caller will label the metric with model="unknown".
 func costCNYFor(model string, promptTokens, completionTokens int) float64 {
-	p, ok := modelPriceCNY[model]
+	p, ok := priceFor(model)
 	if !ok {
 		return 0
 	}
@@ -36,7 +69,7 @@ func costCNYFor(model string, promptTokens, completionTokens int) float64 {
 // modelLabel returns the model name normalized for Prometheus label use.
 // Unknown models collapse to "unknown" to bound label cardinality.
 func modelLabel(model string) string {
-	if _, ok := modelPriceCNY[model]; !ok {
+	if _, ok := priceFor(model); !ok {
 		return "unknown"
 	}
 	return model

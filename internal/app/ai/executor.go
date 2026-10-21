@@ -145,7 +145,7 @@ func (e *DefaultPlanExecutor) execPurchase(ctx context.Context, actorID uuid.UUI
 			return nil, fmt.Errorf("plan executor: resolve product %q: %w", it.ProductName, err)
 		}
 		if !ok {
-			return nil, fmt.Errorf("plan executor: product %q not found — cannot create draft", it.ProductName)
+			return nil, &ProductNotFoundError{Name: it.ProductName}
 		}
 		lines = append(lines, DraftLine{
 			ProductID:   id,

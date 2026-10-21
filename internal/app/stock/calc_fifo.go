@@ -40,7 +40,7 @@ func (f *FIFOCalculator) ValidateMovement(ctx context.Context, tx *sql.Tx, m *do
 
 	switch m.Direction {
 	case domain.DirectionOut:
-		if m.QtyBase.GreaterThan(available) {
+		if m.QtyBase.GreaterThan(available) && !m.AllowNegative {
 			return &InsufficientStockError{ProductID: m.ProductID, Available: available, Requested: m.QtyBase}
 		}
 	case domain.DirectionAdjust:
@@ -96,12 +96,17 @@ func (f *FIFOCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domai
 			SourceMovementID: &mvID,
 			CreatedAt:        now,
 		}
+		if oldQty.IsNegative() {
+			// Part of this receipt covers goods already sold while stock was short; only the
+			// rest is left to drain, so the lots keep adding up to the snapshot.
+			lot.QtyRemaining = decimal.Max(decimal.Zero, m.QtyBase.Add(oldQty))
+		}
 		if err := f.repo.InsertLot(ctx, tx, lot); err != nil {
 			return nil, fmt.Errorf("fifo apply: insert lot: %w", err)
 		}
 
 		// Snapshot unit_cost = weighted average over all stock (balance-sheet valuation).
-		if oldQty.IsZero() {
+		if !oldQty.IsPositive() {
 			newCost = m.UnitCost
 		} else {
 			numerator := oldQty.Mul(oldCost).Add(m.QtyBase.Mul(m.UnitCost))
@@ -110,7 +115,7 @@ func (f *FIFOCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domai
 		m.TotalCost = m.QtyBase.Mul(m.UnitCost)
 
 	case domain.DirectionOut:
-		if m.QtyBase.GreaterThan(oldQty) {
+		if m.QtyBase.GreaterThan(oldQty) && !m.AllowNegative {
 			return nil, &InsufficientStockError{ProductID: m.ProductID, Available: oldQty, Requested: m.QtyBase}
 		}
 
@@ -118,6 +123,10 @@ func (f *FIFOCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domai
 		lots, err := f.repo.ListActiveLots(ctx, tx, m.TenantID, m.ProductID, m.WarehouseID)
 		if err != nil {
 			return nil, fmt.Errorf("fifo apply: list lots: %w", err)
+		}
+
+		if m.ExplicitCost {
+			lots = lotsAtCostFirst(lots, m.UnitCost)
 		}
 
 		remaining := m.QtyBase
@@ -138,6 +147,11 @@ func (f *FIFOCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domai
 			}
 		}
 
+		if remaining.IsPositive() && m.AllowNegative {
+			// Oversold part (offline replay): no lot left to drain, it leaves at the prevailing cost.
+			totalCost = totalCost.Add(remaining.Mul(oldCost))
+			remaining = decimal.Zero
+		}
 		if remaining.IsPositive() {
 			return nil, fmt.Errorf(
 				"fifo apply: lots exhausted before qty satisfied (remaining=%s); snapshot/lots out of sync",
@@ -151,6 +165,9 @@ func (f *FIFOCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domai
 
 		newQty = oldQty.Sub(m.QtyBase)
 		newCost = oldCost // snapshot aggregate cost unchanged on outbound
+		if m.ExplicitCost {
+			newCost = costAfterExplicitOut(oldQty, oldCost, m.QtyBase, m.UnitCost)
+		}
 
 	case domain.DirectionAdjust:
 		newQty = oldQty.Add(m.QtyBase)
@@ -158,6 +175,22 @@ func (f *FIFOCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domai
 			return nil, &InsufficientStockError{ProductID: m.ProductID, Available: oldQty, Requested: m.QtyBase.Neg()}
 		}
 		newCost = oldCost
+		if m.QtyBase.IsPositive() && m.UnitCost.IsPositive() {
+			// A count that brings stock in at a known price (opening balance) is valued and
+			// layered like a receipt.
+			lotID := uuid.New()
+			mvID := m.ID
+			if err := f.repo.InsertLot(ctx, tx, &domain.Lot{
+				ID: lotID, TenantID: m.TenantID, ProductID: m.ProductID, WarehouseID: m.WarehouseID,
+				LotNo: fmt.Sprintf("LOT-%s", lotID.String()[:8]), Qty: m.QtyBase, QtyRemaining: m.QtyBase,
+				UnitCost: m.UnitCost, ReceivedAt: m.OccurredAt, SourceMovementID: &mvID, CreatedAt: now,
+			}); err != nil {
+				return nil, fmt.Errorf("fifo apply: insert lot: %w", err)
+			}
+			newCost = blendedCost(oldQty, oldCost, m.QtyBase, m.UnitCost)
+			m.TotalCost = m.QtyBase.Mul(m.UnitCost)
+			break
+		}
 		m.UnitCost = oldCost
 		m.TotalCost = m.QtyBase.Abs().Mul(oldCost)
 	}
@@ -172,4 +205,21 @@ func (f *FIFOCalculator) ApplyMovement(ctx context.Context, tx *sql.Tx, m *domai
 	}
 
 	return newSnap, nil
+}
+
+// lotsAtCostFirst puts the lots bought at unitCost ahead of the rest, each group keeping its
+// oldest-first order, so a return reverses the lot the goods came from.
+func lotsAtCostFirst(lots []domain.Lot, unitCost decimal.Decimal) []domain.Lot {
+	out := make([]domain.Lot, 0, len(lots))
+	for _, l := range lots {
+		if l.UnitCost.Equal(unitCost) {
+			out = append(out, l)
+		}
+	}
+	for _, l := range lots {
+		if !l.UnitCost.Equal(unitCost) {
+			out = append(out, l)
+		}
+	}
+	return out
 }

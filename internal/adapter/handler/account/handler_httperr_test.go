@@ -26,7 +26,7 @@ func (e errSessionRepo) Upsert(context.Context, *domain.Session) error { return 
 func (e errSessionRepo) List(context.Context, uuid.UUID, string) ([]*domain.Session, error) {
 	return nil, e.err
 }
-func (e errSessionRepo) Revoke(context.Context, uuid.UUID, uuid.UUID) error { return e.err }
+func (e errSessionRepo) Revoke(context.Context, uuid.UUID, string, uuid.UUID) error { return e.err }
 func (e errSessionRepo) Touch(context.Context, uuid.UUID, string, string) error {
 	return e.err
 }

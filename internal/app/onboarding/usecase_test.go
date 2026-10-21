@@ -3,6 +3,7 @@ package onboarding_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -67,13 +68,14 @@ func (f *fakeSalesRecorder) RecordSale(_ context.Context, req appob.DemoSaleRequ
 type fakeDemoDeleter struct {
 	called   bool
 	tenantID uuid.UUID
+	res      *appob.ClearResult
 	err      error
 }
 
-func (f *fakeDemoDeleter) DeleteDemoProducts(_ context.Context, tenantID uuid.UUID) error {
+func (f *fakeDemoDeleter) ClearDemo(_ context.Context, tenantID uuid.UUID) (*appob.ClearResult, error) {
 	f.called = true
 	f.tenantID = tenantID
-	return f.err
+	return f.res, f.err
 }
 
 // --- SeedDemoUseCase tests ---
@@ -232,14 +234,31 @@ func TestClearDemoUseCase_Execute_CallsRepo(t *testing.T) {
 	uc := appob.NewClearDemoUseCase(del)
 
 	tenantID := uuid.New()
-	if err := uc.Execute(context.Background(), tenantID); err != nil {
+	res, err := uc.Execute(context.Background(), tenantID)
+	if err != nil {
 		t.Fatalf("Execute: unexpected error: %v", err)
 	}
+	if res == nil || res.Converted == nil || res.Hint != "" {
+		t.Errorf("want empty non-nil result without hint, got %+v", res)
+	}
 	if !del.called {
-		t.Error("want DeleteDemoProducts to be called")
+		t.Error("want ClearDemo to be called")
 	}
 	if del.tenantID != tenantID {
 		t.Errorf("want tenantID=%s, got %s", tenantID, del.tenantID)
+	}
+}
+
+func TestClearDemoUseCase_Execute_ConvertedGetsHint(t *testing.T) {
+	del := &fakeDemoDeleter{res: &appob.ClearResult{
+		Converted: []appob.ConvertedProduct{{ID: uuid.New(), Code: "A1", Name: "示例商品"}},
+	}}
+	res, err := appob.NewClearDemoUseCase(del).Execute(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.Hint != appob.ConvertedHint || !strings.Contains(res.Hint, "盘点") {
+		t.Errorf("hint = %q, want the stocktake follow-up", res.Hint)
 	}
 }
 
@@ -247,7 +266,7 @@ func TestClearDemoUseCase_Execute_MissingTenantID(t *testing.T) {
 	del := &fakeDemoDeleter{}
 	uc := appob.NewClearDemoUseCase(del)
 
-	if err := uc.Execute(context.Background(), uuid.Nil); err == nil {
+	if _, err := uc.Execute(context.Background(), uuid.Nil); err == nil {
 		t.Fatal("want error for nil tenant_id, got nil")
 	}
 }
@@ -256,7 +275,7 @@ func TestClearDemoUseCase_Execute_PropagatesRepoError(t *testing.T) {
 	del := &fakeDemoDeleter{err: errors.New("db down")}
 	uc := appob.NewClearDemoUseCase(del)
 
-	if err := uc.Execute(context.Background(), uuid.New()); err == nil {
+	if _, err := uc.Execute(context.Background(), uuid.New()); err == nil {
 		t.Fatal("want error when repo returns error, got nil")
 	}
 }

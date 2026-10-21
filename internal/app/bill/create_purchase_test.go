@@ -277,6 +277,11 @@ type mockBillRepo struct {
 	// missingRefs marks product/warehouse ids that ProductExists / WarehouseExists
 	// report as absent, modelling a missing or cross-tenant reference.
 	missingRefs map[uuid.UUID]struct{}
+
+	// defaultWH is what DefaultWarehouseID resolves; nil = tenant has no usable warehouse.
+	defaultWH    *uuid.UUID
+	setWHCalls   int
+	setWHBillIDs []uuid.UUID
 }
 
 func newMockBillRepo() *mockBillRepo {
@@ -351,6 +356,10 @@ func (m *mockBillRepo) UpdateBill(_ context.Context, _ *sql.Tx, head *domain.Bil
 	return nil
 }
 
+func (m *mockBillRepo) SummarizeBills(_ context.Context, _ appbill.BillListFilter) (appbill.BillListSummary, error) {
+	return appbill.BillListSummary{}, nil
+}
+
 func (m *mockBillRepo) ListBills(_ context.Context, _ appbill.BillListFilter) ([]domain.BillHead, int64, error) {
 	var bills []domain.BillHead
 	for _, h := range m.billsByID {
@@ -379,6 +388,27 @@ func (m *mockBillRepo) WarehouseExists(_ context.Context, _, id uuid.UUID) (bool
 	return !missing, nil
 }
 
+func (m *mockBillRepo) PartnerExists(_ context.Context, _, id uuid.UUID) (bool, error) {
+	_, missing := m.missingRefs[id]
+	return !missing, nil
+}
+
+func (m *mockBillRepo) DefaultWarehouseID(_ context.Context, _ uuid.UUID) (uuid.UUID, bool, error) {
+	if m.defaultWH == nil {
+		return uuid.Nil, false, nil
+	}
+	return *m.defaultWH, true, nil
+}
+
+func (m *mockBillRepo) SetBillWarehouse(_ context.Context, _ *sql.Tx, _, billID, warehouseID uuid.UUID) error {
+	m.setWHCalls++
+	m.setWHBillIDs = append(m.setWHBillIDs, billID)
+	if h, ok := m.billsByID[billID]; ok {
+		h.WarehouseID = &warehouseID
+	}
+	return nil
+}
+
 func (m *mockBillRepo) UpdatePaidAmount(_ context.Context, _ *sql.Tx, _, billID uuid.UUID, paidAmount decimal.Decimal) error {
 	h, ok := m.billsByID[billID]
 	if !ok {
@@ -386,4 +416,29 @@ func (m *mockBillRepo) UpdatePaidAmount(_ context.Context, _ *sql.Tx, _, billID 
 	}
 	h.PaidAmount = paidAmount
 	return nil
+}
+
+// TestCreatePurchaseDraft_RejectsPartnerOutsideTenant verifies a missing or cross-tenant
+// partner is a validation error and the bill is not persisted.
+func TestCreatePurchaseDraft_RejectsPartnerOutsideTenant(t *testing.T) {
+	repo := newMockBillRepo()
+	foreignPartner := uuid.New()
+	repo.missingRefs = map[uuid.UUID]struct{}{foreignPartner: {}}
+	uc := appbill.NewCreatePurchaseDraftUseCase(repo)
+
+	_, err := uc.Execute(context.Background(), appbill.CreatePurchaseDraftRequest{
+		TenantID:  testTenantID,
+		CreatorID: testCreatorID,
+		PartnerID: &foreignPartner,
+		BillDate:  time.Now(),
+		Items: []appbill.CreatePurchaseItemInput{
+			{ProductID: uuid.New(), Qty: decimal.NewFromFloat(1), UnitPrice: decimal.NewFromFloat(8), LineNo: 1},
+		},
+	})
+	if !errors.Is(err, appbill.ErrValidation) {
+		t.Fatalf("expected ErrValidation for foreign partner, got %T: %v", err, err)
+	}
+	if repo.storedHead != nil {
+		t.Error("bill must NOT be persisted when the partner is invalid")
+	}
 }

@@ -126,6 +126,9 @@ func TestPATHandler_Create_NoTenant_Returns401(t *testing.T) {
 	if rec.Code != http.StatusUnauthorized {
 		t.Errorf("status = %d, want 401", rec.Code)
 	}
+	if !strings.Contains(rec.Body.String(), "请先登录") || strings.Contains(rec.Body.String(), "tenant_id") {
+		t.Errorf("401 must be plain Chinese: %s", rec.Body.String())
+	}
 }
 
 func TestPATHandler_Create_EmptyName_Returns400(t *testing.T) {

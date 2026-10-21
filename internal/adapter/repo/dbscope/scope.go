@@ -98,6 +98,9 @@ func With(ctx context.Context, conn *sql.Conn) context.Context {
 // yet migrated to dbscope. Passing the repo's own *sql.DB as fallback keeps
 // behaviour unchanged when nothing is pinned.
 func From(ctx context.Context, fallback *sql.DB) Querier {
+	if tx := TxFrom(ctx); tx != nil {
+		return tx
+	}
 	if p, ok := ctx.Value(ctxKey{}).(*pinnedConn); ok && p != nil {
 		return p
 	}
