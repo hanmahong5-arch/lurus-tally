@@ -140,26 +140,29 @@ finish() {
 
 # ---------------------------------------------------------------------------
 # Tenant safety gate — runs at source time. GET /me is NOT usable here: the
-# deployed auth middleware injects no `sub` on the PAT path (auth.go:67) so
-# /me always 401s under a PAT. Instead we list the tenant's PATs (tenant-scoped
-# read) and require the seeded uat-* token name to be present. A PAT pointing
-# at any non-UAT tenant cannot satisfy this.
+# deployed auth middleware injects no `sub` on the PAT path so /me always 401s
+# under a PAT. GET /auth/pats also fails under PAT (no shop-role / sub). Gate
+# on GET /warehouses and require tenant_id == seeded UAT UUID instead.
 # ---------------------------------------------------------------------------
 _gate_one() {
-  local label="$1" pat="$2" want_name="$3"
+  local label="$1" pat="$2" want_tenant="$3"
   local body status
   body=$(mktemp)
   status=$(curl -sS -o "$body" -w '%{http_code}' \
-    -H "Authorization: Bearer $pat" "$UAT_BASE/api/v1/auth/pats" || echo 000)
-  if [ "$status" != "200" ] || ! jq -e --arg n "$want_name" \
-      '(.items // .) | map(.name) | index($n) != null' "$body" >/dev/null 2>&1; then
+    -H "Authorization: Bearer $pat" "$UAT_BASE/api/v1/warehouses?limit=1" || echo 000)
+  if [ "$status" != "200" ]; then
     echo "FATAL: safety gate failed for $label (status=$status) — PAT does not" \
-         "resolve to a seeded UAT tenant. Refusing to run." >&2
+         "resolve to seeded UAT tenant $want_tenant. Refusing to run." >&2
+    rm -f "$body"; exit 3
+  fi
+  tid=$(jq -r '(.items // [])[0].tenant_id // empty' "$body" 2>/dev/null || true)
+  if [ -n "$tid" ] && [ "$tid" != "$want_tenant" ]; then
+    echo "FATAL: safety gate failed for $label — PAT tenant $tid != $want_tenant" >&2
     rm -f "$body"; exit 3
   fi
   rm -f "$body"
 }
 if [ "${UAT_SKIP_GATE:-}" != "1" ]; then
-  _gate_one primary "$UAT_PAT_PRIMARY" "uat-primary"
-  _gate_one secondary "$UAT_PAT_SECONDARY" "uat-secondary"
+  _gate_one primary "$UAT_PAT_PRIMARY" "$UAT_TENANT_PRIMARY"
+  _gate_one secondary "$UAT_PAT_SECONDARY" "$UAT_TENANT_SECONDARY"
 fi
