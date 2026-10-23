@@ -26,6 +26,11 @@ export interface MeResponse {
   is_first_time: boolean
   /** The name people know the shop by (print name, else the name given at setup). */
   shop_name?: string
+  /**
+   * True when the backend Redis idempotency store is wired so offline POS
+   * replays are deduplicated. Reported by GET /me (not /todo/summary).
+   */
+  offline_queue_available?: boolean
 }
 
 export type ProfileType = "cross_border" | "retail" | "horticulture"
@@ -86,6 +91,21 @@ async function request<T>(
 /** GET /api/v1/me — full user identity payload. */
 export async function getMe(accessToken: string): Promise<MeResponse> {
   return request<MeResponse>("/api/v1/me", { method: "GET" }, accessToken)
+}
+
+/**
+ * Browser-side GET /me via the session proxy — used for capability flags
+ * (offline_queue_available). Silent: a failure must not toast on the POS.
+ */
+export async function getMeBrowser(
+  opts: { tenantId?: string; signal?: AbortSignal } = {},
+): Promise<MeResponse> {
+  const { apiFetch } = await import("./client")
+  return apiFetch<MeResponse>("/me", {
+    tenantId: opts.tenantId,
+    signal: opts.signal,
+    silent: true,
+  })
 }
 
 /**

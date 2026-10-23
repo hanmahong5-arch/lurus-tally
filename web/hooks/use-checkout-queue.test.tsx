@@ -11,8 +11,8 @@ vi.mock("@/lib/draft/idb-storage", () => ({
 vi.mock("next-auth/react", () => ({
   useSession: () => ({ data: { user: { id: "u1", tenantId: "t1" } }, status: "authenticated" }),
 }))
-const summary = vi.fn()
-vi.mock("@/lib/api/todo", () => ({ getTodoSummary: (...a: unknown[]) => summary(...a) }))
+const me = vi.fn()
+vi.mock("@/lib/api/me", () => ({ getMeBrowser: (...a: unknown[]) => me(...a) }))
 
 import { useCheckoutQueue } from "./use-checkout-queue"
 import { createEntry, queueKey, type QueueEntry } from "@/lib/pos/checkout-queue"
@@ -27,8 +27,8 @@ describe("useCheckoutQueue", () => {
   beforeEach(() => {
     mem.clear()
     storageOk = true
-    summary.mockReset()
-    summary.mockResolvedValue({ total: 0 })
+    me.mockReset()
+    me.mockResolvedValue({ offline_queue_available: true })
     vi.stubGlobal("fetch", vi.fn(async () => ok()))
   })
 
@@ -61,7 +61,7 @@ describe("useCheckoutQueue", () => {
   })
 
   it("能力标志为 false 时不入队", async () => {
-    summary.mockResolvedValue({ total: 0, offline_queue_available: false })
+    me.mockResolvedValue({ offline_queue_available: false })
     const { result } = renderHook(() => useCheckoutQueue())
     await waitFor(() => expect(result.current.available).toBe(false))
     let entry: unknown = "x"
@@ -70,5 +70,12 @@ describe("useCheckoutQueue", () => {
     })
     expect(entry).toBeNull()
     expect(mem.get(KEY) ?? []).toEqual([])
+  })
+
+  it("从 /me 读 offline_queue_available（不是 /todo/summary）", async () => {
+    me.mockResolvedValue({ offline_queue_available: false })
+    renderHook(() => useCheckoutQueue())
+    await waitFor(() => expect(me).toHaveBeenCalled())
+    expect(me.mock.calls[0]?.[0]).toMatchObject({ tenantId: "t1" })
   })
 })

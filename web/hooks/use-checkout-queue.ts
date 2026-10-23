@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useSession } from "next-auth/react"
-import { getTodoSummary } from "@/lib/api/todo"
+import { getMeBrowser } from "@/lib/api/me"
 import { isDraftStorageAvailable } from "@/lib/draft/idb-storage"
 import type { QuickCheckoutRequest } from "@/lib/api/pos"
 import {
@@ -39,21 +39,21 @@ export function useQueueKey(): { key: string | null; tenantId?: string } {
 export function useCheckoutQueue() {
   const { key, tenantId } = useQueueKey()
   const [entries, setEntries] = useState<QueueEntry[]>([])
-  // TODO: 后端把 offline_queue_available 放进 /todo/summary 之前，按「可用」兜底。
+  // Fail-open until /me answers: offline POS still needs to enqueue when the
+  // capability probe itself is unreachable. Backend false disables the queue.
   const [available, setAvailable] = useState(true)
   const runningRef = useRef(false)
 
   useEffect(() => {
     const ctrl = new AbortController()
-    getTodoSummary({ signal: ctrl.signal })
-      .then((s) => {
+    getMeBrowser({ tenantId, signal: ctrl.signal })
+      .then((me) => {
         if (ctrl.signal.aborted) return
-        const flag = (s as { offline_queue_available?: boolean } | null)?.offline_queue_available
-        setAvailable(flag ?? true)
+        setAvailable(me.offline_queue_available ?? true)
       })
       .catch(() => {})
     return () => ctrl.abort()
-  }, [])
+  }, [tenantId])
 
   const replay = useCallback(async () => {
     if (!key || !available || runningRef.current) return

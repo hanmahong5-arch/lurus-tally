@@ -1,5 +1,6 @@
 import Link from "next/link"
 import { BackOfficeLink, SignOutButton } from "@/components/pos/pos-header-actions"
+import { InstallHint } from "@/components/install-hint"
 import { SubscriptionBanner } from "@/components/subscription-banner"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { WeChatOpenHint } from "@/components/wechat-open-hint"
@@ -34,6 +35,10 @@ export default async function POSLayout({
       {/* Single offline-detection implementation, shared with the dashboard layout. */}
       <OfflineBanner />
       <WeChatOpenHint />
+      {/* Cashiers live on /pos; surface install-to-home-screen here (also in account drawer). */}
+      <div className="px-3 pt-2 sm:px-4">
+        <InstallHint />
+      </div>
       {/* Same lapsed-plan strip as the back office; the checkout buttons read the same status. */}
       <SubscriptionBanner />
       <header className="absolute right-2 top-1.5 z-10 flex items-center gap-1.5">
