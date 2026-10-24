@@ -82,31 +82,13 @@ patches:
         namespace: lurus-tally
       $patch: delete
 images:
+  # main-2853d2c (2026-10-24): POS 从 /me 读 offline_queue_available + 收银页 InstallHint。
+  # 无 migration；镜像已由 CI push GHCR（run 39986542473）。云打印仍关（secret 无 FEIE_*）。
   # main-e0f3091 (2026-10-21): 种子试用就绪——交付形态改造合入（PR #23，16 轮改进）。
-  # 迁移 55→60（000056 退货流水 / 000057 发票 / 000058 苗木租户 / 000059 平台组织与角色 /
-  # 000060 离线收银 client_ref）；AI 由上方 patch 置空关闭；PLAN_LIMITS=shadow；
-  # 云打印需 FEIE_USER/FEIE_UKEY 入 secret 才启用。apply 前已 pg_dump 至
+  # 迁移 55→60；AI 置空；PLAN_LIMITS=shadow；备份
   # /data/backups/tally-preupgrade/tally-20261021-1048-pre0060.sql.gz。
-  # main-30f5056 (2026-09-29): 熟客召回按优先级注入对象视图(冲突 → 单值现值 →
-  # 多值每槽最新 3 条,30f5056e);无 migration,web 树无变化。
-  # main-d144431 (2026-09-29): platform-client 余额不足判定改按 body 错误码
-  # (insufficient_balance),同时接受 400/402/409 三种 HTTP 状态码,为 platform
-  # 侧统一成 402 的改动(#73)预铺客户端兼容;无 migration,web 树无变化。
-  # main-0b25ecf (2026-09-27): CI-green main; backend: address forms no longer
-  # misfile everyday words (老顾客/小时…) under a customer, alias-attributed
-  # notes are marked and announced, Chat/StreamChat share one loop, memory
-  # op counters + per-turn log (c6f135e4); tool schemas generated from the
-  # argument structs (0b25ecfd). No migrations, web tree identical.
-  # main-bd6a2b9 (2026-09-28): 熟客记忆读 memorus 对象视图(bd6a2b99;memorus R6 a4f8e15-emb
-  # 契约 v2)。web 同 tag 重建,内容无变化。
-  # main-81d56b3 (2026-09-26): backend adds today's date to
-  # the AI prompt (81d56b38). Before it, main-a3d1fcc replaced the hand-set
-  # main-4ed56b0 (this file then said main-0d59b14): no migrations, web tree
-  # identical, backend gained the AI drawer's memory fixes and 熟客记忆
-  # (8963382e..cf70c49e).
-  # History: main-0d59b14 (2026-08-08) was the first image after a 37-day CI
-  # outage and ran migrations 53→55; see git log of this file.
+  # History: see git log of this file for older tags.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-e0f3091
+    newTag: main-2853d2c
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-e0f3091
+    newTag: main-2853d2c

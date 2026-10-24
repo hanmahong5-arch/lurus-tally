@@ -6,7 +6,10 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "进销存",
     short_name: "进销存",
     description: "进销存，开单记账查库存",
-    start_url: "/dashboard",
+    // PWA installs are aimed at cashiers on /pos; back-office users still reach
+    // the dashboard via in-app links. Non-retail profiles are redirected away
+    // from /pos by middleware.
+    start_url: "/pos",
     scope: "/",
     display: "standalone",
     theme_color: "#0a0a0a",
