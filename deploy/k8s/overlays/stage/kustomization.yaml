@@ -82,13 +82,11 @@ patches:
         namespace: lurus-tally
       $patch: delete
 images:
-  # main-2853d2c (2026-10-24): POS 从 /me 读 offline_queue_available + 收银页 InstallHint。
-  # 无 migration；镜像已由 CI push GHCR（run 39986542473）。云打印仍关（secret 无 FEIE_*）。
-  # main-e0f3091 (2026-10-21): 种子试用就绪——交付形态改造合入（PR #23，16 轮改进）。
-  # 迁移 55→60；AI 置空；PLAN_LIMITS=shadow；备份
-  # /data/backups/tally-preupgrade/tally-20261021-1048-pre0060.sql.gz。
+  # main-9cbc65e (2026-10-24): 含 PWA start_url=/pos + 计划清单订正；CI run 40053583213。
+  # 前序 main-2853d2c 已上 STAGE（POS /me 离线能力标志 + InstallHint）。无 migration。
+  # 云打印仍关（tally-secrets 无 FEIE_USER/FEIE_UKEY）。
   # History: see git log of this file for older tags.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-2853d2c
+    newTag: main-9cbc65e
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-2853d2c
+    newTag: main-9cbc65e
