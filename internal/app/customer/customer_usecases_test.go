@@ -45,7 +45,9 @@ func (r *fakeRepo) GetByID(_ context.Context, _, id uuid.UUID) (*domain.Customer
 	if !ok || c.DeletedAt != nil {
 		return nil, appcust.ErrNotFound
 	}
-	return c, nil
+	// Copy like the SQL scanner: callers may mutate before Update persists.
+	cp := *c
+	return &cp, nil
 }
 
 func (r *fakeRepo) List(_ context.Context, f domain.ListFilter) ([]*domain.Customer, int, error) {
@@ -82,10 +84,11 @@ func (r *fakeRepo) FindActiveByMobile(_ context.Context, tenantID uuid.UUID, mob
 }
 
 func (r *fakeRepo) Update(_ context.Context, c *domain.Customer) error {
-	if _, ok := r.store[c.ID]; !ok {
+	if existing, ok := r.store[c.ID]; !ok || existing.DeletedAt != nil {
 		return appcust.ErrNotFound
 	}
-	r.store[c.ID] = c
+	cp := *c
+	r.store[c.ID] = &cp
 	return nil
 }
 
