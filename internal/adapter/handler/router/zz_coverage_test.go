@@ -86,7 +86,7 @@ func buildFullyWiredRouter() *gin.Engine {
 	imph := handlerimporting.New(nil, uuid.Nil)
 	digh := handlerdigest.New(nil)
 	onh := handleronboarding.NewForTest(nil, nil)
-	custh := handlercust.New(nil, nil, nil)
+	custh := handlercust.New(nil, nil, nil, nil, nil, nil)
 	invh := handlerinvoice.New(nil, nil, nil, nil, nil)
 
 	return New(h, authMW, tenantDBMW, idempotencyMW, ph, uh, ah, pat, sh, bh, ch, saleh, payh, bilh, aih, dh, projh, mh, suph, wh, exh, acct, replh, reph, srch, imph, digh, onh, custh, invh)

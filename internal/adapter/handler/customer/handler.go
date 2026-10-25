@@ -50,11 +50,25 @@ type createRequest struct {
 	Remark      string `json:"remark"       binding:"max=500"`
 }
 
+// updateRequest is the JSON body for PUT /api/v1/customers/:id.
+type updateRequest struct {
+	Code        *string `json:"code,omitempty"         binding:"omitempty,max=64"`
+	Name        *string `json:"name,omitempty"         binding:"omitempty,max=128"`
+	ContactName *string `json:"contact_name,omitempty" binding:"omitempty,max=100"`
+	Mobile      *string `json:"mobile,omitempty"       binding:"omitempty,max=30"`
+	Phone       *string `json:"phone,omitempty"        binding:"omitempty,max=30"`
+	Address     *string `json:"address,omitempty"      binding:"omitempty,max=500"`
+	Remark      *string `json:"remark,omitempty"       binding:"omitempty,max=500"`
+}
+
 // Handler groups all customer Gin handlers.
 type Handler struct {
 	create   *appcust.CreateUseCase
 	get      *appcust.GetByIDUseCase
 	list     *appcust.ListUseCase
+	update   *appcust.UpdateUseCase
+	delete   *appcust.DeleteUseCase
+	restore  *appcust.RestoreUseCase
 	importer Importer
 }
 
@@ -63,11 +77,17 @@ func New(
 	create *appcust.CreateUseCase,
 	get *appcust.GetByIDUseCase,
 	list *appcust.ListUseCase,
+	update *appcust.UpdateUseCase,
+	del *appcust.DeleteUseCase,
+	restore *appcust.RestoreUseCase,
 ) *Handler {
 	return &Handler{
-		create: create,
-		get:    get,
-		list:   list,
+		create:  create,
+		get:     get,
+		list:    list,
+		update:  update,
+		delete:  del,
+		restore: restore,
 	}
 }
 
@@ -80,6 +100,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		rg.POST("/customers/import", h.Import)
 		rg.GET("/customers/import/template.csv", h.ImportTemplate)
 	}
+	rg.PUT("/customers/:id", h.Update)
+	rg.DELETE("/customers/:id", h.Delete)
+	rg.POST("/customers/:id/restore", h.Restore)
 }
 
 // List handles GET /api/v1/customers
@@ -178,6 +201,103 @@ func (h *Handler) GetByID(c *gin.Context) {
 	}
 
 	cu, err := h.get.Execute(c.Request.Context(), tenantID, id)
+	if err != nil {
+		if errors.Is(err, appcust.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		httperr.WriteInternal(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, toDTO(cu))
+}
+
+// Update handles PUT /api/v1/customers/:id
+func (h *Handler) Update(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant not identified"})
+		return
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+
+	var req updateRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	cu, err := h.update.Execute(c.Request.Context(), tenantID, id, domain.UpdateInput{
+		Code:        req.Code,
+		Name:        req.Name,
+		ContactName: req.ContactName,
+		Mobile:      req.Mobile,
+		Phone:       req.Phone,
+		Address:     req.Address,
+		Remark:      req.Remark,
+	})
+	if err != nil {
+		if errors.Is(err, appcust.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		if errors.Is(err, appcust.ErrInvalidInput) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		var dup *appcust.DuplicateError
+		if errors.As(err, &dup) {
+			writeDuplicate(c, dup)
+			return
+		}
+		httperr.WriteInternal(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, toDTO(cu))
+}
+
+// Delete handles DELETE /api/v1/customers/:id
+func (h *Handler) Delete(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant not identified"})
+		return
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+
+	if err := h.delete.Execute(c.Request.Context(), tenantID, id); err != nil {
+		if errors.Is(err, appcust.ErrNotFound) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})
+			return
+		}
+		httperr.WriteInternal(c, err)
+		return
+	}
+	c.Status(http.StatusNoContent)
+}
+
+// Restore handles POST /api/v1/customers/:id/restore
+func (h *Handler) Restore(c *gin.Context) {
+	tenantID := middleware.GetTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "tenant not identified"})
+		return
+	}
+	id, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+
+	cu, err := h.restore.Execute(c.Request.Context(), tenantID, id)
 	if err != nil {
 		if errors.Is(err, appcust.ErrNotFound) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "not found"})

@@ -56,6 +56,17 @@ type CreateInput struct {
 	Remark      string
 }
 
+// UpdateInput carries mutable fields (nil pointer = do not update).
+type UpdateInput struct {
+	Code        *string
+	Name        *string
+	ContactName *string
+	Mobile      *string
+	Phone       *string
+	Address     *string
+	Remark      *string
+}
+
 // ListFilter controls list queries.
 type ListFilter struct {
 	TenantID uuid.UUID

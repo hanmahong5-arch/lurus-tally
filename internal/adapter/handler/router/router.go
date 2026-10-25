@@ -294,13 +294,16 @@ func New(h *health.Handler, authMW gin.HandlerFunc, tenantDBMW gin.HandlerFunc, 
 			api.POST("/suppliers/:id/restore", notImplemented)
 		}
 
-		// Customer list/get/create on tally.partner (partner_type='customer').
+		// Customer CRUD on tally.partner (partner_type='customer').
 		if custh != nil {
 			custh.RegisterRoutes(api)
 		} else {
 			api.GET("/customers", notImplemented)
 			api.POST("/customers", notImplemented)
 			api.GET("/customers/:id", notImplemented)
+			api.PUT("/customers/:id", notImplemented)
+			api.DELETE("/customers/:id", notImplemented)
+			api.POST("/customers/:id/restore", notImplemented)
 		}
 
 		// Invoice registry: offline-issued tax invoices linked to approved bills.

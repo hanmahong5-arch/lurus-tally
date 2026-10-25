@@ -777,12 +777,15 @@ func NewApp(cfg *config.Config) (*App, error) {
 		appsupp.NewRestoreUseCase(suppRepo),
 	).WithImporter(appsupp.NewImportUseCase(suppRepo, appsupp.NewCreateUseCase(suppRepo)))
 
-	// Wire customer list/get/create (rows of tally.partner, partner_type='customer').
+	// Wire customer CRUD (rows of tally.partner, partner_type='customer').
 	custRepo := repocustomer.New(db)
 	customerHandler := handlercust.New(
 		appcust.NewCreateUseCase(custRepo),
 		appcust.NewGetByIDUseCase(custRepo),
 		appcust.NewListUseCase(custRepo),
+		appcust.NewUpdateUseCase(custRepo),
+		appcust.NewDeleteUseCase(custRepo),
+		appcust.NewRestoreUseCase(custRepo),
 	).WithImporter(appcust.NewImportUseCase(custRepo, appcust.NewCreateUseCase(custRepo)))
 
 	// Wire the invoice registry (offline-issued tax invoices linked to approved bills).

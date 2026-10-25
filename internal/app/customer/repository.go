@@ -46,6 +46,9 @@ type Repository interface {
 	Create(ctx context.Context, c *domain.Customer) error
 	GetByID(ctx context.Context, tenantID, id uuid.UUID) (*domain.Customer, error)
 	List(ctx context.Context, f domain.ListFilter) ([]*domain.Customer, int, error)
+	Update(ctx context.Context, c *domain.Customer) error
+	Delete(ctx context.Context, tenantID, id uuid.UUID) error
+	Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.Customer, error)
 	// FindActiveByName returns the oldest live customer whose name equals name
 	// case-insensitively after trimming and collapsing whitespace (the caller
 	// passes an already-normalised name), or ErrNotFound.

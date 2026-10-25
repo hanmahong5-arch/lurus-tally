@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	appcust "github.com/hanmahong5-arch/lurus-tally/internal/app/customer"
@@ -41,7 +42,7 @@ func (r *fakeRepo) GetByID(_ context.Context, _, id uuid.UUID) (*domain.Customer
 		return nil, r.getErr
 	}
 	c, ok := r.store[id]
-	if !ok {
+	if !ok || c.DeletedAt != nil {
 		return nil, appcust.ErrNotFound
 	}
 	return c, nil
@@ -58,6 +59,9 @@ func (r *fakeRepo) List(_ context.Context, f domain.ListFilter) ([]*domain.Custo
 // FindActiveByName mirrors the SQL: case-insensitive on the normalised name.
 func (r *fakeRepo) FindActiveByName(_ context.Context, tenantID uuid.UUID, name string) (*domain.Customer, error) {
 	for _, c := range r.store {
+		if c.DeletedAt != nil {
+			continue
+		}
 		if c.TenantID == tenantID && strings.EqualFold(appcust.NormalizeName(c.Name), name) {
 			return c, nil
 		}
@@ -67,11 +71,41 @@ func (r *fakeRepo) FindActiveByName(_ context.Context, tenantID uuid.UUID, name 
 
 func (r *fakeRepo) FindActiveByMobile(_ context.Context, tenantID uuid.UUID, mobile string) (*domain.Customer, error) {
 	for _, c := range r.store {
+		if c.DeletedAt != nil {
+			continue
+		}
 		if c.TenantID == tenantID && c.Mobile == mobile {
 			return c, nil
 		}
 	}
 	return nil, appcust.ErrNotFound
+}
+
+func (r *fakeRepo) Update(_ context.Context, c *domain.Customer) error {
+	if _, ok := r.store[c.ID]; !ok {
+		return appcust.ErrNotFound
+	}
+	r.store[c.ID] = c
+	return nil
+}
+
+func (r *fakeRepo) Delete(_ context.Context, _, id uuid.UUID) error {
+	c, ok := r.store[id]
+	if !ok || c.DeletedAt != nil {
+		return appcust.ErrNotFound
+	}
+	now := time.Now().UTC()
+	c.DeletedAt = &now
+	return nil
+}
+
+func (r *fakeRepo) Restore(_ context.Context, _, id uuid.UUID) (*domain.Customer, error) {
+	c, ok := r.store[id]
+	if !ok || c.DeletedAt == nil {
+		return nil, appcust.ErrNotFound
+	}
+	c.DeletedAt = nil
+	return c, nil
 }
 
 // Compile-time check.
@@ -307,5 +341,77 @@ func TestCreateUseCase_Execute_MobileStoredTrimmed(t *testing.T) {
 	_, err = uc.Execute(context.Background(), domain.CreateInput{TenantID: tenant, Name: "乙", Mobile: "13900000000"})
 	if !errors.Is(err, appcust.ErrDuplicateMobile) {
 		t.Fatalf("err = %v, want ErrDuplicateMobile", err)
+	}
+}
+
+func TestUpdateUseCase_Execute_SuccessAndSelfDuplicateOK(t *testing.T) {
+	repo := newFakeRepo()
+	create := appcust.NewCreateUseCase(repo)
+	tenant := uuid.New()
+	existing, err := create.Execute(context.Background(), domain.CreateInput{
+		TenantID: tenant, Name: "老客户", Mobile: "13800000001", ContactName: "旧",
+	})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	newContact := "新联系人"
+	out, err := appcust.NewUpdateUseCase(repo).Execute(context.Background(), tenant, existing.ID, domain.UpdateInput{
+		ContactName: &newContact,
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+	if out.ContactName != "新联系人" || out.Name != "老客户" || out.Mobile != "13800000001" {
+		t.Errorf("unexpected update result: %+v", out)
+	}
+	// Keeping the same name must not 409 against self.
+	same := "老客户"
+	if _, err := appcust.NewUpdateUseCase(repo).Execute(context.Background(), tenant, existing.ID, domain.UpdateInput{Name: &same}); err != nil {
+		t.Fatalf("self-same name: %v", err)
+	}
+}
+
+func TestUpdateUseCase_Execute_DuplicateName(t *testing.T) {
+	repo := newFakeRepo()
+	create := appcust.NewCreateUseCase(repo)
+	tenant := uuid.New()
+	_, err := create.Execute(context.Background(), domain.CreateInput{TenantID: tenant, Name: "甲"})
+	if err != nil {
+		t.Fatalf("甲: %v", err)
+	}
+	b, err := create.Execute(context.Background(), domain.CreateInput{TenantID: tenant, Name: "乙"})
+	if err != nil {
+		t.Fatalf("乙: %v", err)
+	}
+	clash := "甲"
+	_, err = appcust.NewUpdateUseCase(repo).Execute(context.Background(), tenant, b.ID, domain.UpdateInput{Name: &clash})
+	if !errors.Is(err, appcust.ErrDuplicateName) {
+		t.Fatalf("err = %v, want ErrDuplicateName", err)
+	}
+}
+
+func TestDeleteAndRestoreUseCase(t *testing.T) {
+	repo := newFakeRepo()
+	create := appcust.NewCreateUseCase(repo)
+	tenant := uuid.New()
+	c, err := create.Execute(context.Background(), domain.CreateInput{TenantID: tenant, Name: "待删"})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if err := appcust.NewDeleteUseCase(repo).Execute(context.Background(), tenant, c.ID); err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	if _, err := appcust.NewGetByIDUseCase(repo).Execute(context.Background(), tenant, c.ID); !errors.Is(err, appcust.ErrNotFound) {
+		t.Fatalf("get after delete: %v", err)
+	}
+	restored, err := appcust.NewRestoreUseCase(repo).Execute(context.Background(), tenant, c.ID)
+	if err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if restored.Name != "待删" {
+		t.Errorf("restored = %+v", restored)
+	}
+	if err := appcust.NewDeleteUseCase(repo).Execute(context.Background(), tenant, uuid.New()); !errors.Is(err, appcust.ErrNotFound) {
+		t.Fatalf("delete missing: %v", err)
 	}
 }

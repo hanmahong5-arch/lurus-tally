@@ -3,10 +3,15 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react"
 import { ApiError } from "@/lib/api/errors"
 
 vi.mock("sonner", () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock("@/hooks/useConfirm", () => ({
+  useConfirm: () => async () => true,
+}))
 
 const api = vi.hoisted(() => ({
   listCustomers: vi.fn(),
   createCustomer: vi.fn(),
+  updateCustomer: vi.fn(),
+  deleteCustomer: vi.fn(),
   getCustomer: vi.fn(),
 }))
 vi.mock("@/lib/api/customers", async (orig) => ({

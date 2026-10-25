@@ -137,6 +137,83 @@ func (r *Repo) List(ctx context.Context, f domain.ListFilter) ([]*domain.Custome
 	return items, total, nil
 }
 
+// Update rewrites mutable columns on a live customer partner row.
+func (r *Repo) Update(ctx context.Context, c *domain.Customer) error {
+	q := `
+		UPDATE tally.partner SET
+			code=$1, name=$2, contact_name=$3, mobile=$4, phone=$5,
+			address=$6, remark=$7, updated_at=$8
+		WHERE id=$9 AND tenant_id=$10 AND deleted_at IS NULL
+		  AND partner_type IN ` + partnerTypesIn
+
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, q,
+		nullableString(c.Code), c.Name,
+		nullableString(c.ContactName), nullableString(c.Mobile), nullableString(c.Phone),
+		nullableString(c.Address), nullableString(c.Remark),
+		c.UpdatedAt,
+		c.ID, c.TenantID,
+	)
+	if err != nil {
+		return fmt.Errorf("customer repo update: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("customer repo update rows affected: %w", err)
+	}
+	if n == 0 {
+		return appcust.ErrNotFound
+	}
+	return nil
+}
+
+// Delete soft-deletes a customer partner row. The partner code uniqueness
+// index is partial (WHERE deleted_at IS NULL), so soft-delete frees the code.
+func (r *Repo) Delete(ctx context.Context, tenantID, id uuid.UUID) error {
+	q := `
+		UPDATE tally.partner SET deleted_at=$1, updated_at=$1
+		WHERE id=$2 AND tenant_id=$3 AND deleted_at IS NULL
+		  AND partner_type IN ` + partnerTypesIn
+
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, q, time.Now().UTC(), id, tenantID)
+	if err != nil {
+		return fmt.Errorf("customer repo delete: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("customer repo delete rows affected: %w", err)
+	}
+	if n == 0 {
+		return appcust.ErrNotFound
+	}
+	return nil
+}
+
+// Restore clears deleted_at on a soft-deleted customer and returns the row.
+func (r *Repo) Restore(ctx context.Context, tenantID, id uuid.UUID) (*domain.Customer, error) {
+	now := time.Now().UTC()
+	q := `
+		UPDATE tally.partner
+		SET deleted_at = NULL, updated_at = $1
+		WHERE id = $2 AND tenant_id = $3 AND deleted_at IS NOT NULL
+		  AND partner_type IN ` + partnerTypesIn
+
+	db := dbscope.From(ctx, r.db)
+	res, err := db.ExecContext(ctx, q, now, id, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("customer repo restore: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("customer repo restore rows affected: %w", err)
+	}
+	if n == 0 {
+		return nil, appcust.ErrNotFound
+	}
+	return r.GetByID(ctx, tenantID, id)
+}
+
 // FindActiveByName matches on lower(trimmed, whitespace-collapsed name); the
 // caller passes the name already normalised the same way.
 func (r *Repo) FindActiveByName(ctx context.Context, tenantID uuid.UUID, name string) (*domain.Customer, error) {

@@ -16,11 +16,14 @@ import {
   importCustomers,
   customerImportTemplate,
   createCustomer,
+  updateCustomer,
+  deleteCustomer,
   customerDuplicateOf,
   getCustomer,
   type CustomerItem,
   type CustomerCreateInput,
 } from "@/lib/api/customers"
+import { useConfirm } from "@/hooks/useConfirm"
 import { CsvImportDialog } from "@/components/csv-import-dialog"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
@@ -57,17 +60,17 @@ const EMPTY_FORM: CustomerForm = {
 
 /**
  * CustomersPage lists the customer catalogue (tally.partner customers) with
- * search, pagination and a create drawer. Customers created inline from a
+ * search, pagination and create/edit/delete. Customers created inline from a
  * sale bill land here too.
  */
 export default function CustomersPage() {
-  // 欠款汇总、收款、对账单属于“看收付款”；新增客户需要 customer.write。角色未知时不遮挡，后端兜底。
+  // 欠款汇总、收款、对账单属于“看收付款”；新增/编辑/删除需要 customer.write。角色未知时不遮挡，后端兜底。
   const { known, can } = useRole()
   const canMoney = !known || can("payment.read")
   // 请求失败即关闭：会话还没回来时不发受限请求，角色确定后再取。
   const fetchMoney = known && can("payment.read")
   const canCollect = !known || can("payment.record")
-  const canCreate = !known || can("customer.write")
+  const canEdit = !known || can("customer.write")
   const [items, setItems] = useState<CustomerItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
@@ -93,12 +96,14 @@ export default function CustomersPage() {
   const [receiptFor, setReceiptFor] = useState<CustomerItem | null>(null)
 
   const [drawerItem, setDrawerItem] = useState<CustomerItem | null>(null)
+  const [drawerMode, setDrawerMode] = useState<"view" | "edit" | "create">("view")
   const [showDrawer, setShowDrawer] = useState(false)
   const [saving, setSaving] = useState(false)
   const [form, setForm] = useState<CustomerForm>(EMPTY_FORM)
   const [duplicate, setDuplicate] = useState<{ message: string; existingId: string } | null>(null)
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const confirm = useConfirm()
 
   const load = useCallback(
     (query: string, off: number, signal?: AbortSignal, isCancelled?: () => boolean) => {
@@ -138,14 +143,39 @@ export default function CustomersPage() {
 
   function openCreate() {
     setDrawerItem(null)
+    setDrawerMode("create")
     setForm(EMPTY_FORM)
     setDuplicate(null)
+    setShowDrawer(true)
+  }
+
+  function openDetail(item: CustomerItem) {
+    setDrawerItem(item)
+    setDrawerMode("view")
+    setDuplicate(null)
+    setShowDrawer(true)
+  }
+
+  function openEdit(item: CustomerItem) {
+    setDrawerItem(item)
+    setDrawerMode("edit")
+    setDuplicate(null)
+    setForm({
+      name: item.name,
+      code: item.code ?? "",
+      contact_name: item.contact_name ?? "",
+      mobile: item.mobile ?? "",
+      address: item.address ?? "",
+      remark: item.remark ?? "",
+    })
     setShowDrawer(true)
   }
 
   function closeDrawer() {
     setShowDrawer(false)
     setDrawerItem(null)
+    setDrawerMode("view")
+    setDuplicate(null)
   }
 
   // Opens the already-existing profile in this same drawer (detail view).
@@ -154,6 +184,7 @@ export default function CustomersPage() {
       const c = await getCustomer(id)
       setDuplicate(null)
       setDrawerItem(c)
+      setDrawerMode("view")
     } catch {
       toast.error("暂时无法打开已有客户，请在列表中搜索")
     }
@@ -172,8 +203,13 @@ export default function CustomersPage() {
         const v = form[key].trim()
         if (key !== "name" && v) input[key] = v
       }
-      await createCustomer(input)
-      toast.success("客户已创建")
+      if (drawerMode === "create") {
+        await createCustomer(input)
+        toast.success("客户已创建")
+      } else if (drawerItem) {
+        await updateCustomer(drawerItem.id, input)
+        toast.success("客户已更新")
+      }
       closeDrawer()
       load(q, offset)
     } catch (e) {
@@ -187,6 +223,24 @@ export default function CustomersPage() {
       setSaving(false)
     }
   }
+
+  async function handleDelete(item: CustomerItem) {
+    const ok = await confirm({
+      title: "删除客户",
+      body: `确认删除「${item.name}」？删除后列表里不再显示，如需找回请联系客服。`,
+      confirmText: "删除",
+      danger: true,
+    })
+    if (!ok) return
+    try {
+      await deleteCustomer(item.id)
+      load(q, offset)
+    } catch (e) {
+      toast.error("删除失败：" + extractApiError(e).message)
+    }
+  }
+
+  const isForm = drawerMode === "create" || drawerMode === "edit"
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
   const currentPage = Math.floor(offset / PAGE_SIZE) + 1
@@ -253,14 +307,34 @@ export default function CustomersPage() {
                 对账单
               </Link>
             )}
+            {canEdit && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => openEdit(row.original)}
+                  className="text-xs text-primary hover:underline"
+                >
+                  编辑
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleDelete(row.original)}
+                  className="text-xs text-destructive hover:underline"
+                >
+                  删除
+                </button>
+              </>
+            )}
           </div>
         )
       },
     },
   ]
 
-  // 没有收付款权限的人看不到欠款列；操作列没有内容时也不显示。
-  const columns = allColumns.filter((c) => (c.id !== "owed" || canMoney) && (c.id !== "actions" || canMoney))
+  // 没有收付款权限的人看不到欠款列；既不能收款/对账、也不能改的人，操作列没有内容。
+  const columns = allColumns.filter(
+    (c) => (c.id !== "owed" || canMoney) && (c.id !== "actions" || canMoney || canEdit),
+  )
 
   return (
     <PageContainer width="wide">
@@ -274,7 +348,7 @@ export default function CustomersPage() {
                 批量导入
               </Button>
             )}
-            {canCreate && <Button onClick={openCreate}>+ 新增客户</Button>}
+            {canEdit && <Button onClick={openCreate}>+ 新增客户</Button>}
           </>
         }
       />
@@ -295,10 +369,7 @@ export default function CustomersPage() {
         loading={loading}
         error={error}
         getRowId={(item) => item.id}
-        onRowClick={(item) => {
-          setDrawerItem(item)
-          setShowDrawer(true)
-        }}
+        onRowClick={openDetail}
         mobileCard={(item) => {
           const amt = owed?.get(item.id)
           const hasOwed = !!amt && Number(amt) > 0
@@ -320,18 +391,23 @@ export default function CustomersPage() {
                 { label: "手机", value: item.mobile || item.phone || "—" },
               ]}
               actions={
-                canMoney ? (
-                  <>
-                    {canCollect && hasOwed && (
-                      <button type="button" onClick={() => setReceiptFor(item)} className="text-xs text-primary hover:underline">
-                        收款
-                      </button>
-                    )}
+                <>
+                  {canCollect && hasOwed && (
+                    <button type="button" onClick={() => setReceiptFor(item)} className="text-xs text-primary hover:underline">
+                      收款
+                    </button>
+                  )}
+                  {canMoney && (
                     <Link href={statementHref("ar", item.id)} className="text-xs text-primary hover:underline">
                       对账单
                     </Link>
-                  </>
-                ) : undefined
+                  )}
+                  {canEdit && (
+                    <button type="button" onClick={() => openEdit(item)} className="text-xs text-primary hover:underline">
+                      编辑
+                    </button>
+                  )}
+                </>
               }
             />
           )
@@ -340,8 +416,8 @@ export default function CustomersPage() {
         empty={
           <EmptyState
             title="暂无客户"
-            description={canCreate ? "在这里添加客户，或在销售单里直接新建" : "还没有客户"}
-            action={canCreate ? <Button variant="outline" onClick={openCreate}>新增第一个客户</Button> : undefined}
+            description={canEdit ? "在这里添加客户，或在销售单里直接新建" : "还没有客户"}
+            action={canEdit ? <Button variant="outline" onClick={openCreate}>新增第一个客户</Button> : undefined}
           />
         }
       />
@@ -357,9 +433,15 @@ export default function CustomersPage() {
         onOpenChange={(o) => {
           if (!o) closeDrawer()
         }}
-        title={drawerItem ? drawerItem.name : "新增客户"}
+        title={
+          drawerMode === "create"
+            ? "新增客户"
+            : drawerMode === "edit"
+              ? "编辑客户"
+              : drawerItem?.name
+        }
         footer={
-          drawerItem ? undefined : (
+          isForm ? (
             <>
               <Button variant="outline" size="sm" onClick={closeDrawer}>
                 取消
@@ -368,10 +450,26 @@ export default function CustomersPage() {
                 {saving ? "保存中..." : "保存"}
               </Button>
             </>
-          )
+          ) : drawerItem && canEdit ? (
+            <>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => {
+                  void handleDelete(drawerItem)
+                  closeDrawer()
+                }}
+              >
+                删除
+              </Button>
+              <Button size="sm" onClick={() => openEdit(drawerItem)}>
+                编辑
+              </Button>
+            </>
+          ) : undefined
         }
       >
-        {drawerItem ? (
+        {drawerMode === "view" && drawerItem ? (
           <div className="flex flex-col gap-3 text-sm" data-testid="customer-drawer">
             {[
               { label: "编号", value: drawerItem.code },

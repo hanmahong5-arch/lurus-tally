@@ -69,7 +69,10 @@ var RoutePerm = map[string]Perm{
 	"DELETE /api/v1/projects/:id":           CatalogWrite,
 	"POST /api/v1/projects/:id/restore":     CatalogWrite,
 	"POST /api/v1/exchange-rates":           CatalogWrite,
-	"POST /api/v1/customers":                CustomerWrite,
+	"POST /api/v1/customers":             CustomerWrite,
+	"PUT /api/v1/customers/:id":          CustomerWrite,
+	"DELETE /api/v1/customers/:id":       CustomerWrite,
+	"POST /api/v1/customers/:id/restore": CustomerWrite,
 	// Reports and exports.
 	"GET /api/v1/reports/gross-margin":   CostView,
 	"GET /api/v1/reports/abc":            ReportView,

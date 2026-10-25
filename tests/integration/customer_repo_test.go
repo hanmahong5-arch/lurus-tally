@@ -136,7 +136,14 @@ func TestCustomerRepo_CreateSearchAndDuplicateCode(t *testing.T) {
 
 	t.Run("duplicate_code_http_409", func(t *testing.T) {
 		gin.SetMode(gin.TestMode)
-		h := handlercust.New(appcust.NewCreateUseCase(repo), appcust.NewGetByIDUseCase(repo), appcust.NewListUseCase(repo))
+		h := handlercust.New(
+			appcust.NewCreateUseCase(repo),
+			appcust.NewGetByIDUseCase(repo),
+			appcust.NewListUseCase(repo),
+			appcust.NewUpdateUseCase(repo),
+			appcust.NewDeleteUseCase(repo),
+			appcust.NewRestoreUseCase(repo),
+		)
 		r := gin.New()
 		r.Use(func(c *gin.Context) { c.Set(middleware.CtxKeyTenantID, tenantID); c.Next() })
 		h.RegisterRoutes(r.Group("/api/v1"))

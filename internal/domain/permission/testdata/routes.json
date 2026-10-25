@@ -1,5 +1,6 @@
 {
   "DELETE /api/v1/auth/pats/:id": "token.manage",
+  "DELETE /api/v1/customers/:id": "customer.write",
   "DELETE /api/v1/nursery-dict/:id": "catalog.write",
   "DELETE /api/v1/products/:id": "product.write",
   "DELETE /api/v1/projects/:id": "catalog.write",
@@ -48,6 +49,7 @@
   "POST /api/v1/auth/pats": "token.manage",
   "POST /api/v1/billing/subscribe": "billing.manage",
   "POST /api/v1/customers": "customer.write",
+  "POST /api/v1/customers/:id/restore": "customer.write",
   "POST /api/v1/customers/import": "catalog.write",
   "POST /api/v1/exchange-rates": "catalog.write",
   "POST /api/v1/imports/orders": "settings.manage",
@@ -88,6 +90,7 @@
   "POST /api/v1/units": "product.write",
   "POST /api/v1/warehouses": "catalog.write",
   "POST /api/v1/warehouses/:id/restore": "catalog.write",
+  "PUT /api/v1/customers/:id": "customer.write",
   "PUT /api/v1/nursery-dict/:id": "catalog.write",
   "PUT /api/v1/products/:id": "product.write",
   "PUT /api/v1/projects/:id": "catalog.write",

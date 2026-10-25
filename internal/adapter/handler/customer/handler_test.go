@@ -80,6 +80,28 @@ func (f *fakeRepo) FindActiveByMobile(_ context.Context, _ uuid.UUID, _ string) 
 	return nil, appcust.ErrNotFound
 }
 
+func (f *fakeRepo) Update(_ context.Context, c *domain.Customer) error {
+	if f.getErr != nil {
+		return f.getErr
+	}
+	f.getResult = c
+	return nil
+}
+
+func (f *fakeRepo) Delete(_ context.Context, _, _ uuid.UUID) error {
+	if f.getErr != nil {
+		return f.getErr
+	}
+	return nil
+}
+
+func (f *fakeRepo) Restore(_ context.Context, _, _ uuid.UUID) (*domain.Customer, error) {
+	if f.getErr != nil {
+		return nil, f.getErr
+	}
+	return f.getResult, nil
+}
+
 var _ appcust.Repository = (*fakeRepo)(nil)
 
 func makeRouter(repo appcust.Repository) *gin.Engine {
@@ -87,6 +109,9 @@ func makeRouter(repo appcust.Repository) *gin.Engine {
 		appcust.NewCreateUseCase(repo),
 		appcust.NewGetByIDUseCase(repo),
 		appcust.NewListUseCase(repo),
+		appcust.NewUpdateUseCase(repo),
+		appcust.NewDeleteUseCase(repo),
+		appcust.NewRestoreUseCase(repo),
 	)
 	r := gin.New()
 	r.Use(gin.Recovery())
@@ -397,5 +422,47 @@ func TestCustomerHandler_Create_DuplicateMobile_Returns409(t *testing.T) {
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
 	if resp["error"] != "duplicate_customer_mobile" || resp["existing_id"] != existing.ID.String() {
 		t.Errorf("body = %v", resp)
+	}
+}
+
+func TestCustomerHandler_Update_Returns200(t *testing.T) {
+	c := sampleCustomer()
+	r := makeRouter(&fakeRepo{getResult: c})
+	w := do(r, http.MethodPut, "/api/v1/customers/"+c.ID.String(), testTenantID, `{"contact_name":"李四"}`)
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &resp)
+	if resp["contact_name"] != "李四" {
+		t.Errorf("resp = %v", resp)
+	}
+}
+
+func TestCustomerHandler_Update_DuplicateName_Returns409(t *testing.T) {
+	existing := sampleCustomer()
+	other := sampleCustomer()
+	other.ID = uuid.New()
+	other.Name = "别家"
+	repo := &fakeRepo{getResult: other, byName: existing}
+	w := do(makeRouter(repo), http.MethodPut, "/api/v1/customers/"+other.ID.String(), testTenantID, `{"name":"杭州客户甲"}`)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("status = %d, want 409; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestCustomerHandler_Delete_Returns204(t *testing.T) {
+	c := sampleCustomer()
+	w := do(makeRouter(&fakeRepo{getResult: c}), http.MethodDelete, "/api/v1/customers/"+c.ID.String(), testTenantID, "")
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body=%s", w.Code, w.Body.String())
+	}
+}
+
+func TestCustomerHandler_Restore_Returns200(t *testing.T) {
+	c := sampleCustomer()
+	w := do(makeRouter(&fakeRepo{getResult: c}), http.MethodPost, "/api/v1/customers/"+c.ID.String()+"/restore", testTenantID, "")
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", w.Code, w.Body.String())
 	}
 }

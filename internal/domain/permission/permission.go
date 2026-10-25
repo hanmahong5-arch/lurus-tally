@@ -30,7 +30,7 @@ const (
 	ProductWrite   Perm = "product.write"   // 商品、单位的增删改
 	StockAdjust    Perm = "stock.adjust"    // 盘点调整
 	CatalogWrite   Perm = "catalog.write"   // 仓库、供应商、苗木字典、项目、汇率
-	CustomerWrite  Perm = "customer.write"  // 新建客户
+	CustomerWrite  Perm = "customer.write"  // 新建/编辑/删除客户
 	ReplenishView  Perm = "replenish.view"  // 补货建议
 	AIUse          Perm = "ai.use"          // 使用智能助手
 	AIExecute      Perm = "ai.execute"      // 确认、撤销助手给出的批量操作

@@ -68,6 +68,28 @@ export async function createCustomer(
   })
 }
 
+export type CustomerUpdateInput = Partial<CustomerCreateInput>
+
+export async function updateCustomer(
+  id: string,
+  input: CustomerUpdateInput,
+  tenantId?: string
+): Promise<CustomerItem> {
+  return apiFetch<CustomerItem>(`/customers/${id}`, {
+    method: "PUT",
+    body: JSON.stringify(input),
+    tenantId,
+  })
+}
+
+export async function deleteCustomer(id: string, tenantId?: string): Promise<void> {
+  await apiFetch<void>(`/customers/${id}`, { method: "DELETE", tenantId })
+}
+
+export async function restoreCustomer(id: string, tenantId?: string): Promise<CustomerItem> {
+  return apiFetch<CustomerItem>(`/customers/${id}/restore`, { method: "POST", tenantId })
+}
+
 export interface CustomerDuplicate {
   /** Existing customer that already owns the submitted name / mobile. */
   existingId: string

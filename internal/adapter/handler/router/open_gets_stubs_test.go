@@ -551,7 +551,7 @@ func newProbeEnvGuarded(guard gin.HandlerFunc) *probeEnv {
 		WithCashierMode(appacct.NewGetCashierMode(stubCashierRepo{}), appacct.NewSetCashierMode(nil))
 	ah := handlerAuth.New(nil, stubMe{}).WithTeam(handlerteam.New(nil))
 	srch := handlersearch.New(appsearch.NewSearchEntitiesUseCase(repoSearch.New(db)))
-	custh := handlercust.New(nil, appcust.NewGetByIDUseCase(stubCustomerRepo{}), appcust.NewListUseCase(stubCustomerRepo{})).WithImporter(stubPartnerImporter{})
+	custh := handlercust.New(nil, appcust.NewGetByIDUseCase(stubCustomerRepo{}), appcust.NewListUseCase(stubCustomerRepo{}), nil, nil, nil).WithImporter(stubPartnerImporter{})
 	suph := handlersupp.New(nil, appsupp.NewGetByIDUseCase(stubSupplierRepo{}), appsupp.NewListUseCase(stubSupplierRepo{}), nil, nil, nil).WithImporter(stubPartnerImporter{})
 	projh := handlerproject.NewProjectHandler(nil, appproject.NewGetByIDUseCase(stubProjectRepo{}), appproject.NewListUseCase(stubProjectRepo{}), nil, nil, nil)
 	unith := handlerunit.New(nil, appunit.NewListUseCase(stubUnitRepo{}), nil).WithProductUnits(stubProductUnits{})
