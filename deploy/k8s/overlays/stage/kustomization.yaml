@@ -82,11 +82,10 @@ patches:
         namespace: lurus-tally
       $patch: delete
 images:
-  # main-9cbc65e (2026-10-24): 含 PWA start_url=/pos + 计划清单订正；CI run 40053583213。
-  # 前序 main-2853d2c 已上 STAGE（POS /me 离线能力标志 + InstallHint）。无 migration。
+  # main-a1fbb89 (2026-10-25): codegen 东八区 + SupplierItem snake_case；无 migration。
   # 云打印仍关（tally-secrets 无 FEIE_USER/FEIE_UKEY）。
   # History: see git log of this file for older tags.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-9cbc65e
+    newTag: main-a1fbb89
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-9cbc65e
+    newTag: main-a1fbb89
