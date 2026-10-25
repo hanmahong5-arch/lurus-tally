@@ -5,9 +5,11 @@
 // a 32-character upper-case alphabet without the look-alikes 0/O/1/I, so a
 // code read aloud or copied by hand off a printed label is unambiguous.
 //
-// The date is the UTC calendar day, matching bill_no generation. 32^4 ≈ 1M
-// suffixes per prefix per day keeps collisions rare; Source.Create absorbs the
-// rare one by drawing a fresh code on a unique violation.
+// The date is the Asia/Shanghai calendar day, matching bill_no generation
+// (see adapter/repo/bill.BillNoDay). A fixed +8 zone avoids LoadLocation so
+// scratch images without tzdata stay correct. 32^4 ≈ 1M suffixes per prefix
+// per day keeps collisions rare; Source.Create absorbs the rare one by
+// drawing a fresh code on a unique violation.
 package codegen
 
 import (
@@ -17,6 +19,9 @@ import (
 	"io"
 	"time"
 )
+
+// businessZone cuts code dates at Asia/Shanghai wall-clock days (same as bill numbers).
+var businessZone = time.FixedZone("Asia/Shanghai", 8*3600)
 
 // Alphabet is the suffix symbol set: 2-9 and A-Z minus O and I. Its length is
 // exactly 32, so mapping a random byte with b&31 is unbiased.
@@ -62,9 +67,9 @@ type Source struct {
 	Rand io.Reader
 }
 
-// Default returns the production source: UTC wall clock + crypto/rand.
+// Default returns the production source: Asia/Shanghai wall clock + crypto/rand.
 func Default() Source {
-	return Source{Now: func() time.Time { return time.Now().UTC() }, Rand: rand.Reader}
+	return Source{Now: func() time.Time { return time.Now().In(businessZone) }, Rand: rand.Reader}
 }
 
 // Next returns a freshly generated code for prefix.

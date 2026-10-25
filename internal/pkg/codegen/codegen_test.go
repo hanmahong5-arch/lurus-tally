@@ -93,16 +93,35 @@ func TestDefault_ProducesWellFormedCodes(t *testing.T) {
 	}
 }
 
-func TestDefault_DateIsUTC(t *testing.T) {
+func TestDefault_DateIsShanghai(t *testing.T) {
 	got, err := codegen.Default().Next("U")
 	if err != nil {
 		t.Fatalf("Next: %v", err)
 	}
-	// Tolerate a UTC midnight rollover between the two clock reads.
-	before := time.Now().UTC().Add(-time.Minute).Format("060102")
-	after := time.Now().UTC().Format("060102")
+	cst := time.FixedZone("Asia/Shanghai", 8*3600)
+	// Tolerate a Shanghai midnight rollover between the two clock reads.
+	before := time.Now().In(cst).Add(-time.Minute).Format("060102")
+	after := time.Now().In(cst).Format("060102")
 	if d := got[1:7]; d != before && d != after {
-		t.Errorf("date part = %q, want UTC %q", d, after)
+		t.Errorf("date part = %q, want Asia/Shanghai %q", d, after)
+	}
+}
+
+func TestDefault_AfterUTCMidnightStillShanghaiDay(t *testing.T) {
+	// 00:30 Beijing is still the previous calendar day in UTC; Default must
+	// stamp the Shanghai day so codes match what the shop sees on bill_no.
+	cst := time.FixedZone("Asia/Shanghai", 8*3600)
+	local := time.Date(2026, 10, 11, 0, 30, 0, 0, cst)
+	src := codegen.Source{
+		Now:  func() time.Time { return local },
+		Rand: bytes.NewReader([]byte{0, 0, 0, 0}),
+	}
+	got, err := src.Next("P")
+	if err != nil {
+		t.Fatalf("Next: %v", err)
+	}
+	if !strings.HasPrefix(got, "P261011") {
+		t.Errorf("Next = %q, want Shanghai date 261011 (not UTC 261010)", got)
 	}
 }
 
