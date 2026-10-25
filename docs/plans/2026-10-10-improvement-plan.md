@@ -30,7 +30,7 @@
 - [ ] 启动顺序：outbox worker 在迁移完成前启动，全新库首次启动报一次「表不存在」
 - [ ] 苗木字典 seed 文件 189 种，启动日志只写入 9 行 —— 核实
 - [ ] 开发登录把 `profileType` 写死为 `cross_border`，应取租户真实业务类型
-- [ ] 前端 `SupplierItem` 用 camelCase（`tenantId/createdAt`），后端返回 snake_case —— 对齐
+- [x] 前端 `SupplierItem` 与后端 snake_case 对齐（`tenant_id`/`created_at`）— 2026-10-24
 - [x] 编码日期改东八区（与 bill_no 的 Asia/Shanghai 对齐）— 2026-10-24 `codegen.Default`
 - [ ] 统一定价：定价页 ¥199/月、PRD 零售 ¥99–300/年、跨境 ¥500–5000/月、H1 ¥3000/年，四处统一为一个
 - [x] 「看板健康检查 `/api/health` 404」— 真源是 `/internal/v1/tally/health` 与 `/ready`（公网 200）；无 `/api/health` 路由，属文档误称，非缺陷

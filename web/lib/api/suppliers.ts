@@ -7,7 +7,7 @@ import { fetchPartnerTemplate, uploadPartnerCsv } from "./partner-import"
 
 export interface SupplierItem {
   id: string
-  tenantId: string
+  tenant_id: string
   code: string
   name: string
   contact: string
@@ -15,8 +15,8 @@ export interface SupplierItem {
   email: string
   address: string
   remark: string
-  createdAt: string
-  updatedAt: string
+  created_at: string
+  updated_at: string
 }
 
 export interface SupplierListParams {
