@@ -46,6 +46,20 @@ patches:
     target:
       kind: ConfigMap
       name: tally-web-config
+  # Public origin for NextAuth callbacks. Canonical STAGE browser domain is
+  # test-tally.lurus.cn (platform config/apps.yaml); OIDC client redirect must
+  # be https://test-tally.lurus.cn/api/auth/callback/oidc. tally-stage.lurus.cn
+  # still routes to the same pods but is not the registered redirect host.
+  - patch: |-
+      - op: add
+        path: /data/AUTH_URL
+        value: https://test-tally.lurus.cn
+      - op: add
+        path: /data/NEXTAUTH_URL
+        value: https://test-tally.lurus.cn
+    target:
+      kind: ConfigMap
+      name: tally-web-config
   # R6 STAGE fronts traffic with a node-level nginx (no in-cluster Traefik
   # IngressRoute), so services MUST expose stable NodePorts to match
   # /etc/nginx/sites-enabled/lurus-stage upstream (127.0.0.1:30820 / 30830).
