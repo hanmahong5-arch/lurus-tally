@@ -82,10 +82,10 @@ patches:
         namespace: lurus-tally
       $patch: delete
 images:
-  # main-51b6876 (2026-10-26): 补货页安全线写入口 PUT /stock/safety-qty；无 migration。
+  # main-7aa0cfe (2026-10-26): outbox 迁后启动 + seed COUNT + 开发登录真实 profile；无 migration。
   # 云打印仍关（tally-secrets 无 FEIE_USER/FEIE_UKEY）。
   # History: see git log of this file for older tags.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-51b6876
+    newTag: main-7aa0cfe
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-51b6876
+    newTag: main-7aa0cfe
