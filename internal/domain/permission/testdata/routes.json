@@ -96,6 +96,7 @@
   "PUT /api/v1/projects/:id": "catalog.write",
   "PUT /api/v1/purchase-bills/:id": "bill.draft",
   "PUT /api/v1/sale-bills/:id": "bill.draft",
+  "PUT /api/v1/stock/safety-qty": "catalog.write",
   "PUT /api/v1/suppliers/:id": "catalog.write",
   "PUT /api/v1/tenant/cashier-mode": "settings.manage",
   "PUT /api/v1/tenant/print-settings": "settings.manage",

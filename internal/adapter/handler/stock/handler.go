@@ -28,6 +28,7 @@ type Handler struct {
 	listMovements *appstock.ListMovementsUseCase
 	listLowStock  *appreplenish.ListLowStockUseCase
 	adjust        *appstock.AdjustUseCase
+	setSafetyQty  *appstock.SetSafetyQtyUseCase
 	names         ProductNamer
 	extra         []func(rg *gin.RouterGroup)
 }
@@ -47,6 +48,12 @@ func (h *Handler) WithProductNames(n ProductNamer) *Handler {
 // WithAdjust enables POST /stock/adjustments (stock count). Without it the route is not mounted.
 func (h *Handler) WithAdjust(uc *appstock.AdjustUseCase) *Handler {
 	h.adjust = uc
+	return h
+}
+
+// WithSetSafetyQty enables PUT /stock/safety-qty (explicit low-stock override).
+func (h *Handler) WithSetSafetyQty(uc *appstock.SetSafetyQtyUseCase) *Handler {
+	h.setSafetyQty = uc
 	return h
 }
 
@@ -87,6 +94,9 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 	if h.adjust != nil {
 		// Stock count: writes adjust movements for the difference only (never a bill).
 		rg.POST("/stock/adjustments", h.PostAdjustment)
+	}
+	if h.setSafetyQty != nil {
+		rg.PUT("/stock/safety-qty", h.PutSafetyQty)
 	}
 	for _, fn := range h.extra {
 		fn(rg)
@@ -246,6 +256,55 @@ func (h *Handler) ListLowStock(c *gin.Context) {
 		rows = []appreplenish.LowStockRow{}
 	}
 	c.JSON(http.StatusOK, gin.H{"items": rows, "count": len(rows)})
+}
+
+// putSafetyQtyRequest is the JSON body for PUT /api/v1/stock/safety-qty.
+// low_safe_qty of "0" or "" clears the override so the learned ROP applies.
+type putSafetyQtyRequest struct {
+	ProductID  uuid.UUID `json:"product_id" binding:"required"`
+	LowSafeQty string    `json:"low_safe_qty"`
+}
+
+// PutSafetyQty handles PUT /api/v1/stock/safety-qty: set or clear the explicit
+// per-product low-stock threshold that overrides the learned reorder point.
+func (h *Handler) PutSafetyQty(c *gin.Context) {
+	tenantID := resolveTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "请先登录"})
+		return
+	}
+	var req putSafetyQtyRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择商品并填写安全线数量"})
+		return
+	}
+	qty := decimal.Zero
+	if s := strings.TrimSpace(req.LowSafeQty); s != "" {
+		parsed, err := decimalutil.Parse(s, "low_safe_qty")
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "安全线数量格式不正确"})
+			return
+		}
+		qty = parsed
+	}
+	err := h.setSafetyQty.Execute(c.Request.Context(), tenantID, req.ProductID, qty)
+	if err != nil {
+		if errors.Is(err, appstock.ErrInvalidSafetyQty) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "安全线数量不能为负数"})
+			return
+		}
+		if errors.Is(err, appstock.ErrNoWarehouse) {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": "请先创建仓库，再设置安全线"})
+			return
+		}
+		httperr.WriteInternal(c, err)
+		return
+	}
+	out := gin.H{"product_id": req.ProductID.String(), "low_safe_qty": "0"}
+	if qty.IsPositive() {
+		out["low_safe_qty"] = qty.String()
+	}
+	c.JSON(http.StatusOK, out)
 }
 
 // postMovementRequest is the JSON body for POST /api/v1/stock/movements.

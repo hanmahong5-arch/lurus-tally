@@ -361,7 +361,9 @@ func NewApp(cfg *config.Config) (*App, error) {
 		// reusing the replenish engine's learned demand + lead-time intelligence
 		// (zero-config). Same tenant-pinned RLS access as /replenish/suggestions.
 		appreplenish.NewListLowStockUseCase(reporepl.NewSQLSuggestionRepo(db)),
-	).WithAdjust(appstock.NewAdjustUseCase(stockRepo, recordMovementUC)).WithProductNames(stockRepo) // stock count: POST /stock/adjustments; names the unpriced products in a clerk's refusal
+	).WithAdjust(appstock.NewAdjustUseCase(stockRepo, recordMovementUC)).
+		WithSetSafetyQty(appstock.NewSetSafetyQtyUseCase(stockRepo, repowarehouse.New(db))).
+		WithProductNames(stockRepo) // stock count + safety-qty override; names the unpriced products in a clerk's refusal
 
 	// Bulk product import (POST /products/import): product + default SKU + barcode + opening
 	// stock per row in one transaction. The route rides the stock handler's router group so

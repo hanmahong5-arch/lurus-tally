@@ -11,6 +11,7 @@ import {
   type ReplenishSuggestion,
   type ReplenishScorecard,
 } from "@/lib/api/replenish"
+import { setSafetyQty } from "@/lib/api/stock"
 import { useAbortableEffect } from "@/hooks/useAbortableEffect"
 import { useTenantId } from "@/hooks/use-tenant-id"
 import { useRole } from "@/hooks/use-role"
@@ -23,6 +24,7 @@ import { DataTable, currencyCell } from "@/components/ui/data-table"
 import { DataCard } from "@/components/ui/data-card"
 import { Badge, type BadgeTone } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/empty-state"
 import { formatCNY } from "@/lib/format"
 
@@ -54,6 +56,31 @@ export default function ReplenishPage() {
   const { known, can } = useRole()
   const showCost = !known || can("cost.view")
   const mayDraft = !known || can("bill.draft")
+  const mayEditSafety = !known || can("catalog.write")
+  const [savingSafety, setSavingSafety] = useState<string | null>(null)
+
+  async function saveSafety(productId: string, raw: string) {
+    const trimmed = raw.trim()
+    const value = trimmed === "" ? "0" : trimmed
+    if (Number.isNaN(Number(value)) || Number(value) < 0) {
+      toast.error("安全线须为不小于 0 的数字；填 0 表示改回自动学习")
+      return
+    }
+    setSavingSafety(productId)
+    try {
+      const res = await setSafetyQty({ product_id: productId, low_safe_qty: value }, tenantId)
+      setSuggestions((rows) =>
+        rows.map((r) =>
+          r.product_id === productId ? { ...r, safety_qty: res.low_safe_qty || "0" } : r
+        )
+      )
+      toast.success(Number(res.low_safe_qty) > 0 ? "安全线已更新" : "已改回自动学习补货点")
+    } catch (e) {
+      toast.error("保存失败：" + extractApiError(e).message)
+    } finally {
+      setSavingSafety(null)
+    }
+  }
 
   const load = useCallback(
     (signal?: AbortSignal, isCancelled?: () => boolean) => {
@@ -221,11 +248,32 @@ export default function ReplenishPage() {
       id: "safety_qty",
       header: "安全线",
       meta: { align: "right" },
-      cell: ({ row }) => (
-        <span className="tabular-nums text-muted-foreground">
-          {row.original.safety_qty}
-        </span>
-      ),
+      cell: ({ row }) => {
+        const r = row.original
+        if (!mayEditSafety) {
+          return <span className="tabular-nums text-muted-foreground">{r.safety_qty}</span>
+        }
+        return (
+          <Input
+            key={`${r.product_id}-${r.safety_qty}`}
+            aria-label={`${r.product_name} 安全线`}
+            className="ml-auto h-8 w-20 text-right tabular-nums"
+            inputMode="decimal"
+            defaultValue={r.safety_qty}
+            disabled={savingSafety === r.product_id}
+            onClick={(e) => e.stopPropagation()}
+            onBlur={(e) => {
+              if (e.target.value.trim() === String(r.safety_qty)) return
+              void saveSafety(r.product_id, e.target.value)
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.currentTarget.blur()
+              }
+            }}
+          />
+        )
+      },
     },
     {
       id: "avg_daily_sales",
@@ -377,7 +425,28 @@ export default function ReplenishPage() {
             }
             fields={[
               { label: "可用库存", value: r.available_qty },
-              { label: "安全线", value: r.safety_qty },
+              {
+                label: "安全线",
+                value: mayEditSafety ? (
+                  <Input
+                    key={`${r.product_id}-${r.safety_qty}-m`}
+                    aria-label={`${r.product_name} 安全线`}
+                    className="h-8 w-24 text-right tabular-nums"
+                    inputMode="decimal"
+                    defaultValue={r.safety_qty}
+                    disabled={savingSafety === r.product_id}
+                    onBlur={(e) => {
+                      if (e.target.value.trim() === String(r.safety_qty)) return
+                      void saveSafety(r.product_id, e.target.value)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") e.currentTarget.blur()
+                    }}
+                  />
+                ) : (
+                  r.safety_qty
+                ),
+              },
               { label: "建议订量", value: <span className="font-semibold">{r.suggested_qty}</span> },
               ...(showCost ? [{ label: "预计金额", value: currencyCell(r.est_amount_cny) }] : []),
               { label: "建议供应商", value: r.supplier_name || "—" },

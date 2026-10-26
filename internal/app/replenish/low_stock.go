@@ -28,8 +28,8 @@ type LowStockRow struct {
 // below their reorder point. The reorder point is the SAME learned demand +
 // lead-time intelligence ListSuggestionsUseCase computes (zero-config) via the
 // shared Forecast; a per-product low_safe_qty, when set, acts as an explicit
-// override. There is no threshold-config API — the low-stock alert and the
-// reorder suggestion are one signal off one reorder-point definition.
+// override (PUT /stock/safety-qty). The low-stock alert and the reorder
+// suggestion are one signal off one reorder-point definition.
 //
 // It lives in this package (not app/stock) because it reuses Forecast and
 // SuggestionRepo; app/stock cannot import app/replenish (replenish already

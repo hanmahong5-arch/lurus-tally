@@ -448,3 +448,47 @@ func (r *Repo) UpdateLotQty(ctx context.Context, tx *sql.Tx, lotID uuid.UUID, qt
 	}
 	return nil
 }
+
+// SetProductSafetyQty writes the per-product low_safe_qty override used by the
+// low-stock alert (MIN across warehouses). qty=nil clears the override to NULL
+// on every existing row; when no row exists and qty is set, inserts one row at
+// defaultWarehouseID with opening qty 0.
+func (r *Repo) SetProductSafetyQty(ctx context.Context, tenantID, productID uuid.UUID, qty *decimal.Decimal, defaultWarehouseID uuid.UUID) error {
+	db := dbscope.From(ctx, r.db)
+
+	var qtyArg any
+	if qty != nil {
+		qtyArg = qty.String()
+	}
+
+	const upd = `
+		UPDATE tally.stock_initial
+		SET low_safe_qty = $1
+		WHERE tenant_id = $2 AND product_id = $3`
+	res, err := db.ExecContext(ctx, upd, qtyArg, tenantID, productID)
+	if err != nil {
+		return fmt.Errorf("stock repo: set safety qty update: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("stock repo: set safety qty rows: %w", err)
+	}
+	if n > 0 || qty == nil {
+		return nil
+	}
+	if defaultWarehouseID == uuid.Nil {
+		return fmt.Errorf("stock repo: set safety qty: default warehouse required")
+	}
+
+	const ins = `
+		INSERT INTO tally.stock_initial
+			(id, tenant_id, product_id, warehouse_id, qty, low_safe_qty)
+		VALUES ($1, $2, $3, $4, 0, $5)
+		ON CONFLICT (tenant_id, product_id, warehouse_id)
+		DO UPDATE SET low_safe_qty = EXCLUDED.low_safe_qty`
+	_, err = db.ExecContext(ctx, ins, uuid.New(), tenantID, productID, defaultWarehouseID, qty.String())
+	if err != nil {
+		return fmt.Errorf("stock repo: set safety qty insert: %w", err)
+	}
+	return nil
+}

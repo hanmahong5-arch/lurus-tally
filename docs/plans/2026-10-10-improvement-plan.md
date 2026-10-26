@@ -27,7 +27,7 @@
 - [x] 快速收银挂客户 `partner_id`（赊账结账必选客户；现金/扫码可选备注）— 2026-10 已在 payment-modal
 - [x] 单据详情页显示供应商/客户名称（`partner_name` + `useBillPartyNames` 回落）— 已落地
 - [x] 客户编辑/删除/恢复接口与页面（对齐供应商 CRUD）— 2026-10-25 第十六轮
-- [ ] 低库存预警阈值写入口（产品决策已定：默认自动学习 ROP；`stock_initial.low_safe_qty` 显式覆盖；缺写 API/UI）
+- [x] 低库存预警阈值写入口 — 2026-10-25：`PUT /stock/safety-qty` + 补货页可改安全线；0=清覆盖回自动学习
 - [ ] 启动顺序：outbox worker 在迁移完成前启动，全新库首次启动报一次「表不存在」
 - [ ] 苗木字典 seed 文件 189 种，启动日志只写入 9 行 —— 核实
 - [ ] 开发登录把 `profileType` 写死为 `cross_border`，应取租户真实业务类型
@@ -44,7 +44,7 @@
 |---|---|---|---|
 | P0 | 客户 PUT/DELETE/restore + 列表编辑删除 | ✅ 本轮 | 镜像供应商；查重排除自身；`customer.write` 权限 |
 | P0 | 单据详情往来单位名 | ✅ 已有 | 计划项过期，标完成 |
-| P1 | 低库存 `low_safe_qty` 写入口 | 下一刀 | 补货页可改安全线；无行则默认仓 upsert |
+| P1 | 低库存 `low_safe_qty` 写入口 | ✅ 本轮续 | `PUT /stock/safety-qty`；补货页可改；无行则默认仓 upsert；0 清覆盖 |
 | P2 | 运维 unblock | 阻塞 | 飞鹅 secret、平台作用域 key、真机 UAT |
 | 不做 | 并入 lutu / 解冻 2b-app-tally | ADR-0038 | FREEZE 保留仓 |
 

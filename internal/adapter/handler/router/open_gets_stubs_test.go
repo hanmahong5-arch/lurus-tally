@@ -537,6 +537,7 @@ func newProbeEnvGuarded(guard gin.HandlerFunc) *probeEnv {
 	sh := handlerstock.New(nil, appstock.NewGetSnapshotUseCase(stockRepo), appstock.NewListSnapshotsUseCase(stockRepo),
 		appstock.NewListMovementsUseCase(stockRepo), appreplenish.NewListLowStockUseCase(stubSuggestions{})).
 		WithAdjust(appstock.NewAdjustUseCase(nil, nil)).
+		WithSetSafetyQty(appstock.NewSetSafetyQtyUseCase(nil, nil)).
 		WithExtraRoutes(ph.RegisterImportRoutes).
 		WithExtraRoutes(handlerprint.New(appprint.New(nil, nil, nil, nil)).RegisterRoutes)
 	bh := handlerbill.New(nil, nil, nil, nil, appbill.NewListPurchasesUseCase(billRepo), appbill.NewGetPurchaseUseCase(billRepo), nil).

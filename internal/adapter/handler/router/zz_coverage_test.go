@@ -38,6 +38,7 @@ import (
 	handlersupp "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/supplier"
 	handlerunit "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/unit"
 	handlerwarehouse "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/warehouse"
+	appstock "github.com/hanmahong5-arch/lurus-tally/internal/app/stock"
 )
 
 func init() {
@@ -66,7 +67,8 @@ func buildFullyWiredRouter() *gin.Engine {
 	uh := handlerunit.New(nil, nil, nil)
 	ah := handlerAuth.New(nil, nil)
 	pat := handlerAuth.NewPATHandler(nil)
-	sh := handlerstock.New(nil, nil, nil, nil, nil)
+	sh := handlerstock.New(nil, nil, nil, nil, nil).
+		WithSetSafetyQty(appstock.NewSetSafetyQtyUseCase(nil, nil))
 	bh := handlerbill.New(nil, nil, nil, nil, nil, nil, nil)
 	ch := handlercurrency.New(nil, nil, nil, nil)
 	saleh := handlerbill.NewSaleHandler(nil, nil, nil, nil, nil, nil, nil)

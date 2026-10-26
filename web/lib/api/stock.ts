@@ -143,6 +143,21 @@ export async function adjustStock(
   })
 }
 
+/**
+ * Explicit low-stock override: PUT /stock/safety-qty.
+ * low_safe_qty "0" or "" clears the override so the learned ROP applies again.
+ */
+export async function setSafetyQty(
+  input: { product_id: string; low_safe_qty: string },
+  tenantId?: string
+): Promise<{ product_id: string; low_safe_qty: string }> {
+  return apiFetch("/stock/safety-qty", {
+    method: "PUT",
+    body: JSON.stringify(input),
+    tenantId,
+  })
+}
+
 // ---------------------------------------------------------------------------
 // Server-side helpers (RSC / Server Actions)
 // Call the backend in-cluster directly with an access token.  Never import

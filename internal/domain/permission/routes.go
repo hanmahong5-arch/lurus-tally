@@ -49,6 +49,7 @@ var RoutePerm = map[string]Perm{
 	"POST /api/v1/units":                ProductWrite,
 	"DELETE /api/v1/units/:id":          ProductWrite,
 	"POST /api/v1/stock/adjustments":    StockAdjust,
+	"PUT /api/v1/stock/safety-qty":      CatalogWrite,
 	// Basic data.
 	"POST /api/v1/warehouses":               CatalogWrite,
 	"PUT /api/v1/warehouses/:id":            CatalogWrite,
