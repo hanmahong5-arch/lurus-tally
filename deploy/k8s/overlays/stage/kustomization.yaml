@@ -82,10 +82,10 @@ patches:
         namespace: lurus-tally
       $patch: delete
 images:
-  # main-da0a63c (2026-10-25): 客户 PUT/DELETE/restore + 列表编辑删除；无 migration。
+  # main-51b6876 (2026-10-26): 补货页安全线写入口 PUT /stock/safety-qty；无 migration。
   # 云打印仍关（tally-secrets 无 FEIE_USER/FEIE_UKEY）。
   # History: see git log of this file for older tags.
   - name: ghcr.io/hanmahong5-arch/lurus-tally-backend
-    newTag: main-da0a63c
+    newTag: main-51b6876
   - name: ghcr.io/hanmahong5-arch/lurus-tally-web
-    newTag: main-da0a63c
+    newTag: main-51b6876
