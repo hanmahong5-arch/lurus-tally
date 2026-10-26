@@ -167,6 +167,9 @@ func TestSeedNurseryDict_HappyPath(t *testing.T) {
 	mock.ExpectBegin()
 	mock.ExpectExec(".*").WillReturnResult(sqlmock.NewResult(0, 7))
 	mock.ExpectCommit()
+	mock.ExpectQuery(`SELECT COUNT\(\*\) FROM tally\.nursery_dict`).
+		WithArgs("00000000-0000-0000-0000-000000000000").
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(199))
 
 	if err := SeedNurseryDict(context.Background(), db, testLog()); err != nil {
 		t.Fatalf("SeedNurseryDict: unexpected error: %v", err)

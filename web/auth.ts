@@ -170,7 +170,10 @@ function devCredentialsProvider() {
         name: "Dev User",
         // Extra fields stored in the JWT via the jwt() callback below.
         devTenantId: tenantId,
-        devProfileType: me?.tenant_id === tenantId ? me.profile_type || undefined : undefined,
+        // Prefer the tenant's real business type from /me. Never invent
+        // "cross_border" — an empty/missing profile leaves the user on /setup.
+        devProfileType:
+          me?.tenant_id === tenantId && me.profile_type ? me.profile_type : undefined,
         devAccessToken: accessToken,
         devRole: me?.tenant_id === tenantId && me.role ? { role: me.role, isOwner: me.is_owner } : undefined,
       }
@@ -207,8 +210,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       if (devUser?.devTenantId !== undefined) {
         t.sub = typeof user?.id === "string" ? user.id : DEV_USER_ID
         t.tenantId = devUser.devTenantId
-        t.profileType = devUser.devProfileType ?? "cross_border"
-        t.isFirstTime = false
+        t.profileType = typeof devUser.devProfileType === "string" ? devUser.devProfileType : null
+        t.isFirstTime = t.profileType == null
         // The dev user is the owner unless the TALLY_DEV_MODE backend says the
         // fixed subject belongs to this tenant with another role.
         const devMe = devUser.devRole

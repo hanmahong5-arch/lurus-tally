@@ -37,6 +37,12 @@ func (a *App) Start(ctx context.Context) error {
 		a.log.Info("nursery seed: skipped (SEED_NURSERY_DICT not set)")
 	}
 
+	// Background workers (outbox drain, audit NATS consumer) only after schema
+	// is ready — see App.startBG. Idempotent if Start is called twice.
+	if a.startBG != nil {
+		a.startBG()
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		if err := a.srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

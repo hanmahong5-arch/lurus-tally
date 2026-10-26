@@ -151,6 +151,9 @@ type App struct {
 	stopUsageRetry context.CancelFunc // cancels the usage durable-retry worker on Stop
 	auditSub       *adapternats.AuditSubscriber
 	usageReporter  *usagereport.Reporter // nil when AI or platform integration is off
+	// startBG launches outbox + audit subscribers. Called from Start() AFTER
+	// migrations so a fresh DB never races the drain poll against missing tables.
+	startBG func()
 }
 
 // NewApp wires all dependencies together and returns a ready-to-start App.
@@ -1006,56 +1009,59 @@ func NewApp(cfg *config.Config) (*App, error) {
 
 	srv := newServer(":"+cfg.Port, r)
 
-	// Start the outbox drain worker in a background goroutine.
-	// It polls every 30s, publishing any pending event_outbox rows to NATS.
-	// Graceful shutdown is handled by Stop() cancelling outboxCtx.
-	outboxCtx, outboxCancel := context.WithCancel(context.Background())
-	outboxWorker := adapternats.NewOutboxWorker(outboxStore, natsPub, l)
-	go outboxWorker.Run(outboxCtx)
-	l.Info("outbox worker started", slog.String("poll_interval", "30s"))
-
-	// Audit subscriber (Phase 3) — best-effort consumer that mirrors business
-	// PSI_EVENTS into tally.account_audit_log. Skipped when NATS is in noop mode
-	// (dev) or when the connection can't be opened.
-	var auditSub *adapternats.AuditSubscriber
-	if cfg.NATSURL != "" {
-		nc, ncErr := nats.Connect(cfg.NATSURL)
-		if ncErr != nil {
-			l.Warn("audit subscriber: NATS connect failed, account_audit_log will not be populated",
-				slog.String("error", ncErr.Error()))
-		} else {
-			if teamSvc.Available() {
-				if _, evErr := platform.SubscribeOrgMemberEvents(nc, teamSvc, l); evErr != nil {
-					l.Warn("team: member event subscription failed, roles refresh via the 60s cache TTL",
-						slog.String("error", evErr.Error()))
-				}
-			}
-			sub, subErr := adapternats.NewAuditSubscriber(nc, acctAppendAudit, l)
-			if subErr != nil {
-				l.Warn("audit subscriber: init failed",
-					slog.String("error", subErr.Error()))
-			} else if sub != nil {
-				if startErr := sub.Start(outboxCtx); startErr != nil {
-					l.Warn("audit subscriber: start failed",
-						slog.String("error", startErr.Error()))
-				} else {
-					auditSub = sub
-				}
-			}
-		}
-	}
-
-	return &App{
+	app := &App{
 		cfg:            cfg,
 		log:            l,
 		engine:         r,
 		srv:            srv,
 		db:             db,
-		stopOutbox:     outboxCancel,
 		stopUsageRetry: usageRetryCancel,
-		auditSub:       auditSub,
 		usageReporter:  usageReporter,
-	}, nil
+	}
+
+	// Defer outbox + audit subscribers until Start() finishes migrations.
+	// Starting them here used to race a fresh DB: the first 30s poll logged
+	// "relation event_outbox does not exist" before MigrateOnBoot ran.
+	app.startBG = func() {
+		if app.stopOutbox != nil {
+			return
+		}
+		outboxCtx, outboxCancel := context.WithCancel(context.Background())
+		app.stopOutbox = outboxCancel
+		go adapternats.NewOutboxWorker(outboxStore, natsPub, l).Run(outboxCtx)
+		l.Info("outbox worker started", slog.String("poll_interval", "30s"))
+
+		if cfg.NATSURL == "" {
+			return
+		}
+		nc, ncErr := nats.Connect(cfg.NATSURL)
+		if ncErr != nil {
+			l.Warn("audit subscriber: NATS connect failed, account_audit_log will not be populated",
+				slog.String("error", ncErr.Error()))
+			return
+		}
+		if teamSvc.Available() {
+			if _, evErr := platform.SubscribeOrgMemberEvents(nc, teamSvc, l); evErr != nil {
+				l.Warn("team: member event subscription failed, roles refresh via the 60s cache TTL",
+					slog.String("error", evErr.Error()))
+			}
+		}
+		sub, subErr := adapternats.NewAuditSubscriber(nc, acctAppendAudit, l)
+		if subErr != nil {
+			l.Warn("audit subscriber: init failed", slog.String("error", subErr.Error()))
+			return
+		}
+		if sub == nil {
+			return
+		}
+		if startErr := sub.Start(outboxCtx); startErr != nil {
+			l.Warn("audit subscriber: start failed", slog.String("error", startErr.Error()))
+			return
+		}
+		app.auditSub = sub
+	}
+
+	return app, nil
 }
 
 // Handler returns the app's fully-wired HTTP handler. It lets a caller mount the

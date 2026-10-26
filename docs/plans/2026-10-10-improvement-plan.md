@@ -28,9 +28,9 @@
 - [x] 单据详情页显示供应商/客户名称（`partner_name` + `useBillPartyNames` 回落）— 已落地
 - [x] 客户编辑/删除/恢复接口与页面（对齐供应商 CRUD）— 2026-10-25 第十六轮
 - [x] 低库存预警阈值写入口 — 2026-10-25：`PUT /stock/safety-qty` + 补货页可改安全线；0=清覆盖回自动学习
-- [ ] 启动顺序：outbox worker 在迁移完成前启动，全新库首次启动报一次「表不存在」
-- [ ] 苗木字典 seed 文件 189 种，启动日志只写入 9 行 —— 核实
-- [ ] 开发登录把 `profileType` 写死为 `cross_border`，应取租户真实业务类型
+- [x] 启动顺序：outbox/audit 改到 `Start()` 迁移之后再起 — 2026-10-26
+- [x] 苗木字典 seed「只写 9 行」：误读多语句 `RowsAffected`（末段约 9）；改为 COUNT 共享字典 — 2026-10-26
+- [x] 开发登录 `profileType`：取 `/me` 真实业务类型，缺省为 null 走 /setup（不再写死 cross_border）— 2026-10-26
 - [x] 前端 `SupplierItem` 与后端 snake_case 对齐（`tenant_id`/`created_at`）— 2026-10-24
 - [x] 编码日期改东八区（与 bill_no 的 Asia/Shanghai 对齐）— 2026-10-24 `codegen.Default`
 - [ ] 统一定价：定价页 ¥199/月、PRD 零售 ¥99–300/年、跨境 ¥500–5000/月、H1 ¥3000/年，四处统一为一个
