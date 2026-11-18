@@ -1,0 +1,17 @@
+{
+  "max_lines": 300,
+  "max_test_lines": 500,
+  "zones": {
+    "infra": ["internal/pkg", "internal/adapter/repo"],
+    "contracts": ["internal/domain"],
+    "features": ["internal/app", "internal/adapter/handler"],
+    "bootstrap": ["cmd"]
+  },
+  "fix_hints": {
+    "ARCH-DAG-001": "Feature usecases under internal/app/* must not cross-import sibling usecases; define shared interfaces in internal/domain."
+  },
+  "fix_paths": [
+    "internal/domain",
+    "cmd"
+  ]
+}
