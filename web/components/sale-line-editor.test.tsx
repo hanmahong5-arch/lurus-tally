@@ -7,6 +7,9 @@ vi.mock("@/lib/api/last-prices", async (orig) => ({
   ...(await orig<typeof import("@/lib/api/last-prices")>()),
   getLastPrices: vi.fn(),
 }))
+vi.mock("@/lib/api/product-units", () => ({ listProductUnits: vi.fn() }))
+vi.mock("@/lib/api/units", () => ({ listUnits: vi.fn() }))
+vi.mock("@/lib/api/products", () => ({ updateProduct: vi.fn() }))
 vi.mock("@/components/entity-pickers", () => ({
   ProductPicker: ({ onSelect }: { onSelect: (o: { id: string; name: string }) => void }) => (
     <button type="button" onClick={() => onSelect({ id: "p1", name: "红枫" })}>
@@ -16,6 +19,8 @@ vi.mock("@/components/entity-pickers", () => ({
 }))
 
 import { getLastPrices } from "@/lib/api/last-prices"
+import { listProductUnits } from "@/lib/api/product-units"
+import { listUnits } from "@/lib/api/units"
 import { SaleLineEditor, type SaleLineItem } from "./sale-line-editor"
 
 function Harness({ partnerId }: { partnerId?: string }) {
@@ -26,7 +31,13 @@ function Harness({ partnerId }: { partnerId?: string }) {
 }
 
 describe("SaleLineEditor last price", () => {
-  beforeEach(() => vi.mocked(getLastPrices).mockReset())
+  beforeEach(() => {
+    vi.mocked(getLastPrices).mockReset()
+    vi.mocked(listProductUnits).mockReset()
+    vi.mocked(listProductUnits).mockResolvedValue([])
+    vi.mocked(listUnits).mockReset()
+    vi.mocked(listUnits).mockResolvedValue({ items: [] })
+  })
 
   it("fills the partner's last price and shows the hint", async () => {
     vi.mocked(getLastPrices).mockResolvedValue({
@@ -39,7 +50,7 @@ describe("SaleLineEditor last price", () => {
     expect(vi.mocked(getLastPrices).mock.calls[0][0]).toMatchObject({ partnerId: "c1", productIds: ["p1"], type: "sale" })
   })
 
-  it("a price quoted per carton is converted to the base unit this editor bills in", async () => {
+  it("keeps a carton price on the carton and shows that unit", async () => {
     vi.mocked(getLastPrices).mockResolvedValue({
       items: [
         { product_id: "p1", unit_price: "42.00", unit_id: "u-box", unit_name: "箱", base_unit_price: "3.50", factor: "12", source: "last", bill_date: "2026-10-02" },
@@ -47,9 +58,10 @@ describe("SaleLineEditor last price", () => {
     })
     render(<Harness partnerId="c1" />)
     fireEvent.click(screen.getByText("pick-product"))
-    await waitFor(() => expect(screen.getByDisplayValue("3.50")).toBeTruthy())
-    expect(screen.queryByDisplayValue("42.00")).toBeNull()
-    expect(screen.getByText("上次 ¥42.00/箱 · 10/2（折合每基本单位 ¥3.50）")).toBeTruthy()
+    await waitFor(() => expect(screen.getByDisplayValue("42.00")).toBeTruthy())
+    expect(screen.queryByDisplayValue("3.50")).toBeNull()
+    expect(screen.getByRole("option", { name: "箱" })).toBeTruthy()
+    expect(screen.getByText("上次 ¥42.00/箱 · 10/2")).toBeTruthy()
   })
 
   it("a customer without history gets the default price, labelled as such", async () => {
@@ -102,17 +114,16 @@ describe("SaleLineEditor last price", () => {
     expect(row.unit_name).toBeUndefined()
   })
 
-  it("a converted per-base-unit price is rounded to the cent on the sale line", async () => {
+  it("rounds an auto-filled price to the cent", async () => {
     vi.mocked(getLastPrices).mockResolvedValue({
       items: [
-        { product_id: "p1", unit_price: "40.00", unit_id: "u-box", unit_name: "箱", base_unit_price: "3.333333", factor: "12", source: "last", bill_date: "2026-10-02" },
+        { product_id: "p1", unit_price: "3.333333", unit_id: "u-pc", unit_name: "件", base_unit_price: "3.333333", factor: "1", source: "last", bill_date: "2026-10-02" },
       ],
     })
     render(<Harness partnerId="c1" />)
     fireEvent.click(screen.getByText("pick-product"))
     await waitFor(() => expect(screen.getByDisplayValue("3.33")).toBeTruthy())
     expect(screen.queryByDisplayValue("3.333333")).toBeNull()
-    // the line total follows the rounded price
     expect(screen.getByText("3.33")).toBeTruthy()
   })
 
@@ -126,6 +137,7 @@ describe("SaleLineEditor last price", () => {
       />
     )
     expect(screen.getByDisplayValue("1.005")).toBeTruthy()
+    await screen.findByRole("option", { name: "—" })
   })
 
   it("read-only line with unknown product never shows an id", () => {

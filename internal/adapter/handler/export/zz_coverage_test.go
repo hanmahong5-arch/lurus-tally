@@ -435,7 +435,7 @@ func TestBills_PaymentStatusWithoutStatusAllowed(t *testing.T) {
 }
 
 func TestBills_InvoiceStatusPassedThrough(t *testing.T) {
-	for _, q := range []string{"?invoice_status=none", "?status=2&invoice_status=partial", "?invoice_status=full&payment_status=paid"} {
+	for _, q := range []string{"?invoice_status=none", "?status=2&invoice_status=partial", "?invoice_status=full&payment_status=paid", "?invoice_status=open"} {
 		bills := &spyExporter{body: "h\n"}
 		w := billsGet(t, bills, q, uuid.New().String())
 		if w.Code != http.StatusOK {

@@ -94,6 +94,22 @@ describe("TodoPage", () => {
     expect(screen.getByText("-3")).toBeInTheDocument()
   })
 
+  it("calls out purchases that sat unreceived, and supplier invoices still open", async () => {
+    fetchMock.mockResolvedValue({
+      ok: true,
+      json: async () =>
+        summary({
+          draft_purchases: { count: 2, items: [bill(1)], stale_count: 2 },
+          uninvoiced_purchases: { count: 1, items: [{ ...bill(2), bill_no: "PO-9" }] },
+          total: 3,
+        }),
+    })
+    render(await TodoPage())
+    expect(screen.getByText(/超过 7 天还没确认收货/)).toBeInTheDocument()
+    expect(screen.getByText("已入库、供应商发票还没开齐")).toBeInTheDocument()
+    expect(screen.getByText("PO-9")).toBeInTheDocument()
+  })
+
   it("does not render the negative-stock group when undefined", async () => {
     fetchMock.mockResolvedValue({ ok: true, json: async () => summary({ draft_sales: { count: 1, items: [bill(1)] }, total: 1 }) })
     const { container } = render(await TodoPage())

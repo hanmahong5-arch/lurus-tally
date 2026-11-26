@@ -19,7 +19,8 @@ import (
 // of the requirement, and matching the exact route template fails closed: a
 // renamed route drops out of the set rather than silently matching a prefix.
 var requireIdempotencyKeyRoutes = map[string]struct{}{
-	"POST /api/v1/payments": {},
+	"POST /api/v1/payments":              {},
+	"POST /api/v1/money-lines/:id/match": {},
 	// A lump-sum receipt books one payment per settled bill; a replay would pay them twice.
 	"POST /api/v1/receipts":                   {},
 	"POST /api/v1/purchase-bills/:id/approve": {},
@@ -30,6 +31,7 @@ var requireIdempotencyKeyRoutes = map[string]struct{}{
 	"POST /api/v1/sale-bills/:id/return":     {},
 	"POST /api/v1/purchase-bills/:id/return": {},
 	"POST /api/v1/ai/plans/:plan_id/confirm": {},
+	"POST /api/v1/intake/:id/accept":         {},
 	// Subscription checkout debits the wallet / creates a payment order on
 	// platform; platform itself mandates an Idempotency-Key on this financial
 	// mutation, so a key-less retry would 400 downstream. Make it mandatory at

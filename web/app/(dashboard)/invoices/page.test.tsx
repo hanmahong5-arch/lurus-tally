@@ -3,6 +3,13 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react"
 import * as api from "@/lib/api/invoices"
 import InvoicesPage from "./page"
 
+const search = vi.hoisted(() => ({ value: "" }))
+vi.mock("next/navigation", () => ({
+  useSearchParams: () => new URLSearchParams(search.value),
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), refresh: vi.fn() }),
+  usePathname: () => "/invoices",
+}))
+
 const confirmMock = vi.fn()
 vi.mock("@/hooks/useConfirm", () => ({ useConfirm: () => confirmMock }))
 vi.mock("@/hooks/use-tenant-id", () => ({ useTenantId: () => "t-1" }))
@@ -46,6 +53,14 @@ describe("InvoicesPage", () => {
     vi.mocked(api.redInvoice).mockReset()
     confirmMock.mockReset()
     vi.mocked(api.listInvoices).mockResolvedValue({ items: [inv({})], total: 1, summary })
+    search.value = ""
+  })
+
+  it("opens the list on the invoice number in the address", async () => {
+    search.value = "q=FP0001"
+    render(<InvoicesPage />)
+    await screen.findByText("FP0001")
+    expect(vi.mocked(api.listInvoices).mock.calls[0]?.[0]).toMatchObject({ q: "FP0001" })
   })
 
   it("shows names and amounts, never ids, plus the summary bar", async () => {

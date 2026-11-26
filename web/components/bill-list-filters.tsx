@@ -11,7 +11,7 @@ import type {
   BillFilterParams,
   BillListSummary,
   BillStatus,
-  InvoiceStatus,
+  InvoiceFilter, InvoiceStatus,
   PaymentFilter,
   PaymentStatus,
 } from "@/lib/api/purchase"
@@ -35,8 +35,8 @@ export interface BillFilterState {
   partnerId: string
   partnerName: string
   payment: PaymentFilter | ""
-  /** Invoice coverage (approved bills only); "" = any. */
-  invoice: InvoiceStatus | ""
+  /** Invoice coverage (approved bills only); "" = any. "open" is not yet fully invoiced. */
+  invoice: InvoiceFilter | ""
   q: string
   mine: boolean
   /** Status tab (draft / approved / cancelled); undefined = all. */
@@ -46,7 +46,7 @@ export interface BillFilterState {
 export const DEFAULT_RANGE: RangePreset = "this_month"
 
 const PAYMENT_VALUES: PaymentFilter[] = ["open", "unpaid", "partial", "paid"]
-const INVOICE_VALUES: InvoiceStatus[] = ["none", "partial", "full"]
+const INVOICE_VALUES: InvoiceFilter[] = ["open", "none", "partial", "full"]
 
 type QueryReader = { get(name: string): string | null }
 
@@ -63,7 +63,7 @@ export function parseBillFilters(sp: QueryReader): BillFilterState {
     partnerId: sp.get("partner") ?? "",
     partnerName: sp.get("pname") ?? "",
     payment: PAYMENT_VALUES.includes(pay as PaymentFilter) ? (pay as PaymentFilter) : "",
-    invoice: INVOICE_VALUES.includes(inv as InvoiceStatus) ? (inv as InvoiceStatus) : "",
+    invoice: INVOICE_VALUES.includes(inv as InvoiceFilter) ? (inv as InvoiceFilter) : "",
     q: sp.get("q") ?? "",
     mine: sp.get("mine") === "1",
     status: st === "0" || st === "2" || st === "9" ? (Number(st) as BillStatus) : undefined,
@@ -147,9 +147,9 @@ export function useBillFilters() {
   return { filters, update, reset }
 }
 
-const INVOICE_OPTIONS: { value: InvoiceStatus | ""; label: string }[] = [
+const INVOICE_OPTIONS: { value: InvoiceFilter | ""; label: string }[] = [
   { value: "", label: "全部开票状态" },
-  { value: "none", label: "未开票" },
+  { value: "open", label: "未开足" }, { value: "none", label: "未开票" },
   { value: "partial", label: "部分开票" },
   { value: "full", label: "已开票" },
 ]

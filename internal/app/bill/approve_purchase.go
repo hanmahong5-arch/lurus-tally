@@ -60,6 +60,7 @@ type ApprovePurchaseUseCase struct {
 	unitRepo ProductUnitRepo
 	// paymentRepo is optional; see WithPayments.
 	paymentRepo PaymentRecorder
+	batches     ReceiptLedger
 }
 
 // ApprovePurchaseRequest is the input to ExecuteWithPayment. PaidAmount > 0 books a
@@ -190,6 +191,7 @@ func (uc *ApprovePurchaseUseCase) ExecuteWithPayment(ctx context.Context, req Ap
 		}
 
 		// Record one stock movement per line item.
+		var opens []BatchOpen
 		for _, item := range items {
 			// Resolve conversion factor: if no unit_id, assume 1 (already in base unit).
 			convFactor, factor := "1", decimal.NewFromInt(1)
@@ -209,7 +211,7 @@ func (uc *ApprovePurchaseUseCase) ExecuteWithPayment(ctx context.Context, req Ap
 			// the cost is brought down to a base unit as well.
 			baseUnitCost := item.UnitPrice.Mul(baseRate).Div(factor)
 
-			_, err := uc.stockUC.ExecuteInTx(ctx, tx, appstock.RecordMovementRequest{
+			snap, err := uc.stockUC.ExecuteInTx(ctx, tx, appstock.RecordMovementRequest{
 				TenantID:    tenantID,
 				ProductID:   item.ProductID,
 				WarehouseID: warehouseID,
@@ -230,10 +232,24 @@ func (uc *ApprovePurchaseUseCase) ExecuteWithPayment(ctx context.Context, req Ap
 			if err != nil {
 				return fmt.Errorf("approve purchase: record movement for item line_no=%d: %w", item.LineNo, err)
 			}
+			if uc.batches != nil && snap != nil {
+				opens = append(opens, BatchOpen{
+					SourceItemID: item.ID,
+					ProductID:    item.ProductID,
+					QtyBase:      item.Qty.Mul(factor),
+					Factor:       factor,
+					OnHandAfter:  snap.OnHandQty,
+				})
+			}
+		}
+		now := time.Now().UTC()
+		if uc.batches != nil {
+			if err := uc.batches.Open(ctx, tx, tenantID, warehouseID, opens, now); err != nil {
+				return fmt.Errorf("approve purchase: open receipt batch: %w", err)
+			}
 		}
 
 		// Update bill status to approved.
-		now := time.Now().UTC()
 		if err := uc.repo.UpdateBillStatus(ctx, tx, tenantID, billID, domain.StatusApproved, map[string]any{
 			"approved_at": now,
 			"approved_by": approvedBy,

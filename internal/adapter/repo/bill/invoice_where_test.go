@@ -29,4 +29,8 @@ func TestBuildListWhere_InvoiceStatus(t *testing.T) {
 	if strings.Contains(w, "invoice_bill") {
 		t.Errorf("no filter must not touch invoice tables: %q", w)
 	}
+	sale, _, _ := buildListWhere(appbill.BillListFilter{TenantID: tid, BillType: domain.BillTypeSale, InvoiceStatus: "open"})
+	if !strings.Contains(sale, "COALESCE(r.amt, 0)") || !strings.Contains(sale, "< TRUNC(") {
+		t.Errorf("open sales must compare invoiced with the net total: %q", sale)
+	}
 }

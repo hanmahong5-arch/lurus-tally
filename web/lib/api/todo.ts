@@ -49,6 +49,8 @@ export interface TodoDebtor {
 export interface TodoSection<T> {
   count: number
   items: T[]
+  /** Draft purchases older than 7 days. A subset of count, not a separate badge item. */
+  stale_count?: number
 }
 
 export interface TodoKPIs {
@@ -75,6 +77,8 @@ export interface TodoSummary {
   low_stock: TodoSection<TodoStockItem>
   overdue_customers: TodoSection<TodoDebtor>
   uninvoiced_sales: TodoSection<TodoBill>
+  /** Approved purchases the supplier has not fully invoiced. Absent on older responses. */
+  uninvoiced_purchases?: TodoSection<TodoBill>
   /** Offline sales left stock below zero; clears itself once a stocktake brings on-hand back to >= 0. Capped at 50 rows, count is the real total. */
   negative_stock?: TodoSection<TodoNegativeStockItem>
   kpis: TodoKPIs
@@ -97,11 +101,16 @@ export const TODO_SOURCE_KPIS = "kpis"
  * Server-side fetch. Returns null on any error so the page can say "load
  * failed" rather than pretend nothing is pending.
  */
-export async function fetchTodoSummary(accessToken: string): Promise<TodoSummary | null> {
-  if (!accessToken) return null
+export async function fetchTodoSummary(
+  accessToken: string,
+  devHeaders?: Record<string, string>,
+): Promise<TodoSummary | null> {
+  if (!accessToken && !devHeaders) return null
+  const headers: Record<string, string> = { ...devHeaders }
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`
   try {
     const res = await fetch(`${SERVER_BACKEND_URL}/api/v1/todo/summary`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers,
       // Fresh on every visit: the figures must follow what was just recorded or cleared.
       cache: "no-store",
     })

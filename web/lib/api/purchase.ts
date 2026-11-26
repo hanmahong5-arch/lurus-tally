@@ -22,6 +22,9 @@ export type PaymentFilter = PaymentStatus | "open"
 /** Invoice coverage of an approved bill, from live invoice links. */
 export type InvoiceStatus = "none" | "partial" | "full"
 
+/** Filter value: the three states plus "open" (not yet invoiced for the net amount). */
+export type InvoiceFilter = InvoiceStatus | "open"
+
 /** Totals over the whole filtered set (not just the current page); amounts stay decimal strings. */
 export interface BillListSummary {
   count: number
@@ -36,7 +39,7 @@ export interface BillFilterParams {
   date_from?: string
   date_to?: string
   payment_status?: PaymentFilter
-  invoice_status?: InvoiceStatus
+  invoice_status?: InvoiceFilter
   q?: string
   mine?: boolean
 }
@@ -93,11 +96,14 @@ export interface BillHead {
 export type PurchaseBillItem = BillItem & {
   /** In the unit the line was bought in; string decimal. */
   returned_qty?: string
+  /** Unsold quantity of this receipt, in the line's unit. Absent when the receipt predates batches. */
+  batch_remaining?: string
 }
 
 export interface BillDetail {
   head: BillHead
   items: PurchaseBillItem[]
+  opened_sales?: { id: string; bill_no: string; status: BillStatus; partner_name?: string }[]
 }
 
 export interface ReturnPurchaseRequest {
@@ -125,6 +131,8 @@ export interface BillLineItemInput {
   unit_price: string
   /** Per-line source warehouse; quick checkout reads the warehouse from here. */
   warehouse_id?: string
+  /** Purchase line this sale line was opened from. */
+  source_item_id?: string
 }
 
 export interface CreatePurchaseBillRequest {

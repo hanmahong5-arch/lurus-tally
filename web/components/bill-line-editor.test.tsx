@@ -8,6 +8,8 @@ vi.mock("@/lib/api/last-prices", async (orig) => ({
   getLastPrices: vi.fn(),
 }))
 vi.mock("@/lib/api/product-units", () => ({ listProductUnits: vi.fn() }))
+vi.mock("@/lib/api/units", () => ({ listUnits: vi.fn() }))
+vi.mock("@/lib/api/products", () => ({ updateProduct: vi.fn() }))
 vi.mock("@/components/entity-pickers", () => ({
   ProductPicker: ({ onSelect }: { onSelect: (o: { id: string; name: string }) => void }) => (
     <button type="button" onClick={() => onSelect({ id: "p1", name: "红枫" })}>
@@ -18,6 +20,8 @@ vi.mock("@/components/entity-pickers", () => ({
 
 import { getLastPrices } from "@/lib/api/last-prices"
 import { listProductUnits } from "@/lib/api/product-units"
+import { listUnits } from "@/lib/api/units"
+import { updateProduct } from "@/lib/api/products"
 import { BillLineEditor, type BillLineItem } from "./bill-line-editor"
 
 function Harness({ partnerId }: { partnerId?: string }) {
@@ -41,10 +45,25 @@ describe("BillLineEditor units and last price", () => {
   beforeEach(() => {
     vi.mocked(getLastPrices).mockReset()
     vi.mocked(listProductUnits).mockReset()
+    vi.mocked(listUnits).mockReset()
+    vi.mocked(listUnits).mockResolvedValue({ items: [] })
+    vi.mocked(updateProduct).mockReset()
+    vi.mocked(updateProduct).mockResolvedValue({} as never)
+  })
+
+  it("shows the shop's units before a product is chosen", async () => {
+    vi.mocked(listUnits).mockResolvedValue({
+      items: [{ id: "u-zhu", code: "zhu", name: "株", unit_type: "count", is_system: false, tenant_id: "t1", created_at: "", updated_at: "" }],
+    })
+    render(<Harness />)
+    expect(await screen.findByRole("option", { name: "株" })).toBeTruthy()
   })
 
   it("lists only the product's units and starts on the base unit", async () => {
     vi.mocked(getLastPrices).mockResolvedValue({ items: [] })
+    vi.mocked(listUnits).mockResolvedValue({
+      items: [{ id: "u-kg", code: "kg", name: "公斤", unit_type: "weight", is_system: true, tenant_id: "t1", created_at: "", updated_at: "" }],
+    })
     vi.mocked(listProductUnits).mockResolvedValue([
       { id: "u-base", code: "pcs", name: "株", conversion_factor: "1", is_base: true },
       { id: "u-box", code: "box", name: "捆", conversion_factor: "10", is_base: false },
@@ -54,6 +73,19 @@ describe("BillLineEditor units and last price", () => {
     await waitFor(() => expect(screen.getByRole("option", { name: "捆" })).toBeTruthy())
     expect(screen.queryByRole("option", { name: "公斤" })).toBeNull()
     await waitFor(() => expect((screen.getByRole("combobox") as HTMLSelectElement).value).toBe("u-base"))
+  })
+
+  it("offers the catalogue when the product has no units, and remembers the pick as its base unit", async () => {
+    vi.mocked(getLastPrices).mockResolvedValue({ items: [] })
+    vi.mocked(listProductUnits).mockResolvedValue([])
+    vi.mocked(listUnits).mockResolvedValue({
+      items: [{ id: "u-zhu", code: "zhu", name: "株", unit_type: "count", is_system: false, tenant_id: "t1", created_at: "", updated_at: "" }],
+    })
+    render(<Harness />)
+    fireEvent.click(screen.getByText("pick-product"))
+    const zhu = await screen.findByRole("option", { name: "株" })
+    fireEvent.change(zhu.closest("select") as HTMLSelectElement, { target: { value: "u-zhu" } })
+    await waitFor(() => expect(updateProduct).toHaveBeenCalledWith("p1", { default_unit_id: "u-zhu" }, "t1"))
   })
 
   it("fills the supplier's last purchase price", async () => {

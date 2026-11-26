@@ -67,6 +67,7 @@ export interface Payment {
 export type SaleBillItem = BillItem & {
   /** In the unit the line was sold in; string decimal. */
   returned_qty?: string
+  source_item_id?: string
 }
 
 export interface SaleBillDetail {
@@ -79,6 +80,7 @@ export interface SaleBillDetail {
   returned_amount?: string
   /** Paid beyond the post-return total: owed back to the customer, not paid out by the system. */
   refund_due_amount?: string
+  source_purchase?: { id: string; bill_no: string; partner_name?: string }
 }
 
 export interface ReturnSaleRequest {

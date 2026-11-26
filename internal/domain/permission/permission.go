@@ -41,6 +41,8 @@ const (
 	AuditView      Perm = "audit.view"      // 查看操作记录（谁审核、谁作废、谁改了什么）
 	PrintReceipt   Perm = "print.receipt"   // 云打印小票（收银员可用）
 	PrintSettings  Perm = "print.settings"  // 云打印机的绑定与设置
+	IntakeCapture  Perm = "intake.capture"  // 拍照、上传、查看自己的收件
+	IntakeAccept   Perm = "intake.accept"   // 核对并确认入账（不审核库存）
 )
 
 var matrix = map[domain.Role]map[Perm]bool{
@@ -49,19 +51,19 @@ var matrix = map[domain.Role]map[Perm]bool{
 		PaymentRecord, PaymentRead, InvoiceManage, ReportView, ExportStock, ProductWrite,
 		StockAdjust, CatalogWrite, CustomerWrite, ReplenishView, AIUse, AIExecute,
 		SettingsManage, BillingManage, TeamManage, TokenManage, BillReturnOwn, PurchaseView, AuditView,
-		PrintReceipt, PrintSettings,
+		PrintReceipt, PrintSettings, IntakeCapture, IntakeAccept,
 	),
 	domain.RoleManager: set(
 		CostView, BillRead, BillDraft, BillCheckout, BillApprove, BillCancel, BillReturn,
 		PaymentRecord, PaymentRead, InvoiceManage, ReportView, ExportStock, ProductWrite,
 		StockAdjust, CatalogWrite, CustomerWrite, ReplenishView, AIUse, AIExecute,
 		SettingsManage, TeamManage, BillReturnOwn, PurchaseView, AuditView,
-		PrintReceipt, PrintSettings,
+		PrintReceipt, PrintSettings, IntakeCapture, IntakeAccept,
 	),
 	domain.RoleClerk: set(
 		BillRead, BillDraft, ExportStock, ProductWrite, StockAdjust, CatalogWrite,
 		CustomerWrite, ReplenishView, AIUse, PurchaseView,
-		PrintReceipt,
+		PrintReceipt, IntakeCapture,
 	),
 	domain.RoleCashier: set(
 		BillRead, BillCheckout, CustomerWrite, BillReturnOwn,
@@ -70,6 +72,7 @@ var matrix = map[domain.Role]map[Perm]bool{
 	domain.RoleFinance: set(
 		CostView, BillRead, PaymentRecord, PaymentRead, InvoiceManage, ReportView,
 		ExportStock, ReplenishView, AIUse, PurchaseView, AuditView,
+		IntakeCapture, IntakeAccept,
 	),
 }
 
@@ -150,6 +153,10 @@ func (p Perm) Label() string {
 		return "设置云打印机"
 	case AuditView:
 		return "查看操作记录"
+	case IntakeCapture:
+		return "收取票证"
+	case IntakeAccept:
+		return "核对入账"
 	}
 	return "执行这个操作"
 }

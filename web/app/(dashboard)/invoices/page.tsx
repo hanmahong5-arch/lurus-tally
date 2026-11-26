@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { toast } from "sonner"
 import type { ColumnDef } from "@tanstack/react-table"
 import {
@@ -26,29 +27,18 @@ import { EntityCombobox, type EntityOption } from "@/components/entity-combobox"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { DataTable, currencyCell, statusCell } from "@/components/ui/data-table"
-import { Tabs, type TabItem } from "@/components/ui/tabs"
+import { Tabs } from "@/components/ui/tabs"
 import { Pagination } from "@/components/ui/pagination"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Modal } from "@/components/ui/modal"
 import { EmptyState } from "@/components/ui/empty-state"
-import { Badge, type BadgeTone } from "@/components/ui/badge"
+import { Badge } from "@/components/ui/badge"
+import { DIRECTION_TABS, PAGE_SIZE, SELECT_CLASS, STATE_TONE } from "./list-meta"
 import { RANGE_PRESETS, RANGE_PRESET_LABEL, resolveDateRange, shanghaiToday, type RangePreset } from "@/lib/date-range"
 import { formatCNY, formatDate } from "@/lib/format"
 import { cn } from "@/lib/utils"
 import { RoleGate } from "@/components/role-gate"
-
-const PAGE_SIZE = 20
-
-const DIRECTION_TABS: TabItem<InvoiceDirection | "">[] = [
-  { label: "全部", value: "" },
-  { label: "销项（开给客户）", value: "out" },
-  { label: "进项（供应商开来）", value: "in" },
-]
-
-const STATE_TONE: Record<InvoiceState, BadgeTone> = { issued: "ok", void: "neutral", red: "err" }
-
-const SELECT_CLASS = "h-8 rounded-lg border border-input bg-background px-2 text-sm"
 
 export default function InvoicesPage() {
   return (
@@ -68,8 +58,9 @@ function InvoicesPageInner() {
   const [from, setFrom] = useState("")
   const [to, setTo] = useState("")
   const [partner, setPartner] = useState({ id: "", name: "" })
-  const [qText, setQText] = useState("")
-  const [q, setQ] = useState("")
+  const openedNo = useSearchParams().get("q") ?? ""
+  const [qText, setQText] = useState(openedNo)
+  const [q, setQ] = useState(openedNo)
   const [page, setPage] = useState(1)
   const [reloadTick, setReloadTick] = useState(0)
 

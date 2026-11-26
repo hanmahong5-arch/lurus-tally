@@ -67,6 +67,7 @@ type todoBillResp struct {
 type todoBillSection struct {
 	Count int            `json:"count"`
 	Items []todoBillResp `json:"items"`
+	Stale int            `json:"stale_count,omitempty"`
 }
 
 type todoStockResp struct {
@@ -115,20 +116,21 @@ type todoKPIResp struct {
 }
 
 type todoResp struct {
-	DraftPurchases   todoBillSection          `json:"draft_purchases"`
-	DraftSales       todoBillSection          `json:"draft_sales"`
-	LowStock         todoStockSection         `json:"low_stock"`
-	OverdueCustomers todoDebtorSection        `json:"overdue_customers"`
-	UninvoicedSales  todoBillSection          `json:"uninvoiced_sales"`
-	NegativeStock    todoNegativeStockSection `json:"negative_stock"`
-	KPIs             todoKPIResp              `json:"kpis"`
-	Total            int                      `json:"total"`
-	HasData          bool                     `json:"has_data"`
-	Onboarding       todoOnboardingResp       `json:"onboarding"`
-	AIEnabled        bool                     `json:"ai_enabled"`
-	CloudPrintAvail  bool                     `json:"cloud_print_available"`
-	Failed           []string                 `json:"failed"`
-	GeneratedAt      time.Time                `json:"generated_at"`
+	DraftPurchases      todoBillSection          `json:"draft_purchases"`
+	DraftSales          todoBillSection          `json:"draft_sales"`
+	LowStock            todoStockSection         `json:"low_stock"`
+	OverdueCustomers    todoDebtorSection        `json:"overdue_customers"`
+	UninvoicedSales     todoBillSection          `json:"uninvoiced_sales"`
+	UninvoicedPurchases todoBillSection          `json:"uninvoiced_purchases"`
+	NegativeStock       todoNegativeStockSection `json:"negative_stock"`
+	KPIs                todoKPIResp              `json:"kpis"`
+	Total               int                      `json:"total"`
+	HasData             bool                     `json:"has_data"`
+	Onboarding          todoOnboardingResp       `json:"onboarding"`
+	AIEnabled           bool                     `json:"ai_enabled"`
+	CloudPrintAvail     bool                     `json:"cloud_print_available"`
+	Failed              []string                 `json:"failed"`
+	GeneratedAt         time.Time                `json:"generated_at"`
 }
 
 // GetTodoSummary handles GET /api/v1/todo/summary.
@@ -148,12 +150,13 @@ func (h *Handler) GetTodoSummary(c *gin.Context) {
 		failed = []string{}
 	}
 	c.JSON(http.StatusOK, todoResp{
-		DraftPurchases:   toBillSection(s.DraftPurchases),
-		DraftSales:       toBillSection(s.DraftSales),
-		LowStock:         toStockSection(s.LowStock),
-		OverdueCustomers: toDebtorSection(s.OverdueCustomers),
-		UninvoicedSales:  toBillSection(s.UninvoicedSales),
-		NegativeStock:    toNegativeStockSection(s.NegativeStock),
+		DraftPurchases:      toBillSection(s.DraftPurchases),
+		DraftSales:          toBillSection(s.DraftSales),
+		LowStock:            toStockSection(s.LowStock),
+		OverdueCustomers:    toDebtorSection(s.OverdueCustomers),
+		UninvoicedSales:     toBillSection(s.UninvoicedSales),
+		UninvoicedPurchases: toBillSection(s.UninvoicedPurchases),
+		NegativeStock:       toNegativeStockSection(s.NegativeStock),
 		KPIs: todoKPIResp{
 			TodaySales:       s.KPIs.TodaySales.StringFixed(2),
 			TodayCollected:   s.KPIs.TodayCollected.StringFixed(2),
@@ -174,7 +177,7 @@ func (h *Handler) GetTodoSummary(c *gin.Context) {
 }
 
 func toBillSection(in apptodo.BillSection) todoBillSection {
-	out := todoBillSection{Count: in.Count, Items: make([]todoBillResp, 0, len(in.Items))}
+	out := todoBillSection{Count: in.Count, Stale: in.Stale, Items: make([]todoBillResp, 0, len(in.Items))}
 	for _, b := range in.Items {
 		out.Items = append(out.Items, todoBillResp{
 			ID: b.ID, BillNo: b.BillNo, PartnerName: b.PartnerName,

@@ -1,9 +1,9 @@
 // Package todo aggregates the "needs your attention" counts shown on the todo
 // page, the dashboard and the sidebar badge: bills waiting for review, low
-// stock, customers owing for over 30 days, and approved sales not fully
-// invoiced. Every count is the real total (not the preview size), and a failing
-// data source is reported in Summary.Failed instead of being rendered as zero,
-// so the UI never shows a false "all clear".
+// stock, customers owing for over 30 days, and approved sales or purchases not
+// fully invoiced. Every count is the real total (not the preview size), and a
+// failing data source is reported in Summary.Failed instead of being rendered
+// as zero, so the UI never shows a false "all clear".
 package todo
 
 import (
@@ -25,14 +25,16 @@ const PreviewSize = 5
 
 // Source keys reported in Summary.Failed.
 const (
-	SrcDraftPurchases = "draft_purchases"
-	SrcDraftSales     = "draft_sales"
-	SrcLowStock       = "low_stock"
-	SrcOverdue        = "overdue_customers"
-	SrcUninvoiced     = "uninvoiced_sales"
-	SrcKPIs           = "kpis"
-	SrcOnboarding     = "onboarding"
-	SrcNegativeStock  = "negative_stock"
+	SrcDraftPurchases      = "draft_purchases"
+	SrcDraftSales          = "draft_sales"
+	SrcLowStock            = "low_stock"
+	SrcOverdue             = "overdue_customers"
+	SrcUninvoiced          = "uninvoiced_sales"
+	SrcUninvoicedPurchases = "uninvoiced_purchases"
+	SrcStalePurchases      = "stale_purchases"
+	SrcKPIs                = "kpis"
+	SrcOnboarding          = "onboarding"
+	SrcNegativeStock       = "negative_stock"
 )
 
 // cst cuts "today" / "this month" at Asia/Shanghai wall-clock; a fixed zone
@@ -65,116 +67,6 @@ type KPIReader interface {
 	HasData(ctx context.Context, tenantID uuid.UUID) (bool, error)
 	// Onboarding reports which getting-started steps the tenant has really done.
 	Onboarding(ctx context.Context, tenantID uuid.UUID) (Onboarding, error)
-}
-
-// Onboarding is the getting-started progress. The Has* steps count only the
-// tenant's own records: demo rows (remark "DEMO") never complete a step, so
-// seeding sample data cannot hide the checklist. HasDemo tells the UI whether
-// sample data is still around to be cleared.
-type Onboarding struct {
-	HasProduct  bool
-	HasPurchase bool
-	HasSale     bool
-	HasPayment  bool
-	HasDemo     bool
-}
-
-// NegativeStockReader lists stock rows whose on-hand quantity went below zero
-// (typically offline sales synced before the matching purchase). It returns at
-// most limit rows plus the real total.
-type NegativeStockReader interface {
-	NegativeStock(ctx context.Context, tenantID uuid.UUID, limit int) ([]NegativeStockItem, int, error)
-}
-
-// NegativeStockItem is one product/warehouse pair with a negative on-hand quantity.
-type NegativeStockItem struct {
-	ProductID     uuid.UUID
-	ProductName   string
-	WarehouseName string
-	OnHand        string
-}
-
-// NegativeStockSection pairs a real total with the (capped) negative-stock rows.
-type NegativeStockSection struct {
-	Count int
-	Items []NegativeStockItem
-}
-
-// NegativeStockLimit caps the rows returned for the negative-stock list.
-const NegativeStockLimit = 50
-
-// BillItem is one bill preview row.
-type BillItem struct {
-	ID          uuid.UUID
-	BillNo      string
-	PartnerName string
-	TotalAmount decimal.Decimal
-	BillDate    time.Time
-}
-
-// StockItem is one low-stock preview row (quantities are decimal strings).
-type StockItem struct {
-	ProductID    uuid.UUID
-	ProductName  string
-	AvailableQty string
-	ReorderPoint string
-	DaysOfSupply string
-}
-
-// DebtorItem is one customer owing for more than 30 days.
-type DebtorItem struct {
-	PartnerID      *uuid.UUID
-	PartnerName    string
-	Overdue        decimal.Decimal
-	Unpaid         decimal.Decimal
-	OldestBillDate *time.Time
-}
-
-// BillSection pairs a real total with a short bill preview.
-type BillSection struct {
-	Count int
-	Items []BillItem
-}
-
-// StockSection pairs a real total with a short low-stock preview.
-type StockSection struct {
-	Count int
-	Items []StockItem
-}
-
-// DebtorSection pairs a real total with a short overdue-customer preview.
-type DebtorSection struct {
-	Count int
-	Items []DebtorItem
-}
-
-// KPIs are the four dashboard figures.
-type KPIs struct {
-	TodaySales       decimal.Decimal
-	TodayCollected   decimal.Decimal
-	ReceivableUnpaid decimal.Decimal
-	MonthUninvoiced  decimal.Decimal
-}
-
-// Summary is the full todo payload.
-type Summary struct {
-	DraftPurchases   BillSection
-	DraftSales       BillSection
-	LowStock         StockSection
-	OverdueCustomers DebtorSection
-	UninvoicedSales  BillSection
-	NegativeStock    NegativeStockSection
-	KPIs             KPIs
-	// Total is the sum of the six section counts (the sidebar badge).
-	Total int
-	// HasData is false only for a brand-new tenant with no product and no bill
-	// (the dashboard then shows the getting-started steps). Unknown reads as true.
-	HasData bool
-	// Onboarding is the getting-started progress (demo data excluded).
-	Onboarding Onboarding
-	// Failed lists the source keys that could not be read; their sections are empty.
-	Failed      []string
-	GeneratedAt time.Time
 }
 
 // UseCase builds the Summary. Queries run sequentially: a tenant-pinned request
@@ -218,8 +110,16 @@ func (uc *UseCase) Execute(ctx context.Context, tenantID uuid.UUID) (Summary, er
 	if s.LowStock, err = uc.lowStock(ctx, tenantID); err != nil {
 		fail(SrcLowStock)
 	}
-	if s.UninvoicedSales, err = uc.uninvoiced(ctx, tenantID); err != nil {
+	if s.UninvoicedSales, err = uc.uninvoiced(ctx, tenantID, domain.BillTypeSale, domain.BillSubTypeSale); err != nil {
 		fail(SrcUninvoiced)
+	}
+	if s.UninvoicedPurchases, err = uc.uninvoiced(ctx, tenantID, domain.BillTypePurchase, domain.BillSubTypePurchase); err != nil {
+		fail(SrcUninvoicedPurchases)
+	}
+	if n, err := uc.staleDraftPurchases(ctx, tenantID, now); err != nil {
+		fail(SrcStalePurchases)
+	} else {
+		s.DraftPurchases.Stale = n
 	}
 
 	if uc.neg != nil {
@@ -254,7 +154,7 @@ func (uc *UseCase) Execute(ctx context.Context, tenantID uuid.UUID) (Summary, er
 	}
 
 	s.Total = s.DraftPurchases.Count + s.DraftSales.Count + s.LowStock.Count +
-		s.OverdueCustomers.Count + s.UninvoicedSales.Count + s.NegativeStock.Count
+		s.OverdueCustomers.Count + s.UninvoicedSales.Count + s.UninvoicedPurchases.Count + s.NegativeStock.Count
 	return s, nil
 }
 
@@ -267,28 +167,6 @@ func (uc *UseCase) drafts(ctx context.Context, tenantID uuid.UUID, bt domain.Bil
 		return BillSection{}, err
 	}
 	return BillSection{Count: int(total), Items: billItems(items)}, nil
-}
-
-// uninvoiced merges the "no invoice yet" and "partly invoiced" approved sales.
-func (uc *UseCase) uninvoiced(ctx context.Context, tenantID uuid.UUID) (BillSection, error) {
-	var all []domain.BillHead
-	count := 0
-	for _, st := range []string{"none", "partial"} {
-		items, total, err := uc.bills.ListBills(ctx, appbill.BillListFilter{
-			TenantID: tenantID, BillType: domain.BillTypeSale, SubType: domain.BillSubTypeSale,
-			InvoiceStatus: st, OldestFirst: true, Page: 1, Size: PreviewSize,
-		})
-		if err != nil {
-			return BillSection{}, err
-		}
-		all = append(all, items...)
-		count += int(total)
-	}
-	sort.SliceStable(all, func(i, j int) bool { return all[i].BillDate.Before(all[j].BillDate) })
-	if len(all) > PreviewSize {
-		all = all[:PreviewSize]
-	}
-	return BillSection{Count: count, Items: billItems(all)}, nil
 }
 
 func (uc *UseCase) lowStock(ctx context.Context, tenantID uuid.UUID) (StockSection, error) {
@@ -363,4 +241,55 @@ func billItems(in []domain.BillHead) []BillItem {
 		out = append(out, BillItem{ID: b.ID, BillNo: b.BillNo, PartnerName: b.PartnerName, TotalAmount: b.TotalAmount, BillDate: b.BillDate})
 	}
 	return out
+}
+
+// receiptChaseDays is how long a purchase may sit unapproved before the reminder
+// says the goods still have not been confirmed in. The page names this number.
+const receiptChaseDays = 7
+
+// uninvoiced merges "no invoice yet" and "partly invoiced" for one bill type.
+// Drafts are not invoiced: a purchase still in transit has no supplier invoice
+// to chase until someone confirms the goods and the bill is approved.
+func (uc *UseCase) uninvoiced(ctx context.Context, tenantID uuid.UUID, bt domain.BillType, st domain.BillSubType) (BillSection, error) {
+	var all []domain.BillHead
+	count := 0
+	for _, status := range []string{"none", "partial"} {
+		items, total, err := uc.bills.ListBills(ctx, appbill.BillListFilter{
+			TenantID: tenantID, BillType: bt, SubType: st,
+			InvoiceStatus: status, OldestFirst: true, Page: 1, Size: PreviewSize,
+		})
+		if err != nil {
+			return BillSection{}, err
+		}
+		all = append(all, items...)
+		count += int(total)
+	}
+	sort.SliceStable(all, func(i, j int) bool { return all[i].BillDate.Before(all[j].BillDate) })
+	if len(all) > PreviewSize {
+		all = all[:PreviewSize]
+	}
+	return BillSection{Count: count, Items: billItems(all)}, nil
+}
+
+// staleDraftPurchases counts draft purchases whose date is more than
+// receiptChaseDays before today's calendar day in CST. Approving is what
+// posts stock and the supplier statement, so a draft this old is goods that
+// may already be on the road or in the warehouse with nobody having said so.
+func (uc *UseCase) staleDraftPurchases(ctx context.Context, tenantID uuid.UUID, now time.Time) (int, error) {
+	draft := domain.StatusDraft
+	day := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, cst)
+	cutoff := day.AddDate(0, 0, -receiptChaseDays)
+	_, total, err := uc.bills.ListBills(ctx, appbill.BillListFilter{
+		TenantID: tenantID,
+		BillType: domain.BillTypePurchase,
+		SubType:  domain.BillSubTypePurchase,
+		Status:   &draft,
+		DateTo:   &cutoff,
+		Page:     1,
+		Size:     1,
+	})
+	if err != nil {
+		return 0, err
+	}
+	return int(total), nil
 }

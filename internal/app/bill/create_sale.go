@@ -14,14 +14,15 @@ import (
 
 // SaleItem describes one line item in a sale draft.
 type SaleItem struct {
-	ProductID   uuid.UUID
-	WarehouseID uuid.UUID
-	UnitID      *uuid.UUID
-	UnitName    string
-	LineNo      int
-	Qty         decimal.Decimal
-	UnitPrice   decimal.Decimal
-	ConvFactor  string
+	ProductID    uuid.UUID
+	WarehouseID  uuid.UUID
+	UnitID       *uuid.UUID
+	UnitName     string
+	LineNo       int
+	Qty          decimal.Decimal
+	UnitPrice    decimal.Decimal
+	ConvFactor   string
+	SourceItemID uuid.UUID
 }
 
 // CreateSaleRequest is the input to CreateSaleUseCase.
@@ -165,6 +166,9 @@ func (uc *CreateSaleUseCase) Execute(ctx context.Context, req CreateSaleRequest)
 
 		if err := uc.repo.CreateBill(ctx, tx, head, items); err != nil {
 			return fmt.Errorf("create sale draft: persist bill: %w", err)
+		}
+		if err := attachSaleSource(ctx, tx, uc.repo, req.TenantID, billID, items, req.Items); err != nil {
+			return err
 		}
 		out.BillID = billID
 		out.BillNo = billNo

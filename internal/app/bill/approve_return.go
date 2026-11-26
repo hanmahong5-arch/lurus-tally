@@ -34,6 +34,7 @@ type ApproveReturnBillUseCase struct {
 	repo     BillRepo
 	stockUC  StockMovementExecutor
 	unitRepo ProductUnitRepo // optional; nil = every line is already in the base unit
+	batches  ReceiptLedger
 }
 
 // NewApproveReturnBillUseCase constructs the use case.
@@ -91,6 +92,17 @@ func (uc *ApproveReturnBillUseCase) Execute(ctx context.Context, req ApproveRetu
 		warehouseID, err := resolveApprovalWarehouse(ctx, uc.repo, tx, head, req.TenantID, req.BillID)
 		if err != nil {
 			return fmt.Errorf("approve return: %w", err)
+		}
+		var returnLinks map[uuid.UUID]uuid.UUID
+		if uc.batches != nil {
+			if linker, ok := uc.repo.(interface {
+				ReturnLinksTx(context.Context, *sql.Tx, uuid.UUID, uuid.UUID) (map[uuid.UUID]uuid.UUID, error)
+			}); ok {
+				returnLinks, err = linker.ReturnLinksTx(ctx, tx, req.TenantID, req.BillID)
+				if err != nil {
+					return fmt.Errorf("approve return: load line links: %w", err)
+				}
+			}
 		}
 
 		// The original sale, when the bill points at one, supplies the cost the goods
@@ -184,6 +196,17 @@ func (uc *ApproveReturnBillUseCase) Execute(ctx context.Context, req ApproveRetu
 			})
 			if err != nil {
 				return fmt.Errorf("approve return: record movement for item line_no=%d: %w", item.LineNo, err)
+			}
+			if uc.batches != nil {
+				if saleItem, ok := returnLinks[item.ID]; ok {
+					f, ferr := decimal.NewFromString(convFactor)
+					if ferr != nil || !f.IsPositive() {
+						f = decimal.NewFromInt(1)
+					}
+					if err := uc.batches.Restore(ctx, tx, req.TenantID, saleItem, qty.Mul(f)); err != nil {
+						return fmt.Errorf("approve return: restore receipt batch: %w", err)
+					}
+				}
 			}
 			moved++
 		}

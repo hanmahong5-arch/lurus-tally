@@ -85,6 +85,18 @@ export function devProviderEnabled(): boolean {
   return true
 }
 
+export function devBackendHeaders(session: {
+  user?: { id?: string; tenantId?: string | null }
+} | null): Record<string, string> | undefined {
+  if (!devProviderEnabled()) return undefined
+  const tenantId = session?.user?.tenantId
+  if (!tenantId) return undefined
+  return {
+    "X-Tenant-ID": tenantId,
+    "X-IDP-Subject": session.user?.id || DEV_USER_ID,
+  }
+}
+
 // Profile cache TTL — re-fetch /api/v1/me at most once every 60s on session
 // access. We invalidate eagerly via NextAuth update() after /setup submit.
 const PROFILE_TTL_MS = 60_000
@@ -183,10 +195,7 @@ function devCredentialsProvider() {
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
-    oidcProvider,
-    // Dev/E2E Credentials provider — conditionally appended. Production gate
-    // is enforced inside devProviderEnabled(); the provider is never present in
-    // the array unless both NODE_ENV !== "production" AND AUTH_DEV_PROVIDER=true.
+    ...(process.env.OIDC_ISSUER ? [oidcProvider] : []),
     ...(devProviderEnabled() ? [devCredentialsProvider()] : []),
   ],
   pages: {

@@ -6,13 +6,15 @@
  * Displays a running total for POS/quick-checkout UX.
  */
 
-import { useCallback } from "react"
+import { useCallback, useEffect } from "react"
 import Decimal from "decimal.js"
 import type { BillLineItemInput } from "@/lib/api/purchase"
 import { formatCNY } from "@/lib/format"
 import { lineCents, roundCents } from "@/lib/cents"
 import { ProductPicker } from "@/components/entity-pickers"
+import { LineUnitSelect } from "@/components/line-unit-select"
 import { useTenantId } from "@/hooks/use-tenant-id"
+import { useBillUnits } from "@/hooks/use-bill-units"
 import { useLastPriceFill, type LastPriceLine } from "@/hooks/use-last-price-fill"
 import { LastPriceHint, LineNumberInput, MobileOp, RemoveLineButton } from "@/components/line-fields"
 
@@ -63,7 +65,30 @@ function roundFilledPrices(lines: SaleLineItem[]): SaleLineItem[] {
 export function SaleLineEditor({ items, onChange, readOnly = false, partnerId }: Props) {
   const tenantId = useTenantId()
   const onLinesChange = useCallback((next: SaleLineItem[]) => onChange(roundFilledPrices(next)), [onChange])
-  const { fill: fillLastPrices } = useLastPriceFill(items, onLinesChange, partnerId, "sale", tenantId, !readOnly)
+  const { fill: fillLastPrices, patchProduct } = useLastPriceFill(
+    items,
+    onLinesChange,
+    partnerId,
+    "sale",
+    tenantId,
+    !readOnly,
+    true
+  )
+  const { forLine, baseOf, remember } = useBillUnits(
+    items.map((it) => it.product_id),
+    tenantId,
+    !readOnly
+  )
+  const unitKey = items.map((it) => `${it.product_id}:${it.unit_id ?? ""}`).join("|")
+
+  useEffect(() => {
+    if (readOnly) return
+    for (const pid of Array.from(new Set(unitKey.split("|").map((p) => p.split(":")[0]).filter(Boolean)))) {
+      const base = baseOf(pid)
+      if (!base) continue
+      patchProduct(pid, (it) => (it.unit_id ? null : { ...it, unit_id: base.id, unit_name: base.name }))
+    }
+  }, [unitKey, readOnly, patchProduct, baseOf])
 
   const addRow = useCallback(() => {
     onChange([
@@ -106,6 +131,7 @@ export function SaleLineEditor({ items, onChange, readOnly = false, partnerId }:
             <tr>
               <th className="px-3 py-2 text-left font-medium w-8">#</th>
               <th className="px-3 py-2 text-left font-medium">商品</th>
+              <th className="px-3 py-2 text-left font-medium w-28">单位</th>
               <th className="px-3 py-2 text-right font-medium w-24">数量</th>
               <th className="px-3 py-2 text-right font-medium w-28">售价</th>
               <th className="px-3 py-2 text-right font-medium w-28">小计</th>
@@ -113,7 +139,9 @@ export function SaleLineEditor({ items, onChange, readOnly = false, partnerId }:
             </tr>
           </thead>
           <tbody className="block divide-y divide-border md:table-row-group">
-            {items.map((item, idx) => (
+            {items.map((item, idx) => {
+              const line = forLine(item.product_id, { id: item.unit_id, name: item.unit_name })
+              return (
               <tr key={idx} className="flex flex-wrap items-start gap-x-2 gap-y-1 px-3 py-3 hover:bg-muted/20 md:table-row md:px-0 md:py-0">
                 <td className="hidden px-3 py-2 text-muted-foreground md:table-cell">{idx + 1}</td>
                 <td className="w-full px-0 py-0 md:table-cell md:w-auto md:px-3 md:py-2">
@@ -127,16 +155,38 @@ export function SaleLineEditor({ items, onChange, readOnly = false, partnerId }:
                         updateRow(idx, {
                           product_id: p.id,
                           product_name: p.name,
-                          // A copied line carries the old product's unit; this editor has no unit
-                          // column to fix it, so drop it and bill the new product in its base unit.
                           unit_id: undefined,
                           unit_name: undefined,
+                          source_item_id: undefined,
                           _price_touched: false,
                           _last_price: undefined,
                           _prev_price: undefined,
                           _prev_unit: undefined,
                         })
                         fillLastPrices([p.id])
+                      }}
+                    />
+                  )}
+                </td>
+                <td className="w-full px-0 py-0 md:table-cell md:w-auto md:px-3 md:py-2">
+                  {readOnly ? (
+                    <span>{item.unit_name || "—"}</span>
+                  ) : (
+                    <LineUnitSelect
+                      value={item.unit_id}
+                      options={line.options}
+                      ready={line.ready}
+                      failed={line.failed}
+                      onChange={(uid) => {
+                        const u = line.options.find((o) => o.id === uid)
+                        const patch: Partial<SaleLineItem> = { unit_id: uid, unit_name: u?.name }
+                        const factor = parseFloat(u?.conversion_factor ?? "")
+                        const base = parseFloat(item._last_price?.base_value ?? "")
+                        if (!item._price_touched && factor > 0 && base >= 0) {
+                          patch.unit_price = (base * factor).toFixed(2)
+                        }
+                        updateRow(idx, patch)
+                        if (item.product_id) remember(item.product_id, uid, line.fromCatalog)
                       }}
                     />
                   )}
@@ -175,11 +225,12 @@ export function SaleLineEditor({ items, onChange, readOnly = false, partnerId }:
                   </td>
                 )}
               </tr>
-            ))}
+              )
+            })}
             {items.length === 0 && (
               <tr className="block md:table-row">
                 <td
-                  colSpan={readOnly ? 5 : 6}
+                  colSpan={readOnly ? 6 : 7}
                   className="block md:table-cell px-3 py-6 text-center text-muted-foreground text-sm"
                 >
                   暂无商品行，请添加

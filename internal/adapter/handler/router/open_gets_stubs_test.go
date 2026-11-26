@@ -27,7 +27,6 @@ import (
 	handlermetrics "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/metrics"
 	handleronboarding "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/onboarding"
 	handlerpayment "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/payment"
-	handlerprint "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/print"
 	handlerproduct "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/product"
 	handlerproject "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/project"
 	handlerreplenish "github.com/hanmahong5-arch/lurus-tally/internal/adapter/handler/replenish"
@@ -50,7 +49,6 @@ import (
 	apphort "github.com/hanmahong5-arch/lurus-tally/internal/app/horticulture"
 	"github.com/hanmahong5-arch/lurus-tally/internal/app/partnerimport"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
-	appprint "github.com/hanmahong5-arch/lurus-tally/internal/app/print"
 	appproduct "github.com/hanmahong5-arch/lurus-tally/internal/app/product"
 	appproject "github.com/hanmahong5-arch/lurus-tally/internal/app/project"
 	appreplenish "github.com/hanmahong5-arch/lurus-tally/internal/app/replenish"
@@ -539,14 +537,14 @@ func newProbeEnvGuarded(guard gin.HandlerFunc) *probeEnv {
 		WithAdjust(appstock.NewAdjustUseCase(nil, nil)).
 		WithSetSafetyQty(appstock.NewSetSafetyQtyUseCase(nil, nil)).
 		WithExtraRoutes(ph.RegisterImportRoutes).
-		WithExtraRoutes(handlerprint.New(appprint.New(nil, nil, nil, nil)).RegisterRoutes)
+		WithExtraRoutes(probeInboxRoutes)
 	bh := handlerbill.New(nil, nil, nil, nil, appbill.NewListPurchasesUseCase(billRepo), appbill.NewGetPurchaseUseCase(billRepo), nil).
 		WithReceivables(appbill.NewReceivablesUseCase(nil)).
 		WithPurchaseReturn(appbill.NewPurchaseReturnUseCase(nil, nil)).
 		WithLastPrices(appbill.NewLastPricesUseCase(billRepo).WithDefaultPrices(stubSKUPrices{}))
 	saleh := handlerbill.NewSaleHandler(nil, nil, nil, appbill.NewListPurchasesUseCase(billRepo), billRepo, nil,
 		apppayment.NewListPaymentsUseCase(stubPaymentRepo{})).WithMemberNames(stubMemberNames{})
-	payh := handlerpayment.New(nil, nil).WithReceipts(apppayment.NewReceiptUseCase(nil, nil, nil), apppayment.NewStatementUseCase(nil))
+	payh := handlerpayment.New(nil, nil).WithReceipts(apppayment.NewReceiptUseCase(nil, nil, nil), apppayment.NewStatementUseCase(nil)).WithMoney(apppayment.NewMoneyUseCase(nil, nil, nil))
 	acct := handleracct.New(appacct.NewListSessions(stubSessionRepo{}), nil, nil, appacct.NewGetProfile(stubProfileRepo{}), nil, nil, appacct.NewGetAvatar(stubProfileRepo{})).
 		WithPrintSettings(appacct.NewGetPrintSettings(stubPrintRepo{}), appacct.NewPutPrintSettings(nil)).
 		WithCashierMode(appacct.NewGetCashierMode(stubCashierRepo{}), appacct.NewSetCashierMode(nil))

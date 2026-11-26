@@ -88,13 +88,28 @@ func (r *Repo) SetLinkItems(ctx context.Context, tx *sql.Tx, tenantID, saleBillI
 
 // ReturnLinks maps each line of billID that points at a sale line to that sale line.
 func (r *Repo) ReturnLinks(ctx context.Context, tenantID, billID uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
-	const q = `
-		SELECT id, link_item_id FROM tally.bill_item
-		WHERE head_id = $1 AND tenant_id = $2 AND link_item_id IS NOT NULL`
-	rows, err := dbscope.From(ctx, r.db).QueryContext(ctx, q, billID, tenantID)
+	rows, err := dbscope.From(ctx, r.db).QueryContext(ctx, returnLinksSQL, billID, tenantID)
 	if err != nil {
 		return nil, fmt.Errorf("bill repo: return links: %w", err)
 	}
+	return scanReturnLinks(rows)
+}
+
+// ReturnLinksTx is ReturnLinks on the caller's transaction, so a sale approved in the
+// same transaction that linked it sees the purchase lines.
+func (r *Repo) ReturnLinksTx(ctx context.Context, tx *sql.Tx, tenantID, billID uuid.UUID) (map[uuid.UUID]uuid.UUID, error) {
+	rows, err := tx.QueryContext(ctx, returnLinksSQL, billID, tenantID)
+	if err != nil {
+		return nil, fmt.Errorf("bill repo: return links: %w", err)
+	}
+	return scanReturnLinks(rows)
+}
+
+const returnLinksSQL = `
+		SELECT id, link_item_id FROM tally.bill_item
+		WHERE head_id = $1 AND tenant_id = $2 AND link_item_id IS NOT NULL`
+
+func scanReturnLinks(rows *sql.Rows) (map[uuid.UUID]uuid.UUID, error) {
 	defer func() { _ = rows.Close() }()
 	out := map[uuid.UUID]uuid.UUID{}
 	for rows.Next() {

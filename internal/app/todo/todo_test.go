@@ -16,18 +16,35 @@ import (
 
 type fakeBills struct {
 	// drafts[subType] and invoiced[status] feed ListBills; err fails the whole source.
-	drafts   map[domain.BillSubType][]domain.BillHead
-	total    map[domain.BillSubType]int64
-	invoiced map[string][]domain.BillHead
-	sumSales appbill.BillListSummary
-	failSub  domain.BillSubType
-	failInv  bool
+	drafts      map[domain.BillSubType][]domain.BillHead
+	total       map[domain.BillSubType]int64
+	invoiced    map[string][]domain.BillHead
+	purchaseInv map[string][]domain.BillHead
+	staleTotal  int64
+	staleErr    error
+	sawCutoff   *time.Time
+	sumSales    appbill.BillListSummary
+	failSub     domain.BillSubType
+	failInv     bool
 }
 
 func (f *fakeBills) ListBills(_ context.Context, q appbill.BillListFilter) ([]domain.BillHead, int64, error) {
+	if q.DateTo != nil {
+		if f.sawCutoff != nil {
+			*f.sawCutoff = *q.DateTo
+		}
+		if f.staleErr != nil {
+			return nil, 0, f.staleErr
+		}
+		return nil, f.staleTotal, nil
+	}
 	if q.InvoiceStatus != "" {
 		if f.failInv {
 			return nil, 0, errors.New("boom")
+		}
+		if q.BillType == domain.BillTypePurchase {
+			items := f.purchaseInv[q.InvoiceStatus]
+			return items, int64(len(items)), nil
 		}
 		items := f.invoiced[q.InvoiceStatus]
 		return items, int64(len(items)), nil
@@ -142,7 +159,7 @@ func TestExecute_SourceFailureIsReportedNotHidden(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]bool{SrcDraftSales: true, SrcLowStock: true, SrcUninvoiced: true}
+	want := map[string]bool{SrcDraftSales: true, SrcLowStock: true, SrcUninvoiced: true, SrcUninvoicedPurchases: true}
 	if len(s.Failed) != len(want) {
 		t.Fatalf("failed: %v", s.Failed)
 	}
@@ -214,6 +231,49 @@ type fakeNeg struct {
 
 func (f fakeNeg) NegativeStock(context.Context, uuid.UUID, int) ([]NegativeStockItem, int, error) {
 	return f.items, f.n, f.err
+}
+
+func TestExecute_PurchaseInvoiceAndStaleReceipt(t *testing.T) {
+	b := &fakeBills{
+		purchaseInv: map[string][]domain.BillHead{"none": heads(2), "partial": heads(1)},
+		staleTotal:  4,
+		sawCutoff:   new(time.Time),
+	}
+	uc := New(b, fakeStock{}, fakeRecv{out: &appbill.ReceivablesOutput{}}, fakeKPI{})
+	uc.now = func() time.Time { return time.Date(2026, 11, 24, 15, 0, 0, 0, cst) }
+	s, err := uc.Execute(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.UninvoicedPurchases.Count != 3 || len(s.UninvoicedPurchases.Items) != 3 {
+		t.Fatalf("uninvoiced purchases: %d/%d", s.UninvoicedPurchases.Count, len(s.UninvoicedPurchases.Items))
+	}
+	if s.DraftPurchases.Stale != 4 {
+		t.Fatalf("stale = %d", s.DraftPurchases.Stale)
+	}
+	if s.Total != 3 {
+		t.Fatalf("total = %d, stale drafts must not be counted twice", s.Total)
+	}
+	want := time.Date(2026, 11, 17, 0, 0, 0, 0, cst)
+	if b.sawCutoff == nil || !b.sawCutoff.Equal(want) {
+		t.Fatalf("cutoff = %v, want %v", b.sawCutoff, want)
+	}
+}
+
+func TestExecute_StalePurchaseFailureIsReported(t *testing.T) {
+	b := &fakeBills{staleErr: errors.New("down")}
+	uc := New(b, fakeStock{}, fakeRecv{out: &appbill.ReceivablesOutput{}}, fakeKPI{})
+	s, err := uc.Execute(context.Background(), uuid.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, k := range s.Failed {
+		found = found || k == SrcStalePurchases
+	}
+	if !found || s.DraftPurchases.Stale != 0 {
+		t.Fatalf("failed=%v stale=%d", s.Failed, s.DraftPurchases.Stale)
+	}
 }
 
 func TestExecute_NegativeStockCountsIntoTotal(t *testing.T) {

@@ -40,6 +40,8 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { formatCNY, formatDate, formatDateTime } from "@/lib/format"
 import { extractApiError } from "@/lib/api/errors"
 import { getProduct } from "@/lib/api/products"
+import { OpenedSales, ReceiptLeft } from "@/components/supply-trail"
+import { PurchaseHeaderActions } from "./header-actions"
 import { saveBillCopy } from "@/lib/bill-copy"
 import { cn } from "@/lib/utils"
 
@@ -379,46 +381,25 @@ export default function PurchaseDetailPage() {
           </>
         }
         actions={
-          priceBlind ? (
-            isDraft && mayEdit ? (
-              <Button variant="outline" disabled={acting} onClick={() => router.push(`/purchases/new?edit=${id}`)}>
-                修改
-              </Button>
-            ) : undefined
-          ) : isReturnDoc ? printButton : canReturn ? (
-            <>
-              {printButton}
-              {copyButton}
-              <Button variant="outline" disabled={acting || returning} onClick={() => { setReturnError(null); setShowReturn(true) }}>
-                退货
-              </Button>
-            </>
-          ) : isDraft ? (
-            <>
-              {printButton}
-              {copyButton}
-              {mayEdit && (
-                <Button variant="outline" disabled={acting} onClick={() => router.push(`/purchases/new?edit=${id}`)}>
-                修改
-              </Button>
-              )}
-              {mayCancel && (
-                <Button variant="outline" disabled={acting} onClick={handleCancel}>
-                取消单据
-              </Button>
-              )}
-              {mayApprove && (
-                <Button disabled={acting} onClick={handleApprove}>
-                审核通过
-              </Button>
-              )}
-            </>
-          ) : (
-            <>
-              {printButton}
-              {copyButton}
-            </>
-          )
+          <PurchaseHeaderActions
+            priceBlind={priceBlind}
+            isDraft={isDraft}
+            isApproved={isApproved}
+            isReturnDoc={isReturnDoc}
+            mayEdit={mayEdit}
+            mayCancel={mayCancel}
+            mayApprove={mayApprove}
+            canReturn={canReturn}
+            acting={acting}
+            returning={returning}
+            printButton={printButton}
+            copyButton={copyButton}
+            onEdit={() => router.push(`/purchases/new?edit=${id}`)}
+            onCancel={handleCancel}
+            onApprove={handleApprove}
+            onReturn={() => { setReturnError(null); setShowReturn(true) }}
+            onOpenSale={() => router.push(`/sales/new?from=${id}`)}
+          />
         }
       />
 
@@ -492,6 +473,13 @@ export default function PurchaseDetailPage() {
             </div>
           )}
         </div>
+
+        {isApproved && !isReturnDoc && (
+          <>
+            <ReceiptLeft items={items} names={productNames} />
+            <OpenedSales sales={detail.opened_sales} />
+          </>
+        )}
 
         {/* Pay at approval — optional */}
         {mayApprove && isDraft && (

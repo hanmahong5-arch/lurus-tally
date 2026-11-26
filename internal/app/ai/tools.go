@@ -1,18 +1,10 @@
-// Package ai implements the AI assistant use cases.
-// Tools follow the chat-completions function-calling protocol (tools array).
-// SAFE (read-only) tools execute immediately.
-// DESTRUCTIVE tools return a Plan for user confirmation before executing.
+// Package ai implements the AI assistant use cases and function-calling tool registry.
 package ai
 
 import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"math"
-	"regexp"
-	"sort"
-	"strconv"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -32,18 +24,14 @@ type ProductRow struct {
 
 // StockRow is a minimal stock snapshot row used by tool queries.
 type StockRow struct {
-	ProductID   uuid.UUID
-	ProductName string
-	ProductCode string
-	Qty         decimal.Decimal
-	// UnitCost is the weighted average cost per unit in CNY (stored as decimal).
-	UnitCost decimal.Decimal
-	// LastMovedAt is the timestamp of the most recent stock movement (for dead stock calc).
-	LastMovedAt time.Time
-	// AvgDailySales is a pre-computed daily sales qty average from the past 30d.
+	ProductID     uuid.UUID
+	ProductName   string
+	ProductCode   string
+	Qty           decimal.Decimal
+	UnitCost      decimal.Decimal
+	LastMovedAt   time.Time
 	AvgDailySales decimal.Decimal
-	// LeadTimeDays is the configured lead time for this product.
-	LeadTimeDays int
+	LeadTimeDays  int
 }
 
 // SaleRow is a minimal sale line row used by analytics tools.
@@ -51,14 +39,12 @@ type SaleRow struct {
 	ProductID   uuid.UUID
 	ProductName string
 	Qty         decimal.Decimal
-	Revenue     decimal.Decimal // total revenue for this row
-	Margin      decimal.Decimal // gross margin = (price - cost) / price
+	Revenue     decimal.Decimal
+	Margin      decimal.Decimal
 	SoldAt      time.Time
 }
 
-// CustomerRef identifies a customer a question may be about. ID is uuid.Nil
-// for a walk-in name that only appears on quick-checkout bills (quick checkout
-// has no partner record and writes the customer's name into bill_head.remark).
+// CustomerRef identifies a customer or walk-in buyer referenced in a query.
 type CustomerRef struct {
 	ID    uuid.UUID
 	Name  string
@@ -85,34 +71,24 @@ type CustomerBillLine struct {
 
 // ProductRepo is the minimal read interface required by the AI tools.
 type ProductRepo interface {
-	// SearchProducts returns products matching the query (name/code/mnemonic/brand full-text search).
 	SearchProducts(ctx context.Context, tenantID uuid.UUID, query string) ([]ProductRow, error)
-	// ListAllProducts returns all active products for the tenant.
 	ListAllProducts(ctx context.Context, tenantID uuid.UUID) ([]ProductRow, error)
 }
 
 // StockRepo is the minimal read interface required by the AI tools.
 type StockRepo interface {
-	// ListStockSnapshots returns current stock rows for the tenant.
 	ListStockSnapshots(ctx context.Context, tenantID uuid.UUID) ([]StockRow, error)
 }
 
 // SaleRepo is the minimal read interface required by the AI tools.
 type SaleRepo interface {
-	// ListRecentSaleLines returns individual sale line rows within the past N days.
 	ListRecentSaleLines(ctx context.Context, tenantID uuid.UUID, days int) ([]SaleRow, error)
-	// MatchCustomers returns customers whose name contains name, plus walk-in
-	// names on quick-checkout bills equal to name.
 	MatchCustomers(ctx context.Context, tenantID uuid.UUID, name string) ([]CustomerRef, error)
-	// ListCustomerSales returns the customer's latest approved sale bills,
-	// newest first: bills with its partner id, and quick-checkout bills
-	// carrying its name.
 	ListCustomerSales(ctx context.Context, tenantID uuid.UUID, c CustomerRef, limit int) ([]CustomerBill, error)
 }
 
 // ExchangeRateRepo is the minimal interface for exchange rate queries.
 type ExchangeRateRepo interface {
-	// GetRate returns the exchange rate from → to (stored as decimal string).
 	GetRate(ctx context.Context, tenantID uuid.UUID, from, to string) (decimal.Decimal, error)
 }
 
@@ -134,7 +110,7 @@ func NewRegistry(p ProductRepo, s StockRepo, sl SaleRepo, e ExchangeRateRepo) *R
 	}
 }
 
-// ToolDefs returns the chat-completions-compatible tool definitions to include in every chat request.
+// ToolDefs returns the chat-completions-compatible tool definitions for chat requests.
 func ToolDefs() []llmclient.Tool {
 	return []llmclient.Tool{
 		{Type: "function", Function: llmclient.FunctionDef{
@@ -182,7 +158,6 @@ func ToolDefs() []llmclient.Tool {
 			Description: "Returns the current exchange rate from one currency to CNY (or another target).",
 			Parameters:  toolParams(queryExchangeRateArgs{}),
 		}},
-		// Destructive — return plan only
 		{Type: "function", Function: llmclient.FunctionDef{
 			Name:        "propose_price_change",
 			Description: "DESTRUCTIVE: Propose a bulk price change for matching products. Returns a plan_id for user confirmation. Does NOT execute immediately.",
@@ -201,16 +176,15 @@ func ToolDefs() []llmclient.Tool {
 	}
 }
 
-// DispatchResult is what Execute returns for each tool call.
+// DispatchResult holds the tool call result JSON and optional confirmation Plan.
 type DispatchResult struct {
 	ToolCallID string
 	Name       string
-	Content    string         // JSON string to pass back to LLM
-	Plan       *domainai.Plan // non-nil only for destructive tools
+	Content    string
+	Plan       *domainai.Plan
 }
 
-// Dispatch executes a single tool call identified by its name and JSON args.
-// Safe tools execute immediately; destructive tools return a Plan.
+// Dispatch executes a single tool call identified by its name and JSON arguments.
 func (r *Registry) Dispatch(ctx context.Context, tenantID uuid.UUID, call llmclient.ToolCall) DispatchResult {
 	res := DispatchResult{ToolCallID: call.ID, Name: call.Function.Name}
 	var resultJSON string
@@ -254,7 +228,6 @@ func (r *Registry) Dispatch(ctx context.Context, tenantID uuid.UUID, call llmcli
 	if err != nil {
 		resultJSON = jsonError(err.Error())
 	}
-
 	if costHidden(ctx) {
 		resultJSON = trimCostResult(resultJSON)
 	}
@@ -275,785 +248,7 @@ func isMarginTop(call llmclient.ToolCall) bool {
 	return a.Metric == "margin"
 }
 
-// --- Safe tool implementations ---
-
-func (r *Registry) searchProducts(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args searchProductsArgs
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("search_products: invalid args: %w", err)
-	}
-	rows, err := r.productRepo.SearchProducts(ctx, tenantID, args.Query)
-	if err != nil {
-		return "", fmt.Errorf("search_products: %w", err)
-	}
-	out := make([]map[string]interface{}, 0, len(rows))
-	for _, p := range rows {
-		out = append(out, map[string]interface{}{
-			"id": p.ID, "name": p.Name, "code": p.Code,
-			"brand": p.Brand, "mnemonic": p.Mnemonic,
-		})
-	}
-	return jsonMarshal(map[string]interface{}{"products": out, "count": len(out)})
-}
-
-func (r *Registry) getStockSummary(ctx context.Context, tenantID uuid.UUID) (string, error) {
-	rows, err := r.stockRepo.ListStockSnapshots(ctx, tenantID)
-	if err != nil {
-		return "", fmt.Errorf("get_stock_summary: %w", err)
-	}
-	totalValue := decimal.Zero
-	lowStock := 0
-	deadStock := 0
-	now := time.Now()
-	for _, s := range rows {
-		totalValue = totalValue.Add(s.Qty.Mul(s.UnitCost))
-		rop := computeROP(s)
-		if s.Qty.LessThan(rop) {
-			lowStock++
-		}
-		if now.Sub(s.LastMovedAt) > 90*24*time.Hour {
-			deadStock++
-		}
-	}
-	return jsonMarshal(map[string]interface{}{
-		"total_skus":       len(rows),
-		"total_value_cny":  totalValue.StringFixed(2),
-		"low_stock_count":  lowStock,
-		"dead_stock_count": deadStock,
-	})
-}
-
-func (r *Registry) listLowStock(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args listLowStockArgs
-	_ = json.Unmarshal([]byte(argsJSON), &args)
-	threshDays := 7
-	if args.ThresholdDays != nil {
-		threshDays = *args.ThresholdDays
-	}
-
-	rows, err := r.stockRepo.ListStockSnapshots(ctx, tenantID)
-	if err != nil {
-		return "", fmt.Errorf("list_low_stock: %w", err)
-	}
-
-	type item struct {
-		Name         string `json:"name"`
-		Code         string `json:"code"`
-		Qty          string `json:"qty"`
-		ROP          string `json:"rop"`
-		DaysOfSupply string `json:"days_of_supply"`
-	}
-	var items []item
-	for _, s := range rows {
-		rop := computeROP(s)
-		var daysOfSupply string
-		if s.AvgDailySales.IsPositive() {
-			d := s.Qty.Div(s.AvgDailySales)
-			if d.LessThanOrEqual(decimal.NewFromInt(int64(threshDays))) {
-				daysOfSupply = d.StringFixed(1)
-				items = append(items, item{
-					Name:         s.ProductName,
-					Code:         s.ProductCode,
-					Qty:          s.Qty.StringFixed(2),
-					ROP:          rop.StringFixed(2),
-					DaysOfSupply: daysOfSupply,
-				})
-			}
-		} else if s.Qty.LessThan(rop) {
-			items = append(items, item{
-				Name:         s.ProductName,
-				Code:         s.ProductCode,
-				Qty:          s.Qty.StringFixed(2),
-				ROP:          rop.StringFixed(2),
-				DaysOfSupply: "N/A",
-			})
-		}
-	}
-	return jsonMarshal(map[string]interface{}{
-		"low_stock_items": items,
-		"count":           len(items),
-		"threshold_days":  threshDays,
-	})
-}
-
-func (r *Registry) listDeadStock(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args listDeadStockArgs
-	_ = json.Unmarshal([]byte(argsJSON), &args)
-	days := 90
-	if args.Days != nil {
-		days = *args.Days
-	}
-
-	rows, err := r.stockRepo.ListStockSnapshots(ctx, tenantID)
-	if err != nil {
-		return "", fmt.Errorf("list_dead_stock: %w", err)
-	}
-	cutoff := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
-	type item struct {
-		Name      string `json:"name"`
-		Code      string `json:"code"`
-		Qty       string `json:"qty"`
-		Value     string `json:"value_cny"`
-		DaysSince int    `json:"days_since_last_movement"`
-	}
-	var items []item
-	for _, s := range rows {
-		if s.LastMovedAt.Before(cutoff) {
-			items = append(items, item{
-				Name:      s.ProductName,
-				Code:      s.ProductCode,
-				Qty:       s.Qty.StringFixed(2),
-				Value:     s.Qty.Mul(s.UnitCost).StringFixed(2),
-				DaysSince: int(time.Since(s.LastMovedAt).Hours() / 24),
-			})
-		}
-	}
-	return jsonMarshal(map[string]interface{}{
-		"dead_stock_items": items,
-		"count":            len(items),
-		"threshold_days":   days,
-	})
-}
-
-func (r *Registry) abcClassify(ctx context.Context, tenantID uuid.UUID) (string, error) {
-	saleRows, err := r.saleRepo.ListRecentSaleLines(ctx, tenantID, 365)
-	if err != nil {
-		return "", fmt.Errorf("abc_classify: %w", err)
-	}
-
-	// Aggregate revenue per product.
-	rev := make(map[uuid.UUID]decimal.Decimal)
-	names := make(map[uuid.UUID]string)
-	for _, s := range saleRows {
-		rev[s.ProductID] = rev[s.ProductID].Add(s.Revenue)
-		names[s.ProductID] = s.ProductName
-	}
-
-	type pRev struct {
-		id  uuid.UUID
-		rev decimal.Decimal
-	}
-	list := make([]pRev, 0, len(rev))
-	total := decimal.Zero
-	for id, r := range rev {
-		list = append(list, pRev{id, r})
-		total = total.Add(r)
-	}
-	sort.Slice(list, func(i, j int) bool {
-		return list[i].rev.GreaterThan(list[j].rev)
-	})
-
-	var (
-		aCnt, bCnt, cCnt int
-		aRev, bRev, cRev decimal.Decimal
-		cumulative       = decimal.Zero
-	)
-	for _, p := range list {
-		share := p.rev.Div(total)
-		cumulative = cumulative.Add(share)
-		if cumulative.LessThanOrEqual(decimal.NewFromFloat(0.80)) {
-			aCnt++
-			aRev = aRev.Add(p.rev)
-		} else if cumulative.LessThanOrEqual(decimal.NewFromFloat(0.95)) {
-			bCnt++
-			bRev = bRev.Add(p.rev)
-		} else {
-			cCnt++
-			cRev = cRev.Add(p.rev)
-		}
-	}
-
-	safeShare := func(v decimal.Decimal) string {
-		if total.IsZero() {
-			return "0%"
-		}
-		return v.Div(total).Mul(decimal.NewFromInt(100)).StringFixed(1) + "%"
-	}
-
-	return jsonMarshal(map[string]interface{}{
-		"a":          map[string]interface{}{"sku_count": aCnt, "revenue_share": safeShare(aRev)},
-		"b":          map[string]interface{}{"sku_count": bCnt, "revenue_share": safeShare(bRev)},
-		"c":          map[string]interface{}{"sku_count": cCnt, "revenue_share": safeShare(cRev)},
-		"total_skus": len(list),
-		"period":     "365d",
-	})
-}
-
-func (r *Registry) recentSalesTop(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args recentSalesTopArgs
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("recent_sales_top: invalid args: %w", err)
-	}
-	days := 7
-	if args.Days != nil {
-		days = *args.Days
-	}
-	limit := 10
-	if args.Limit != nil {
-		limit = *args.Limit
-	}
-
-	rows, err := r.saleRepo.ListRecentSaleLines(ctx, tenantID, days)
-	if err != nil {
-		return "", fmt.Errorf("recent_sales_top: %w", err)
-	}
-
-	type agg struct {
-		name    string
-		revenue decimal.Decimal
-		qty     decimal.Decimal
-		margin  decimal.Decimal
-		count   int
-	}
-	aggMap := make(map[uuid.UUID]*agg)
-	for _, s := range rows {
-		a, ok := aggMap[s.ProductID]
-		if !ok {
-			a = &agg{name: s.ProductName}
-			aggMap[s.ProductID] = a
-		}
-		a.revenue = a.revenue.Add(s.Revenue)
-		a.qty = a.qty.Add(s.Qty)
-		a.margin = a.margin.Add(s.Margin)
-		a.count++
-	}
-
-	type scored struct {
-		name  string
-		score decimal.Decimal
-	}
-	items := make([]scored, 0, len(aggMap))
-	for _, a := range aggMap {
-		var score decimal.Decimal
-		switch args.Metric {
-		case "margin":
-			if a.count > 0 {
-				score = a.margin.Div(decimal.NewFromInt(int64(a.count)))
-			}
-		case "qty":
-			score = a.qty
-		default:
-			score = a.revenue
-		}
-		items = append(items, scored{name: a.name, score: score})
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].score.GreaterThan(items[j].score)
-	})
-	if len(items) > limit {
-		items = items[:limit]
-	}
-
-	out := make([]map[string]interface{}, 0, len(items))
-	for i, it := range items {
-		out = append(out, map[string]interface{}{
-			"rank":  i + 1,
-			"name":  it.name,
-			"score": it.score.StringFixed(2),
-		})
-	}
-	return jsonMarshal(map[string]interface{}{
-		"top_products": out,
-		"metric":       args.Metric,
-		"days":         days,
-	})
-}
-
-func (r *Registry) grossMarginSummary(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args grossMarginSummaryArgs
-	_ = json.Unmarshal([]byte(argsJSON), &args)
-	days := 30
-	if args.Days != nil {
-		days = *args.Days
-	}
-
-	rows, err := r.saleRepo.ListRecentSaleLines(ctx, tenantID, days)
-	if err != nil {
-		return "", fmt.Errorf("gross_margin_summary: %w", err)
-	}
-
-	type pAgg struct {
-		name    string
-		revenue decimal.Decimal
-		margin  decimal.Decimal
-		count   int
-	}
-	aggMap := make(map[uuid.UUID]*pAgg)
-	totalRevenue := decimal.Zero
-	totalMarginSum := decimal.Zero
-	for _, s := range rows {
-		a, ok := aggMap[s.ProductID]
-		if !ok {
-			a = &pAgg{name: s.ProductName}
-			aggMap[s.ProductID] = a
-		}
-		a.revenue = a.revenue.Add(s.Revenue)
-		a.margin = a.margin.Add(s.Margin)
-		a.count++
-		totalRevenue = totalRevenue.Add(s.Revenue)
-		totalMarginSum = totalMarginSum.Add(s.Margin)
-	}
-
-	type scored struct {
-		name      string
-		avgMargin decimal.Decimal
-	}
-	items := make([]scored, 0, len(aggMap))
-	for _, a := range aggMap {
-		avgM := decimal.Zero
-		if a.count > 0 {
-			avgM = a.margin.Div(decimal.NewFromInt(int64(a.count)))
-		}
-		items = append(items, scored{name: a.name, avgMargin: avgM})
-	}
-	sort.Slice(items, func(i, j int) bool {
-		return items[i].avgMargin.GreaterThan(items[j].avgMargin)
-	})
-
-	top10 := items
-	if len(top10) > 10 {
-		top10 = top10[:10]
-	}
-	bottom10 := items
-	if len(bottom10) > 10 {
-		bottom10 = bottom10[len(bottom10)-10:]
-	}
-
-	overallMargin := decimal.Zero
-	if len(rows) > 0 {
-		overallMargin = totalMarginSum.Div(decimal.NewFromInt(int64(len(rows))))
-	}
-
-	toSlice := func(ss []scored) []map[string]interface{} {
-		out := make([]map[string]interface{}, 0, len(ss))
-		for _, s := range ss {
-			out = append(out, map[string]interface{}{
-				"name":       s.name,
-				"avg_margin": s.avgMargin.Mul(decimal.NewFromInt(100)).StringFixed(1) + "%",
-			})
-		}
-		return out
-	}
-
-	return jsonMarshal(map[string]interface{}{
-		"overall_margin": overallMargin.Mul(decimal.NewFromInt(100)).StringFixed(1) + "%",
-		"top10":          toSlice(top10),
-		"bottom10":       toSlice(bottom10),
-		"days":           days,
-	})
-}
-
-func (r *Registry) queryExchangeRate(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args queryExchangeRateArgs
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("query_exchange_rate: invalid args: %w", err)
-	}
-	if args.To == "" {
-		args.To = "CNY"
-	}
-	rate, err := r.exchangeRateRepo.GetRate(ctx, tenantID, args.From, args.To)
-	if err != nil {
-		return "", fmt.Errorf("query_exchange_rate: %w", err)
-	}
-	return jsonMarshal(map[string]interface{}{
-		"from": args.From,
-		"to":   args.To,
-		"rate": rate.StringFixed(6),
-	})
-}
-
-// --- Destructive tool implementations (return Plan, no side effects) ---
-
-func (r *Registry) proposePriceChange(ctx context.Context, tenantID uuid.UUID, argsJSON string) (*domainai.Plan, string, error) {
-	var args proposePriceChangeArgs
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return nil, "", fmt.Errorf("propose_price_change: invalid args: %w", err)
-	}
-
-	actionText, ok := priceActionText(args.Action)
-	if !ok {
-		return nil, "", fmt.Errorf("propose_price_change: action %q must look like +5%%, -10%% or =199.00", args.Action)
-	}
-
-	products, err := r.productRepo.SearchProducts(ctx, tenantID, args.Filter)
-	if err != nil {
-		return nil, "", fmt.Errorf("propose_price_change: search: %w", err)
-	}
-
-	if len(products) == 0 {
-		return noProductsFound(args.Filter)
-	}
-
-	samples := make([]domainai.SampleRow, 0, min(len(products), 10))
-	for i, p := range products {
-		if i >= 10 {
-			break
-		}
-		samples = append(samples, domainai.SampleRow{
-			Name:   p.Name,
-			Before: "当前售价",
-			After:  actionText,
-		})
-	}
-
-	plan := &domainai.Plan{
-		ID:       uuid.New(),
-		TenantID: tenantID,
-		Type:     domainai.PlanTypePriceChange,
-		Status:   domainai.PlanStatusPending,
-		Payload: map[string]interface{}{
-			"filter": args.Filter,
-			"action": args.Action,
-		},
-		Preview: domainai.PlanPreview{
-			Description:   fmt.Sprintf("按「%s」调整 %d 个商品的价格：%s", args.Filter, len(products), actionText),
-			AffectedCount: len(products),
-			SampleRows:    samples,
-		},
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(30 * time.Minute),
-	}
-
-	result, err := jsonMarshal(map[string]interface{}{
-		"plan_id":               plan.ID.String(),
-		"affected_count":        len(products),
-		"description":           plan.Preview.Description,
-		"requires_confirmation": true,
-		"message":               "需要店主确认后才会执行，确认卡片已经展示给店主。",
-	})
-	return plan, result, err
-}
-
-var priceActionRe = regexp.MustCompile(`^([+-]?)\s*(\d+(?:\.\d+)?)\s*%$|^=\s*(\d+(?:\.\d+)?)$`)
-
-// noProductsFound is the tool answer when a filter matches nothing: no card is
-// raised, so the shopkeeper is never asked to confirm a change to zero items.
-func noProductsFound(filter string) (*domainai.Plan, string, error) {
-	result, err := jsonMarshal(map[string]interface{}{
-		"affected_count": 0,
-		"message":        fmt.Sprintf("没找到符合「%s」的商品，没有生成确认卡片，请换个关键词再试。", filter),
-	})
-	return nil, result, err
-}
-
-// stockDeltaText words a stock change for the card ("增加 5", "减少 2.5").
-func stockDeltaText(delta float64) string {
-	if delta < 0 {
-		return "减少 " + strconv.FormatFloat(-delta, 'f', -1, 64)
-	}
-	return "增加 " + strconv.FormatFloat(delta, 'f', -1, 64)
-}
-
-// priceActionText words a price action ("+10%", "-5%", "=199.00") for the
-// shopkeeper; ok is false when the action is none of those shapes, so a free
-// text action from the model never reaches the card.
-func priceActionText(action string) (string, bool) {
-	m := priceActionRe.FindStringSubmatch(strings.TrimSpace(action))
-	if m == nil {
-		return "", false
-	}
-	switch {
-	case m[3] != "":
-		return "改为 " + m[3] + " 元", true
-	case m[1] == "+" || m[1] == "":
-		return "涨价 " + m[2] + "%", true
-	default:
-		return "降价 " + m[2] + "%", true
-	}
-}
-
-func (r *Registry) proposeCreatePurchaseDraft(ctx context.Context, tenantID uuid.UUID, argsJSON string) (*domainai.Plan, string, error) {
-	var args proposeCreatePurchaseDraftArgs
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return nil, "", fmt.Errorf("propose_create_purchase_draft: invalid args: %w", err)
-	}
-
-	samples := make([]domainai.SampleRow, 0, len(args.Items))
-	for _, it := range args.Items {
-		samples = append(samples, domainai.SampleRow{
-			Name:   it.ProductName,
-			Before: "",
-			After:  fmt.Sprintf("数量 %.2f", it.Qty),
-		})
-	}
-
-	plan := &domainai.Plan{
-		ID:       uuid.New(),
-		TenantID: tenantID,
-		Type:     domainai.PlanTypeCreatePurchase,
-		Status:   domainai.PlanStatusPending,
-		Payload:  map[string]interface{}{"items": args.Items},
-		Preview: domainai.PlanPreview{
-			Description:   fmt.Sprintf("新建采购草稿，共 %d 行", len(args.Items)),
-			AffectedCount: len(args.Items),
-			SampleRows:    samples,
-		},
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(30 * time.Minute),
-	}
-	attachDraftFlags(plan, r.historyFlags(ctx, tenantID, args.Items))
-
-	result, err := jsonMarshal(map[string]interface{}{
-		"plan_id":               plan.ID.String(),
-		"item_count":            len(args.Items),
-		"description":           plan.Preview.Description,
-		"requires_confirmation": true,
-		"message":               "需要店主确认后才会执行，确认卡片已经展示给店主。",
-	})
-	return plan, result, err
-}
-
-// historyFlags flags draft lines far above the product's total sales of the
-// last histWindowDays days (a restock is compared with what the shop sold, not
-// with one sale line, which is usually 1-2 pieces). Best effort: no sales repo or a failed read
-// means no flags, never a failed proposal.
-func (r *Registry) historyFlags(ctx context.Context, tenantID uuid.UUID, items []purchaseDraftItem) []DraftFlag {
-	if r.saleRepo == nil || len(items) == 0 {
-		return nil
-	}
-	rows, err := r.saleRepo.ListRecentSaleLines(ctx, tenantID, histWindowDays)
-	if err != nil {
-		return nil
-	}
-	soldByName := make(map[string]decimal.Decimal, len(rows))
-	for _, row := range rows {
-		name := strings.TrimSpace(row.ProductName)
-		soldByName[name] = soldByName[name].Add(row.Qty)
-	}
-	return CheckHistoryQty(checkLines(items), soldByName)
-}
-
-func (r *Registry) proposeBulkStockAdjust(ctx context.Context, tenantID uuid.UUID, argsJSON string) (*domainai.Plan, string, error) {
-	var args proposeBulkStockAdjustArgs
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return nil, "", fmt.Errorf("propose_bulk_stock_adjust: invalid args: %w", err)
-	}
-
-	products, err := r.productRepo.SearchProducts(ctx, tenantID, args.Filter)
-	if err != nil {
-		return nil, "", fmt.Errorf("propose_bulk_stock_adjust: search: %w", err)
-	}
-
-	if len(products) == 0 {
-		return noProductsFound(args.Filter)
-	}
-
-	samples := make([]domainai.SampleRow, 0, min(len(products), 10))
-	for i, p := range products {
-		if i >= 10 {
-			break
-		}
-		samples = append(samples, domainai.SampleRow{
-			Name:   p.Name,
-			Before: "当前库存",
-			After:  stockDeltaText(args.Delta),
-		})
-	}
-
-	plan := &domainai.Plan{
-		ID:       uuid.New(),
-		TenantID: tenantID,
-		Type:     domainai.PlanTypeBulkStockAdjust,
-		Status:   domainai.PlanStatusPending,
-		Payload: map[string]interface{}{
-			"filter": args.Filter,
-			"delta":  args.Delta,
-		},
-		Preview: domainai.PlanPreview{
-			Description:   fmt.Sprintf("按「%s」调整 %d 个商品的库存：%s", args.Filter, len(products), stockDeltaText(args.Delta)),
-			AffectedCount: len(products),
-			SampleRows:    samples,
-		},
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(30 * time.Minute),
-	}
-
-	result, err := jsonMarshal(map[string]interface{}{
-		"plan_id":               plan.ID.String(),
-		"affected_count":        len(products),
-		"description":           plan.Preview.Description,
-		"requires_confirmation": true,
-		"message":               "需要店主确认后才会执行，确认卡片已经展示给店主。",
-	})
-	return plan, result, err
-}
-
-// --- helpers ---
-
-// computeROP calculates the Re-Order Point using industry formula:
-// ROP = lead_time_days × avg_daily_sales + safety_stock
-// safety_stock = z × σ × √lead_time (z=1.65, σ approximated as avg_daily_sales * 0.3)
-func computeROP(s StockRow) decimal.Decimal {
-	if s.AvgDailySales.IsZero() || s.LeadTimeDays == 0 {
-		return decimal.Zero
-	}
-	lt := decimal.NewFromInt(int64(s.LeadTimeDays))
-	avgDaily := s.AvgDailySales
-	// safety stock: z=1.65, σ = avgDaily * 0.3 (conservative approximation)
-	z := decimal.NewFromFloat(1.65)
-	sigma := avgDaily.Mul(decimal.NewFromFloat(0.3))
-	sqrtLT := decimal.NewFromFloat(math.Sqrt(float64(s.LeadTimeDays)))
-	safetyStock := z.Mul(sigma).Mul(sqrtLT)
-	return lt.Mul(avgDaily).Add(safetyStock)
-}
-
-func (r *Registry) customerRecentPurchases(ctx context.Context, tenantID uuid.UUID, argsJSON string) (string, error) {
-	var args customerRecentPurchasesArgs
-	if err := json.Unmarshal([]byte(argsJSON), &args); err != nil {
-		return "", fmt.Errorf("customer_recent_purchases: invalid args: %w", err)
-	}
-	name := strings.TrimSpace(args.Customer)
-	if name == "" {
-		return "", fmt.Errorf("customer_recent_purchases: customer is required")
-	}
-	limit := 5
-	if args.Limit != nil && *args.Limit > 0 {
-		limit = min(*args.Limit, 20)
-	}
-
-	res, err := r.ResolveCustomerName(ctx, tenantID, name)
-	if err != nil {
-		return "", fmt.Errorf("customer_recent_purchases: %w", err)
-	}
-	if len(res.Ambiguous) > 0 {
-		return ambiguousCustomers(res.Ambiguous, "several customers match; ask the user which one before answering")
-	}
-	chosen, resolvedFrom := res.Customer, res.ResolvedFrom
-	if chosen == nil {
-		return jsonMarshal(map[string]interface{}{"found": false, "customer": name})
-	}
-
-	bills, err := r.saleRepo.ListCustomerSales(ctx, tenantID, *chosen, limit)
-	if err != nil {
-		return "", fmt.Errorf("customer_recent_purchases: %w", err)
-	}
-	type line struct {
-		Product   string `json:"product"`
-		Qty       string `json:"qty"`
-		Unit      string `json:"unit,omitempty"`
-		UnitPrice string `json:"unit_price"`
-		Amount    string `json:"amount"`
-	}
-	type bill struct {
-		BillNo string `json:"bill_no"`
-		Date   string `json:"date"`
-		Total  string `json:"total"`
-		Items  []line `json:"items"`
-	}
-	outBills := make([]bill, 0, len(bills))
-	for _, b := range bills {
-		ob := bill{BillNo: b.BillNo, Date: b.BillDate.In(shopZone).Format("2006-01-02"), Total: b.Total.StringFixed(2)}
-		for _, l := range b.Lines {
-			ob.Items = append(ob.Items, line{
-				Product:   l.ProductName,
-				Qty:       l.Qty.String(),
-				Unit:      l.Unit,
-				UnitPrice: l.UnitPrice.StringFixed(2),
-				Amount:    l.Amount.StringFixed(2),
-			})
-		}
-		outBills = append(outBills, ob)
-	}
-	out := map[string]interface{}{
-		"found":    true,
-		"customer": map[string]string{"name": chosen.Name, "code": chosen.Code},
-		"bills":    outBills,
-		"count":    len(outBills),
-	}
-	if resolvedFrom != "" {
-		out["resolved_from"] = resolvedFrom
-		out["note"] = fmt.Sprintf("%s was taken to mean customer %s (the only customer with that surname); say so in the answer", resolvedFrom, chosen.Name)
-	}
-	return jsonMarshal(out)
-}
-
-// CustomerResolution is what a name the user said resolves to: one customer,
-// several candidates, or neither.
-type CustomerResolution struct {
-	Customer  *CustomerRef
-	Ambiguous []CustomerRef
-	// ResolvedFrom is the address form ("老张") when Customer was found by
-	// surname rather than by name.
-	ResolvedFrom string
-}
-
-// ResolveCustomerName resolves a customer as the user named them: by name
-// (pickCustomer), else by the surname in an address form (老张 / 王老板).
-func (r *Registry) ResolveCustomerName(ctx context.Context, tenantID uuid.UUID, name string) (CustomerResolution, error) {
-	cands, err := r.saleRepo.MatchCustomers(ctx, tenantID, name)
-	if err != nil {
-		return CustomerResolution{}, err
-	}
-	chosen, ambiguous := pickCustomer(name, cands)
-	if chosen != nil || len(ambiguous) > 0 {
-		return CustomerResolution{Customer: chosen, Ambiguous: ambiguous}, nil
-	}
-	// "老张" / "王老板": the customer record has the full name.
-	s := aliasSurname(name)
-	if s == "" {
-		return CustomerResolution{}, nil
-	}
-	byName, err := r.saleRepo.MatchCustomers(ctx, tenantID, s)
-	if err != nil {
-		return CustomerResolution{}, err
-	}
-	switch m := customersWithSurname(byName, s); len(m) {
-	case 0:
-		return CustomerResolution{}, nil
-	case 1:
-		return CustomerResolution{Customer: &m[0], ResolvedFrom: name}, nil
-	default:
-		return CustomerResolution{Ambiguous: m}, nil
-	}
-}
-
-// ambiguousCustomers is the tool result listing the candidates for a name.
-func ambiguousCustomers(cands []CustomerRef, note string) (string, error) {
-	out := make([]map[string]string, 0, len(cands))
-	for _, c := range cands {
-		out = append(out, map[string]string{"name": c.Name, "code": c.Code, "phone": c.Phone})
-	}
-	return jsonMarshal(map[string]interface{}{
-		"ambiguous":  true,
-		"candidates": out,
-		"note":       note,
-	})
-}
-
-// pickCustomer resolves the name a user said to one customer, or returns the
-// candidates when it cannot tell. An exact name wins over names that merely
-// contain it ("张三" is 张三, not 张三丰); several exact partners, or several
-// partial matches and no exact one, are ambiguous. A walk-in name (quick
-// checkout, no partner record) is used only when no partner has that name.
-func pickCustomer(name string, cands []CustomerRef) (*CustomerRef, []CustomerRef) {
-	var exactPartners, walkIns, partners []CustomerRef
-	for _, c := range cands {
-		exact := strings.EqualFold(strings.TrimSpace(c.Name), name)
-		switch {
-		case c.ID == uuid.Nil && exact:
-			walkIns = append(walkIns, c)
-		case c.ID == uuid.Nil:
-		case exact:
-			exactPartners = append(exactPartners, c)
-		default:
-			partners = append(partners, c)
-		}
-	}
-	switch {
-	case len(exactPartners) == 1:
-		return &exactPartners[0], nil
-	case len(exactPartners) > 1:
-		return nil, exactPartners
-	case len(walkIns) > 0:
-		return &walkIns[0], nil
-	case len(partners) == 1:
-		return &partners[0], nil
-	case len(partners) > 1:
-		return nil, partners
-	}
-	return nil, nil
-}
-
+// jsonMarshal serialises v into a JSON string.
 func jsonMarshal(v interface{}) (string, error) {
 	b, err := json.Marshal(v)
 	if err != nil {
@@ -1062,11 +257,13 @@ func jsonMarshal(v interface{}) (string, error) {
 	return string(b), nil
 }
 
+// jsonError formats msg as a JSON error payload.
 func jsonError(msg string) string {
 	b, _ := json.Marshal(map[string]string{"error": msg})
 	return string(b)
 }
 
+// min returns the smaller of a and b.
 func min(a, b int) int {
 	if a < b {
 		return a

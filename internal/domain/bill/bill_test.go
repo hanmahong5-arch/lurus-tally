@@ -225,3 +225,23 @@ func TestBillHead_InvoiceStatus_SubCentTail(t *testing.T) {
 		}
 	}
 }
+
+func TestBillHead_InvoiceStatus_NetOfReturns(t *testing.T) {
+	d := func(s string) decimal.Decimal { return decimal.RequireFromString(s) }
+	h := &domain.BillHead{TotalAmount: d("300"), ReturnedAmount: d("100"), InvoicedAmount: d("200")}
+	if got := h.InvoiceStatus(); got != domain.InvoiceFull {
+		t.Errorf("invoiced the net: got %s", got)
+	}
+	h.InvoicedAmount = d("80")
+	if got := h.InvoiceStatus(); got != domain.InvoicePartial {
+		t.Errorf("short of the net: got %s", got)
+	}
+	h.InvoicedAmount = decimal.Zero
+	if got := h.InvoiceStatus(); got != domain.InvoiceNone {
+		t.Errorf("nothing invoiced: got %s", got)
+	}
+	h.ReturnedAmount = d("300")
+	if got := h.InvoiceStatus(); got != domain.InvoiceFull {
+		t.Errorf("fully returned: got %s", got)
+	}
+}

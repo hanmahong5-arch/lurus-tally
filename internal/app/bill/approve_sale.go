@@ -18,6 +18,10 @@ import (
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/loghelper"
 )
 
+type sqlTx = sql.Tx
+
+var errNoRows = sql.ErrNoRows
+
 // PaymentRecorder is the minimal interface needed to record a payment from the bill layer.
 // Defined here to avoid an import cycle between app/bill and app/payment.
 type PaymentRecorder interface {
@@ -59,6 +63,7 @@ type ApproveSaleUseCase struct {
 	stockUC     StockMovementExecutor
 	unitRepo    ProductUnitRepo
 	paymentRepo PaymentRecorder
+	batches     ReceiptLedger
 }
 
 // NewApproveSaleUseCase constructs the use case.
@@ -169,6 +174,18 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 	// on subsequent items is still accurate. Non-stock errors short-circuit
 	// immediately because they indicate a programming or infra failure.
 	var stockShortages []appstock.InsufficientStockError
+	var draws []BatchDrawLine
+	var lineLinks map[uuid.UUID]uuid.UUID
+	if uc.batches != nil {
+		if linker, ok := uc.repo.(interface {
+			ReturnLinksTx(context.Context, *sql.Tx, uuid.UUID, uuid.UUID) (map[uuid.UUID]uuid.UUID, error)
+		}); ok {
+			lineLinks, err = linker.ReturnLinksTx(ctx, tx, req.TenantID, req.BillID)
+			if err != nil {
+				return fmt.Errorf("approve sale: load receipt links: %w", err)
+			}
+		}
+	}
 
 	for _, item := range items {
 		convFactor := "1"
@@ -227,10 +244,30 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 				return fmt.Errorf("approve sale: persist purchase_price for item line_no=%d: %w", item.LineNo, err)
 			}
 		}
+		if uc.batches != nil && snap != nil {
+			factor := decimal.NewFromInt(1)
+			if f, ferr := decimal.NewFromString(convFactor); ferr == nil && f.IsPositive() {
+				factor = f
+			}
+			line := BatchDrawLine{
+				SaleItemID:   item.ID,
+				ProductID:    item.ProductID,
+				QtyBase:      item.Qty.Mul(factor),
+				Factor:       factor,
+				SourceItemID: lineLinks[item.ID],
+				OnHandAfter:  snap.OnHandQty,
+			}
+			draws = append(draws, line)
+		}
 	}
 
 	if len(stockShortages) > 0 {
 		return &appstock.BatchInsufficientStockError{Shortages: stockShortages}
+	}
+	if uc.batches != nil {
+		if err := uc.batches.Draw(ctx, tx, req.TenantID, warehouseID, draws, req.AllowNegative); err != nil {
+			return fmt.Errorf("approve sale: draw receipt batch: %w", err)
+		}
 	}
 
 	// Update bill status to approved.
@@ -265,61 +302,5 @@ func (uc *ApproveSaleUseCase) executeInTx(ctx context.Context, tx *sql.Tx, req A
 		}
 	}
 
-	return nil
-}
-
-// resolvePayType maps the request's payment method to a PayType: empty means "not
-// specified" and books as cash, an unknown value is rejected with ErrInvalidPayMethod.
-func resolvePayType(method string) (domainpayment.PayType, error) {
-	if method == "" {
-		return domainpayment.PayTypeCash, nil
-	}
-	pt := domainpayment.PayType(method)
-	if err := pt.Validate(); err != nil {
-		return "", fmt.Errorf("%w: %q", ErrInvalidPayMethod, method)
-	}
-	return pt, nil
-}
-
-// checkSettlementMethod rejects "credit" as the method of money actually received or paid:
-// credit is a promise to pay later. A zero amount (a credit sale at the counter) is fine.
-func checkSettlementMethod(method string, amount decimal.Decimal) error {
-	if amount.IsPositive() && method == string(domainpayment.PayTypeCredit) {
-		return fmt.Errorf("%w: %q", ErrInvalidPayMethod, method)
-	}
-	return nil
-}
-
-// recordInitialPayment books the payment that rides along with an approval and lifts
-// bill_head.paid_amount to it, inside the approval transaction. Shared by sale and
-// purchase approval so both write the same payment_head shape.
-func recordInitialPayment(ctx context.Context, tx *sql.Tx, repo BillRepo, rec PaymentRecorder,
-	head *domain.BillHead, tenantID, billID, creatorID uuid.UUID, amount decimal.Decimal, method string, now time.Time, remark string) error {
-	payType, err := resolvePayType(method)
-	if err != nil {
-		return err
-	}
-	if err := checkSettlementMethod(method, amount); err != nil {
-		return err
-	}
-	p := &domainpayment.Payment{
-		ID:        uuid.New(),
-		TenantID:  tenantID,
-		BillID:    billID,
-		PayType:   payType,
-		Amount:    amount,
-		CreatorID: creatorID,
-		PayDate:   now,
-		Remark:    remark,
-	}
-	if head.PartnerID != nil {
-		p.PartnerID = head.PartnerID
-	}
-	if err := rec.Record(ctx, tx, p); err != nil {
-		return fmt.Errorf("record payment: %w", err)
-	}
-	if err := repo.UpdatePaidAmount(ctx, tx, tenantID, billID, amount); err != nil {
-		return fmt.Errorf("update paid_amount: %w", err)
-	}
 	return nil
 }

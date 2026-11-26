@@ -1,10 +1,14 @@
 /**
- * Typed errors thrown by the unified apiFetch client.
- *
- * Callers can branch on the class (instanceof) or on an HTTP status code.
- * The `body` field exposes the parsed JSON payload (if any) so domain wrappers
- * (e.g. billing.ts) can recover a service-specific code field.
+ * Typed errors thrown by the unified apiFetch client, delegating error payload
+ * normalisation to the shared `@lurus/frontend-client` (`@/lib/lurus-client`) primitives.
  */
+
+import {
+  extractApiError as extractSharedApiError,
+  type ApiError as SharedApiError,
+} from "../lurus-client"
+
+export type { SharedApiError }
 
 export class ApiError extends Error {
   constructor(
@@ -20,9 +24,8 @@ export class ApiError extends Error {
 
 /**
  * Thrown when the request never reached the server (DNS / offline / abort).
- * `sent` is false only when the request provably never left the device (offline
- * preflight, or the connection failed before any reply); true when it may have been
- * delivered and only the reply was lost (cut-off body, gateway could not reach upstream).
+ * `sent` is false only when the request provably never left the device; true
+ * when it may have been delivered and only the reply was lost.
  */
 export class NetworkError extends Error {
   constructor(
@@ -45,12 +48,6 @@ export class UnauthorizedError extends ApiError {
 
 /**
  * A user-presentable view of any thrown error.
- *
- * `message` is always safe to render to a paying user: it never contains the
- * `ApiError:`/`Error:` class-name prefix that `String(err)` leaks, and falls
- * back to a generic Chinese message for unrecognized values. `code`/`status`
- * are optional machine hints for callers that want to branch (they are NOT
- * meant to be rendered raw).
  */
 export interface DisplayError {
   message: string
@@ -65,25 +62,27 @@ const SERVER_FAULT_MESSAGE = "系统出了点问题，请稍后再试；一直�
 
 /**
  * extractApiError normalizes any caught value into a {@link DisplayError} whose
- * `message` is fit for direct display. This is the single, canonical path for
- * turning a thrown error into user-facing copy — callers must use it instead of
- * `String(err)` (which leaks the class-name prefix) or reading `err.message`
- * ad hoc (which may surface a raw transport/OIDC code).
+ * `message` is fit for direct display, delegating transport/envelope parsing to
+ * the shared `lurus-client` normalizer while preserving Tally's shop-owner copy rules.
  */
 export function extractApiError(err: unknown): DisplayError {
   if (err instanceof ApiError) {
-    // Prefer a server-supplied human message from the JSON body, then the
-    // ApiError's own message, then a generic fallback. Never the class name.
-    const body = (err.body ?? {}) as { detail?: string; message?: string; action?: string; error?: string }
-    const message = body.detail ?? body.message ?? (err.message || GENERIC_MESSAGE)
+    const body = (err.body ?? {}) as { detail?: string; message?: string; action?: string; error?: unknown }
+    const normalized = extractSharedApiError(
+      { status: err.status, statusText: err.message, data: err.body },
+      err.code,
+    )
+    const hasCustomText =
+      Boolean(body.detail) ||
+      Boolean(body.message) ||
+      Boolean(err.message) ||
+      Boolean(body.error)
+    const message = body.detail ?? (hasCustomText ? normalized.message : GENERIC_MESSAGE)
     const action = typeof body.action === "string" && body.action ? body.action : undefined
-    // A 5xx that still carries an English sentence (a raw transport or driver
-    // message) must never reach the shop owner; swap it for the Chinese copy
-    // and drop the equally English action.
     if (err.status >= 500 && /^[A-Za-z]/.test(message)) {
-      return { message: SERVER_FAULT_MESSAGE, code: err.code, status: err.status }
+      return { message: SERVER_FAULT_MESSAGE, code: normalized.code, status: err.status }
     }
-    return { message, action, code: err.code, status: err.status }
+    return { message, action, code: normalized.code, status: err.status }
   }
   if (err instanceof NetworkError) {
     const message =
@@ -93,7 +92,19 @@ export function extractApiError(err: unknown): DisplayError {
     return { message, code: err.kind }
   }
   if (err instanceof Error) {
-    return { message: err.message || GENERIC_MESSAGE }
+    if (!err.message.trim()) {
+      return { message: GENERIC_MESSAGE }
+    }
+    const normalized = extractSharedApiError(err)
+    return { message: normalized.message }
+  }
+  if (typeof err === "object" && err !== null) {
+    const normalized = extractSharedApiError(err)
+    return {
+      message: normalized.message === "请求未能完成，请稍后重试" ? GENERIC_MESSAGE : normalized.message,
+      code: normalized.code !== "unknown" ? normalized.code : undefined,
+      status: normalized.status,
+    }
   }
   return { message: GENERIC_MESSAGE }
 }

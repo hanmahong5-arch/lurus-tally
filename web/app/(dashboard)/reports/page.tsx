@@ -1,4 +1,4 @@
-import { auth } from "@/auth"
+import { auth, devBackendHeaders } from "@/auth"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
 import { EmptyState } from "@/components/ui/empty-state"
@@ -20,10 +20,17 @@ const SERVER_BACKEND_URL =
     : ""
 
 /** Month-end figures from the backend; null when the request fails. */
-async function fetchMonthlyReport(accessToken: string, month: string): Promise<MonthlyReport | null> {
+async function fetchMonthlyReport(
+  accessToken: string,
+  month: string,
+  devHeaders?: Record<string, string>,
+): Promise<MonthlyReport | null> {
+  if (!accessToken && !devHeaders) return null
+  const headers: Record<string, string> = { ...devHeaders }
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`
   try {
     const res = await fetch(`${SERVER_BACKEND_URL}/api/v1/reports/monthly?month=${month}`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers,
       cache: "no-store",
     })
     if (!res.ok) return null
@@ -54,6 +61,7 @@ function agingHref(base: string | undefined, dateTo: string | undefined, today: 
 export default async function ReportsPage({ searchParams }: { searchParams?: { month?: string } }) {
   const session = await auth()
   const accessToken = session?.accessToken ?? ""
+  const devHeaders = accessToken ? undefined : devBackendHeaders(session)
   // Cost and profit are for the owner, managers and finance. An unknown role
   // shows them (the backend trims the figures anyway); a known one without the
   // permission never sees them.
@@ -73,7 +81,7 @@ export default async function ReportsPage({ searchParams }: { searchParams?: { m
   const current = today.slice(0, 7)
   const last = previousMonth(current)
   const month = resolveMonth(searchParams?.month, current)
-  const report = accessToken ? await fetchMonthlyReport(accessToken, month) : null
+  const report = accessToken || devHeaders ? await fetchMonthlyReport(accessToken, month, devHeaders) : null
   const links = report ? monthlyCsvLinks(report) : null
   const [y, m] = month.split("-")
   const val = (v: string | undefined) => (report && v !== undefined ? formatCNY(v) : FAILED)
@@ -111,14 +119,14 @@ export default async function ReportsPage({ searchParams }: { searchParams?: { m
         <section>
           <h2 className="mb-3 text-sm font-medium">月底对账</h2>
           <div className="grid grid-cols-2 gap-4 sm:grid-cols-3">
-            <StatCard label="净销售额" value={val(report?.net_sales)} hint="销售减去退货" href={links?.bills} />
+            <StatCard label="净销售额" value={val(report?.net_sales)} hint="已审核的销售减去退货，按发货计，不是已开票金额" href={links?.bills} />
             {showCost && (
               <>
                 <StatCard label="销售成本" value={val(report?.cost_of_goods)} hint="卖出商品的进货成本，退货已扣回" />
                 <StatCard label="毛利" value={val(report?.gross_profit)} hint="净销售额减销售成本" href={links?.summary} />
               </>
             )}
-            <StatCard label="采购净额" value={val(report?.net_purchases)} hint="采购减去采购退货" href={links?.bills} />
+            <StatCard label="采购净额" value={val(report?.net_purchases)} hint="已审核的采购减去退货，按入库计，不是供应商发票" href={links?.bills} />
             <StatCard label="本月收款" value={val(report?.receipts)} hint="实际收到的钱，已扣退款；赊账不算" href={links?.receipts} />
             <StatCard label="本月付款" value={val(report?.payments)} hint="实际付出的钱，已扣供应商退款；退货冲抵不算" href={links?.paymentsOut} />
             <StatCard label="月底应收" value={val(report?.receivable)} hint="当月底前开的单，扣掉到今天为止的收款后还欠的" href={agingHref(links?.receivable, report?.date_to, today)} linkLabel="查看账龄" />

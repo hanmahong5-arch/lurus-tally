@@ -23,6 +23,7 @@ import { useProductNames } from "@/hooks/use-product-names"
 import { useBillPartyNames } from "@/hooks/use-bill-party-names"
 import { formatCNY, formatDate, formatDateTime } from "@/lib/format"
 import { BillInvoices } from "@/components/bill-invoices"
+import { SourcePurchase } from "@/components/supply-trail"
 import { AuditTrail } from "@/components/audit-trail"
 import { CloudPrintButton } from "@/components/print/cloud-print-button"
 import { PageContainer } from "@/components/ui/page-container"
@@ -39,14 +40,12 @@ import { getProduct } from "@/lib/api/products"
 import { forgetPendingRefund, readPendingRefund, rememberPendingRefund } from "@/lib/pos/pending-refund"
 import { saveBillCopy } from "@/lib/bill-copy"
 import { describeStockShortage } from "@/lib/stock-shortage"
-
 const SELECT_CLASS =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
 export default function SaleDetailPage() {
   const { id } = useParams<{ id: string }>()
   const router = useRouter()
-
   const [detail, setDetail] = useState<SaleBillDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -374,6 +373,7 @@ export default function SaleDetailPage() {
           )
         }
       />
+      <SourcePurchase source={detail.source_purchase} />
 
       <div className="space-y-6">
         {actionError && (

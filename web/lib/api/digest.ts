@@ -37,11 +37,16 @@ export interface WeeklySummary {
  * Requires the user's access_token from auth().
  * Degrades gracefully: returns null on any error so the card renders empty.
  */
-export async function fetchWeeklySummary(accessToken: string): Promise<WeeklySummary | null> {
-  if (!accessToken) return null
+export async function fetchWeeklySummary(
+  accessToken: string,
+  devHeaders?: Record<string, string>,
+): Promise<WeeklySummary | null> {
+  if (!accessToken && !devHeaders) return null
+  const headers: Record<string, string> = { ...devHeaders }
+  if (accessToken) headers.Authorization = `Bearer ${accessToken}`
   try {
     const res = await fetch(`${SERVER_BACKEND_URL}/api/v1/weekly-summary`, {
-      headers: { Authorization: `Bearer ${accessToken}` },
+      headers,
       next: { revalidate: 300 },
     })
     if (!res.ok) return null

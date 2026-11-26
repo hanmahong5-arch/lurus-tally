@@ -12,7 +12,7 @@ import (
 )
 
 func TestParseListFilter_InvoiceStatus(t *testing.T) {
-	for _, ok := range []string{"none", "partial", "full"} {
+	for _, ok := range []string{"none", "partial", "full", "open"} {
 		q, _ := url.ParseQuery("invoice_status=" + ok)
 		var f appbill.BillListFilter
 		if err := parseListFilter(q, uuid.Nil, &f); err != nil || f.InvoiceStatus != ok {

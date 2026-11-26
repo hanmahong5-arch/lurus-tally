@@ -19,6 +19,7 @@ import (
 
 // Ensure Repo satisfies the partner ledger port at compile time.
 var _ apppayment.PartnerLedger = (*Repo)(nil)
+var _ apppayment.MoneyBillReader = (*Repo)(nil)
 
 // purchaseReturnOffsetRemark starts the remark of the credit-type payment a purchase return
 // books to cancel part of the payable; it tells a return offset from any other credit entry.

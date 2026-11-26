@@ -255,7 +255,7 @@ func TrimTodoSummary(fullPath string) gin.HandlerFunc {
 				return v
 			}
 			if !cost {
-				m["draft_purchases"] = empty()
+				m["draft_purchases"], m["uninvoiced_purchases"] = empty(), empty()
 			}
 			if !pay {
 				m["overdue_customers"] = map[string]any{"count": 0, "items": []any{}}
@@ -277,7 +277,7 @@ func TrimTodoSummary(fullPath string) gin.HandlerFunc {
 }
 
 // todoSections are the to-do sections whose counts add up to the badge total.
-var todoSections = []string{"draft_purchases", "draft_sales", "low_stock", "overdue_customers", "uninvoiced_sales"}
+var todoSections = []string{"draft_purchases", "draft_sales", "low_stock", "overdue_customers", "uninvoiced_sales", "uninvoiced_purchases"}
 
 func todoTotal(m map[string]any) int64 {
 	var total int64

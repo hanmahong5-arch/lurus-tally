@@ -130,6 +130,9 @@ func (uc *UpdateSaleDraftUseCase) Execute(ctx context.Context, req UpdateSaleDra
 		if err := uc.repo.UpdateBill(ctx, tx, head, items); err != nil {
 			return fmt.Errorf("update sale draft: persist: %w", err)
 		}
+		if err := attachSaleSource(ctx, tx, uc.repo, req.TenantID, req.BillID, items, req.Items); err != nil {
+			return err
+		}
 		result = head
 		return nil
 	}); err != nil {

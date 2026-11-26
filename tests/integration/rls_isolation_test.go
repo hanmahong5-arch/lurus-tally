@@ -274,6 +274,7 @@ func TestRLS_ForceFlagSet(t *testing.T) {
 		"product_attribute", "unit", "warehouse_bin", "stock_initial",
 		"stock_serial", "finance_account", "finance_category", "payment_item",
 		"shopify_shop_map",
+		"receipt_batch", "batch_draw", "money_line",
 	}
 	for _, tbl := range tables {
 		var forced bool

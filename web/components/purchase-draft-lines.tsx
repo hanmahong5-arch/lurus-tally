@@ -1,9 +1,10 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect } from "react"
 import { ProductPicker } from "@/components/entity-pickers"
+import { LineUnitSelect } from "@/components/line-unit-select"
 import { useTenantId } from "@/hooks/use-tenant-id"
-import { listProductUnits, type ProductUnitOption } from "@/lib/api/product-units"
+import { useBillUnits } from "@/hooks/use-bill-units"
 import type { BillLineItem } from "@/components/bill-line-editor"
 
 interface Props {
@@ -15,15 +16,6 @@ interface Props {
 const CONTROL =
   "w-full rounded-md border border-input bg-transparent px-2 py-1 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
 
-/** The product's units; a unit already on the line stays selectable so it never disappears. */
-function unitChoices(item: BillLineItem, opts: ProductUnitOption[] | undefined): { id: string; name: string }[] {
-  const list: { id: string; name: string }[] = (opts ?? []).map((o) => ({ id: o.id, name: o.name }))
-  if (item.unit_id && !list.some((o) => o.id === item.unit_id)) {
-    list.unshift({ id: item.unit_id, name: item.unit_name || "当前单位" })
-  }
-  return list
-}
-
 /**
  * PurchaseDraftLines — product and quantity lines for someone who cannot see
  * purchase prices (a clerk). No price, subtotal, freight or tax is drawn or
@@ -31,37 +23,26 @@ function unitChoices(item: BillLineItem, opts: ProductUnitOption[] | undefined):
  */
 export function PurchaseDraftLines({ items, onChange, readOnly = false }: Props) {
   const tenantId = useTenantId()
-  const [unitOptions, setUnitOptions] = useState<Record<string, ProductUnitOption[]>>({})
-  const requestedUnits = useRef(new Set<string>())
+  const { forLine, baseOf, remember } = useBillUnits(
+    items.map((it) => it.product_id),
+    tenantId,
+    !readOnly
+  )
+  const unitKey = items.map((it) => `${it.product_id}:${it.unit_id ?? ""}`).join("|")
 
-  const productKey = items.map((it) => it.product_id).filter(Boolean).join(",")
-  useEffect(() => {
-    if (readOnly) return
-    for (const pid of Array.from(new Set(productKey.split(",").filter(Boolean)))) {
-      if (requestedUnits.current.has(pid)) continue
-      requestedUnits.current.add(pid)
-      listProductUnits(pid, { tenantId }).then(
-        (opts) => setUnitOptions((prev) => ({ ...prev, [pid]: opts })),
-        () => {
-          requestedUnits.current.delete(pid)
-        }
-      )
-    }
-  }, [productKey, readOnly, tenantId])
-
-  // A line without a unit starts on its product's base unit once the list is known.
+  // A line without a unit starts on its product's base unit once that list is known.
   useEffect(() => {
     if (readOnly) return
     let changed = false
     const next = items.map((it) => {
       if (it.unit_id || !it.product_id) return it
-      const base = unitOptions[it.product_id]?.find((o) => o.is_base)
+      const base = baseOf(it.product_id)
       if (!base) return it
       changed = true
       return { ...it, unit_id: base.id, unit_name: base.name }
     })
     if (changed) onChange(next)
-  }, [items, unitOptions, readOnly, onChange])
+  }, [unitKey, items, readOnly, onChange, baseOf])
 
   const addRow = useCallback(() => {
     onChange([...items, { product_id: "", qty: "1", unit_price: "0", line_no: items.length + 1 }])
@@ -88,7 +69,9 @@ export function PurchaseDraftLines({ items, onChange, readOnly = false }: Props)
             </tr>
           </thead>
           <tbody className="divide-y divide-border">
-            {items.map((item, idx) => (
+            {items.map((item, idx) => {
+              const line = forLine(item.product_id, { id: item.unit_id, name: item.unit_name })
+              return (
               <tr key={idx} className="hover:bg-muted/20">
                 <td className="px-3 py-2 text-muted-foreground">{idx + 1}</td>
                 <td className="px-3 py-2">
@@ -108,22 +91,18 @@ export function PurchaseDraftLines({ items, onChange, readOnly = false }: Props)
                   {readOnly ? (
                     <span>{item.unit_name || "—"}</span>
                   ) : (
-                    <select
+                    <LineUnitSelect
                       className={CONTROL}
-                      aria-label="单位"
-                      value={item.unit_id ?? ""}
-                      onChange={(e) => {
-                        const u = unitChoices(item, unitOptions[item.product_id]).find((x) => x.id === e.target.value)
-                        updateRow(idx, { unit_id: e.target.value, unit_name: u?.name })
+                      value={item.unit_id}
+                      options={line.options}
+                      ready={line.ready}
+                      failed={line.failed}
+                      onChange={(uid) => {
+                        const u = line.options.find((x) => x.id === uid)
+                        updateRow(idx, { unit_id: uid, unit_name: u?.name })
+                        if (item.product_id) remember(item.product_id, uid, line.fromCatalog)
                       }}
-                    >
-                      <option value="">—</option>
-                      {unitChoices(item, unitOptions[item.product_id]).map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   )}
                 </td>
                 <td className="px-3 py-2">
@@ -150,7 +129,8 @@ export function PurchaseDraftLines({ items, onChange, readOnly = false }: Props)
                   </td>
                 )}
               </tr>
-            ))}
+              )
+            })}
             {items.length === 0 && (
               <tr>
                 <td colSpan={readOnly ? 4 : 5} className="px-3 py-6 text-center text-sm text-muted-foreground">

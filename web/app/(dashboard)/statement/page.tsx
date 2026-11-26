@@ -71,7 +71,7 @@ function StatementContent() {
     <PageContainer width="wide">
       <PageHeader
         title={<span data-testid="page-title">{st ? `${st.partner_name} 对账单` : "对账单"}</span>}
-        subtitle={ar ? "客户的发货、退货、收款和欠款" : "供应商的进货、付款和欠款"}
+        subtitle={ar ? "客户的发货、退货、收款和欠款。发货是已审核的销售，和已开票不是同一笔账。" : "供应商的进货、付款和欠款。进货是已审核的入库，和供应商发票不是同一笔账。"}
         actions={
           partnerId && st ? (
             <div className="flex items-center gap-3 text-sm">

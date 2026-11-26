@@ -122,6 +122,8 @@ func validationMsg(err error) string {
 		return "数量要填大于 0 的数字"
 	case strings.Contains(s, "item unit_price"):
 		return "单价要填不小于 0 的数字"
+	case strings.Contains(s, "sale source"):
+		return "这行商品对不上进货单上的货，请从进货单重新开销售单"
 	case strings.Contains(s, "discount_amount exceeds"):
 		return "优惠金额不能超过商品合计"
 	case strings.Contains(s, "discount_amount must"):

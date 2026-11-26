@@ -40,6 +40,8 @@ func New(db *sql.DB) *Repo {
 
 // Ensure Repo satisfies the interface at compile time.
 var _ appbill.BillRepo = (*Repo)(nil)
+var _ appbill.ReceiptLedger = (*Repo)(nil)
+var _ appbill.SupplyReader = (*Repo)(nil)
 
 // ----- Transaction boundary -----
 
@@ -583,14 +585,7 @@ func buildListWhere(f appbill.BillListFilter) (string, []any, int) {
 	case "open": // net of sales returns on the sale side, same rule as the receivables summary
 		where = append(where, netTotalExpr(f)+" > b.paid_amount")
 	}
-	switch f.InvoiceStatus {
-	case domain.InvoiceNone:
-		where = append(where, invoicedExpr+" <= 0")
-	case domain.InvoicePartial:
-		where = append(where, invoicedExpr+" > 0 AND "+invoicedExpr+" < TRUNC(b.total_amount, 2)")
-	case domain.InvoiceFull:
-		where = append(where, invoicedExpr+" > 0 AND "+invoicedExpr+" >= TRUNC(b.total_amount, 2)")
-	}
+	where = appendInvoiceWhere(where, f.InvoiceStatus, "TRUNC("+netTotalExpr(f)+", 2)")
 	if f.PartnerID != nil {
 		where = append(where, fmt.Sprintf("b.partner_id = $%d", idx))
 		args = append(args, *f.PartnerID)

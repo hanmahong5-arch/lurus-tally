@@ -30,6 +30,7 @@ func New(db *sql.DB) *Repo {
 
 // Ensure Repo satisfies the interface at compile time.
 var _ apppayment.PaymentRepo = (*Repo)(nil)
+var _ apppayment.MoneyStore = (*Repo)(nil)
 
 // ----- Transaction boundary -----
 

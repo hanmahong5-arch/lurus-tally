@@ -120,6 +120,15 @@ function payload(url: string): unknown {
       total: { ...zero, partner_id: null, partner_name: "合计", unpaid: "100" },
     }
   }
+  if (p.endsWith("/money-lines")) {
+    return {
+      items: [{
+        id: "m-1", channel: "alipay", booked_at: "2026-10-01T02:00:00Z", amount: "10.00",
+        counterparty: "老王", memo: "", external_id: "e1", suggested: true,
+        candidates: [{ bill_id: "b-1", bill_no: "SL-1", partner_name: "老王", outstanding: "10.00", direction: "ar" }],
+      }],
+    }
+  }
   if (p.endsWith("/statement")) {
     return {
       direction: "ar", partner_id: "x-1", partner_name: "测试", from: "2026-10-01", to: "2026-10-10",
@@ -283,7 +292,20 @@ const PAGES: PageCase[] = [
     ],
   },
   { name: "付款与对账", load: () => import("../app/(dashboard)/payments/page"), controls: [] },
+  {
+    name: "流水",
+    load: () => import("../app/(dashboard)/money/page"),
+    controls: [{ text: "记到这张单", perm: "payment.record" }],
+  },
   { name: "发票", load: () => import("../app/(dashboard)/invoices/page"), controls: [] },
+  {
+    name: "待核对",
+    load: () => import("../app/(dashboard)/intake/page"),
+    controls: [
+      { text: "确认", perm: "intake.accept" },
+      { text: "不是这张", perm: "intake.accept" },
+    ],
+  },
   { name: "对账单", load: () => import("../app/(dashboard)/statement/page"), query: "partner=x-1", controls: [] },
   {
     name: "打印设置",

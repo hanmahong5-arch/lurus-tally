@@ -1,6 +1,6 @@
 import Link from "next/link"
 import { redirect } from "next/navigation"
-import { auth } from "@/auth"
+import { auth, devBackendHeaders } from "@/auth"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { Badge } from "@/components/ui/badge"
@@ -30,7 +30,8 @@ function focusRows(s: TodoSummary, can: (p: Perm) => boolean): FocusRow[] {
     { key: "draft_sales", label: "张销售单等你审核", count: s.draft_sales.count, href: "/sales?status=0&range=all", action: "去审核", perm: "bill.approve" },
     { key: "draft_purchases", label: "张采购单等你审核", count: s.draft_purchases.count, href: "/purchases?status=0&range=all", action: "去审核", perm: "bill.approve" },
     { key: "overdue", label: "位客户欠款超过 30 天", count: s.overdue_customers.count, href: "/customers", action: "去收款", perm: "payment.record" },
-    { key: "uninvoiced", label: "张销售单还没开足发票", count: s.uninvoiced_sales.count, href: "/sales?inv=none&range=all", action: "去开票", perm: "invoice.manage" },
+    { key: "uninvoiced", label: "张已发货的销售单发票还没开齐", count: s.uninvoiced_sales.count, href: "/sales?inv=open&range=all", action: "去开票", perm: "invoice.manage" },
+    { key: "uninvoiced_purchases", label: "张已入库的进货单供应商发票还没开齐", count: s.uninvoiced_purchases?.count ?? 0, href: "/purchases?status=2&inv=open&range=all", action: "登记发票", perm: "invoice.manage" },
     { key: "low_stock", label: "个商品库存偏低", count: s.low_stock.count, href: "/replenish", action: "去补货", perm: "replenish.view" },
   ]
   return rows.filter((r) => r.count > 0 && can(r.perm))
@@ -72,9 +73,10 @@ export default async function DashboardPage({
 
   // Fetch dashboard widget data server-side; degrade gracefully on failure.
   const accessToken = session?.accessToken ?? ""
+  const devHeaders = accessToken ? undefined : devBackendHeaders(session)
   const [todo, weeklySummary] = await Promise.all([
-    fetchTodoSummary(accessToken),
-    accessToken && can("report.view") ? fetchWeeklySummary(accessToken) : Promise.resolve(null),
+    fetchTodoSummary(accessToken, devHeaders),
+    (accessToken || devHeaders) && can("report.view") ? fetchWeeklySummary(accessToken, devHeaders) : Promise.resolve(null),
   ])
 
   const kpisOk = !!todo && !todo.failed.includes(TODO_SOURCE_KPIS)
@@ -84,7 +86,7 @@ export default async function DashboardPage({
     { label: "今日销售", value: kpi(todo?.kpis.today_sales), href: "/sales?range=today&status=2", perm: "bill.read" as Perm },
     { label: "今日回款", value: kpi(todo?.kpis.today_collected), href: "/payments", perm: "payment.read" as Perm },
     { label: "应收未收", value: kpi(todo?.kpis.receivable_unpaid), href: "/customers", perm: "payment.read" as Perm },
-    { label: "本月未开票", value: kpi(todo?.kpis.month_uninvoiced), href: "/sales?inv=none&range=this_month", perm: "payment.read" as Perm },
+    { label: "本月未开票", value: kpi(todo?.kpis.month_uninvoiced), href: "/sales?inv=open&range=this_month", perm: "payment.read" as Perm },
   ].filter((c) => can(c.perm))
 
   const rows = todo ? focusRows(todo, can) : []

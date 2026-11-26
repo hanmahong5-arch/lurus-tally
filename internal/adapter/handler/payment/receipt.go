@@ -16,6 +16,7 @@ import (
 
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/middleware"
 	apppayment "github.com/hanmahong5-arch/lurus-tally/internal/app/payment"
+	domainpayment "github.com/hanmahong5-arch/lurus-tally/internal/domain/payment"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/decimalutil"
 	"github.com/hanmahong5-arch/lurus-tally/internal/pkg/httperr"
 )
@@ -210,6 +211,31 @@ func writeStatementCSV(c *gin.Context, st *apppayment.Statement) {
 	}
 	_ = w.Write([]string{"期末欠款", st.Closing.StringFixed(2)})
 	w.Flush()
+}
+
+func writeMoneyError(c *gin.Context, err error) {
+	var parseErr *domainpayment.ParseError
+	var exceeds *apppayment.ExceedsOutstandingError
+	switch {
+	case errors.As(err, &parseErr):
+		c.JSON(http.StatusBadRequest, errResp("validation_error", parseErr.Msg, ""))
+	case errors.Is(err, domainpayment.ErrMoneyFormat), errors.Is(err, domainpayment.ErrMoneyEmpty), errors.Is(err, domainpayment.ErrMoneyAccount):
+		c.JSON(http.StatusBadRequest, errResp("validation_error", err.Error(), ""))
+	case errors.Is(err, domainpayment.ErrMoneyLine):
+		c.JSON(http.StatusNotFound, errResp("money_line_not_found", err.Error(), ""))
+	case errors.Is(err, domainpayment.ErrMoneyBill):
+		c.JSON(http.StatusUnprocessableEntity, errResp("money_bill", err.Error(), ""))
+	case errors.Is(err, domainpayment.ErrMoneyDirection), errors.Is(err, domainpayment.ErrMoneyClosed), errors.Is(err, domainpayment.ErrMoneyTaken):
+		c.JSON(http.StatusUnprocessableEntity, errResp("money_line", err.Error(), ""))
+	case errors.Is(err, apppayment.ErrBillNotApproved):
+		c.JSON(http.StatusUnprocessableEntity, errResp("bill_not_approved", "单据还没有审核，不能登记收付款", ""))
+	case errors.Is(err, apppayment.ErrBillNotPayable):
+		c.JSON(http.StatusUnprocessableEntity, errResp("bill_not_payable", "采购退货单不需要付款，请在原采购单上处理", ""))
+	case errors.As(err, &exceeds):
+		c.JSON(http.StatusUnprocessableEntity, errResp("payment_exceeds_outstanding", exceeds.Error(), ""))
+	default:
+		httperr.WriteInternal(c, err)
+	}
 }
 
 func writeReceiptError(c *gin.Context, err error) {

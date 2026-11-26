@@ -27,6 +27,7 @@ describe("StatementTable", () => {
     render(<StatementTable st={base} />)
     expect(screen.getByText("退款")).toBeInTheDocument()
     expect(screen.getByText("发货")).toBeInTheDocument()
+    expect(screen.getByText(/不是发票金额/)).toBeInTheDocument()
     expect(screen.getByText("-¥50.00")).toBeInTheDocument()
     expect(screen.queryByText("其他调整")).not.toBeInTheDocument()
   })

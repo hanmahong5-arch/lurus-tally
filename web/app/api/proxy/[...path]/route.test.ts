@@ -42,6 +42,19 @@ describe("proxy route", () => {
     expect(res.headers.get("content-disposition")).toBe('attachment; filename="bills-20261010.csv"')
   })
 
+  it("forwards photo bytes without turning them into text", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 201 }))
+    vi.stubGlobal("fetch", fetchMock)
+    const req = new NextRequest("http://localhost/api/proxy/intake", {
+      method: "POST",
+      headers: { "content-type": "application/octet-stream" },
+      body: new Uint8Array([255, 0, 65]),
+    })
+    await POST(req, { params: Promise.resolve({ path: ["intake"] }) })
+    const init = fetchMock.mock.calls[0][1] as RequestInit
+    expect(new Uint8Array(init.body as ArrayBuffer)).toEqual(new Uint8Array([255, 0, 65]))
+  })
+
   it("passes X-Request-Id through so web_error reports can carry it", async () => {
     const fetchMock = vi.fn().mockResolvedValue(
       new Response("{}", { status: 500, headers: { "content-type": "application/json", "x-request-id": "req-abc" } }),

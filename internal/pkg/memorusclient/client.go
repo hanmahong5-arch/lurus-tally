@@ -1,5 +1,5 @@
 // Package memorusclient provides an HTTP client wrapper for the memorus memory
-// engine (http://memorus.lurus-system.svc:8880).
+// engine (http://memorus-r.lurus-system.svc:8880/api/v1).
 //
 // Degraded-mode design: when BaseURL or APIKey is empty, New returns (nil, nil).
 // All methods panic if called on a nil receiver — callers must guard with
@@ -52,7 +52,7 @@ func IsUnavailable(err error) bool {
 // Config holds the construction parameters for Client.
 type Config struct {
 	// BaseURL is the base URL of memorus and MUST include the "/api/v1" prefix,
-	// e.g. "http://memorus.lurus-system.svc:8880/api/v1" — every call below does
+	// e.g. "http://memorus-r.lurus-system.svc:8880/api/v1" — every call below does
 	// baseURL+"/memories", while the server nests those routes under /api/v1
 	// (memorus-server/src/rest/mod.rs: Router::new().nest("/api/v1", api)).
 	// Omitting the prefix yields 404 on every call, and the failure is quiet:
@@ -256,7 +256,7 @@ func classifyStatus(code int) error {
 }
 
 // warnIfBaseURLLooksPrefixless shouts at startup when BaseURL carries no path
-// at all, e.g. "http://memorus:8880".
+// at all, e.g. "http://memorus-r.lurus-system.svc:8880".
 //
 // Why a log and not an error: every call here does baseURL+"/memories" while
 // the server nests those routes under /api/v1, so a prefixless base means

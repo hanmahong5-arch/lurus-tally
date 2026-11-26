@@ -13,6 +13,7 @@ import {
   ShoppingCartIcon,
   TrendingUpIcon,
   CreditCardIcon,
+  LandmarkIcon,
   ReceiptIcon,
   LineChartIcon,
   FactoryIcon,
@@ -26,18 +27,19 @@ import {
   FolderKanbanIcon,
   PrinterIcon,
   MonitorIcon,
-  BookOpenIcon,
-  LifeBuoyIcon,
   UserPlusIcon,
   HistoryIcon,
+  CameraIcon,
   type LucideIcon,
 } from "lucide-react"
 import { useProfile } from "@/lib/profile"
 import { useRole, type Perm } from "@/hooks/use-role"
 import { getTodoSummary } from "@/lib/api/todo"
+import { useIntakeCount } from "@/hooks/use-intake-count"
 import { CashierModeControl, CashierModeRedirect, useCashierMode } from "@/components/cashier-mode-gate"
 
 import { AccountCard } from "@/components/account/account-card"
+import { SupportLinks } from "./sidebar-support"
 
 interface NavItem {
   href: string
@@ -55,6 +57,8 @@ interface NavItem {
   anyPerm?: Perm[]
   /** Pending-item count shown as a red dot with a number; hidden when 0. */
   count?: number
+  /** Spoken label for the count, so a badge is not always called 待办. */
+  countLabel?: string
 }
 
 interface NavSection {
@@ -75,6 +79,7 @@ const SECTIONS: NavSection[] = [
       { href: "/dashboard", label: "仪表盘", icon: LayoutDashboardIcon },
       { href: "/ai", label: "AI 助手", icon: SparklesIcon, needsAI: true, perm: "ai.use" },
       { href: "/todo", label: "待办", icon: BellIcon },
+      { href: "/intake", label: "待核对", icon: CameraIcon, perm: "intake.capture", countLabel: "张待核对" },
     ],
   },
   {
@@ -86,6 +91,7 @@ const SECTIONS: NavSection[] = [
       { href: "/purchases", label: "采购", icon: ShoppingCartIcon, anyPerm: ["cost.view", "bill.draft"] },
       { href: "/sales", label: "销售", icon: TrendingUpIcon },
       { href: "/payments", label: "收付款", icon: CreditCardIcon, perm: "payment.read" },
+      { href: "/money", label: "流水", icon: LandmarkIcon, perm: "payment.read" },
       { href: "/invoices", label: "发票", icon: ReceiptIcon, perm: "payment.read" },
       { href: "/reports", label: "报表", icon: LineChartIcon, perm: "report.view" },
     ],
@@ -149,7 +155,7 @@ function NavLink({ item, active, count }: { item: NavItem; active: boolean; coun
       {count !== undefined && count > 0 && (
         <span
           className="min-w-[1.25rem] rounded-full bg-destructive px-1.5 py-0.5 text-center text-[10px] font-semibold leading-none text-white"
-          aria-label={`${count} 项待办`}
+          aria-label={`${count} ${item.countLabel ?? "项待办"}`}
         >
           {count > 99 ? "99+" : count}
         </span>
@@ -198,6 +204,7 @@ function NavLinks() {
   const { enabled: cashierMode } = useCashierMode(true)
   // Until the session has told us the role nothing is hidden (the backend still decides).
   const { known, can } = useRole()
+  const intakeCountN = useIntakeCount(known && can("intake.capture"), pathname)
   const sections = filterSections(SECTIONS, profileType ?? "", aiEnabled, (perm) => !known || can(perm))
 
   // Not read back yet: show nothing rather than flash the full menu to a cashier.
@@ -250,7 +257,7 @@ function NavLinks() {
               key={item.href}
               item={item}
               active={isActive(pathname, item.href)}
-              count={item.href === "/todo" ? todoCount : undefined}
+              count={item.href === "/todo" ? todoCount : item.href === "/intake" ? intakeCountN : undefined}
             />
           ))
           if (section.collapsible) {
@@ -280,32 +287,6 @@ function NavLinks() {
         })}
       </nav>
     </>
-  )
-}
-
-/**
- * SupportLinks — help footer under the AccountCard. Deliberately the quietest
- * thing in the sidebar (11px, muted, no icons larger than the text): it must be
- * findable when a user is stuck and invisible the rest of the time.
- *
- * Both targets are external, so plain <a> rather than next/link.
- * `支持` uses support@lurus.cn, matching the existing www-next contact
- * (src/app/pricing/faq.tsx).
- */
-function SupportLinks() {
-  const linkCls =
-    "inline-flex items-center gap-1 rounded-sm transition-colors hover:text-foreground focus:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-  return (
-    <div className="flex items-center gap-3 px-3 pb-0.5 text-[11px] text-muted-foreground">
-      <a href="https://docs.lurus.cn" target="_blank" rel="noreferrer" className={linkCls}>
-        <BookOpenIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-        文档
-      </a>
-      <a href="mailto:support@lurus.cn" className={linkCls}>
-        <LifeBuoyIcon className="h-3 w-3 shrink-0" aria-hidden="true" />
-        支持
-      </a>
-    </div>
   )
 }
 

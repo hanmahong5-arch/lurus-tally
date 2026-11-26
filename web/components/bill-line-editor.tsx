@@ -1,13 +1,14 @@
 "use client"
 
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect } from "react"
 import { lineCents, roundCents } from "@/lib/cents"
 import type { BillLineItemInput } from "@/lib/api/purchase"
 import { ProductPicker } from "@/components/entity-pickers"
+import { LineUnitSelect } from "@/components/line-unit-select"
 import { useTenantId } from "@/hooks/use-tenant-id"
+import { useBillUnits } from "@/hooks/use-bill-units"
 import { useLastPriceFill, type LastPriceLine } from "@/hooks/use-last-price-fill"
 import { LastPriceHint, LineNumberInput, MobileOp, RemoveLineButton, lineInputClass } from "@/components/line-fields"
-import { listProductUnits, type ProductUnitOption } from "@/lib/api/product-units"
 
 export interface BillLineItem extends BillLineItemInput, Omit<LastPriceLine, keyof BillLineItemInput> {
   // Runtime-only: computed subtotal (not sent to server — server recalculates)
@@ -41,15 +42,6 @@ function computeSubtotal(qty: string, unitPrice: string): string {
   return lineCents(parseFloat(qty) || 0, parseFloat(unitPrice) || 0).toFixed(2)
 }
 
-/** The product's units; a unit already on the line stays selectable so it never disappears. */
-function unitChoices(item: BillLineItem, opts: ProductUnitOption[] | undefined): { id: string; name: string }[] {
-  const list: { id: string; name: string }[] = (opts ?? []).map((o) => ({ id: o.id, name: o.name }))
-  if (item.unit_id && !list.some((o) => o.id === item.unit_id)) {
-    list.unshift({ id: item.unit_id, name: item.unit_name || "当前单位" })
-  }
-  return list
-}
-
 function sumSubtotals(items: BillLineItem[]): string {
   const total = items.reduce((acc, it) => {
     return acc + (parseFloat(it._subtotal ?? "0") || 0)
@@ -74,37 +66,23 @@ export function BillLineEditor({
 }: Props) {
   const tenantId = useTenantId()
   const { fill: fillLastPrices, patchProduct } = useLastPriceFill(items, onChange, partnerId, "purchase", tenantId, !readOnly, true)
+  const { forLine, baseOf, remember } = useBillUnits(
+    items.map((it) => it.product_id),
+    tenantId,
+    !readOnly
+  )
+  const unitKey = items.map((it) => `${it.product_id}:${it.unit_id ?? ""}`).join("|")
 
-  // Units per product: a line may only be billed in a unit the product can convert.
-  const [unitOptions, setUnitOptions] = useState<Record<string, ProductUnitOption[]>>({})
-  const requestedUnits = useRef(new Set<string>())
-
-  const productKey = items.map((it) => it.product_id).filter(Boolean).join(",")
+  // A line with no unit yet starts on the product's base unit. A product with no units
+  // of its own stays blank until someone picks one from the catalogue.
   useEffect(() => {
     if (readOnly) return
-    for (const pid of Array.from(new Set(productKey.split(",").filter(Boolean)))) {
-      if (requestedUnits.current.has(pid)) continue
-      requestedUnits.current.add(pid)
-      listProductUnits(pid, { tenantId }).then(
-        (opts) => setUnitOptions((prev) => ({ ...prev, [pid]: opts })),
-        () => {
-          // Allow a retry the next time the line set changes.
-          requestedUnits.current.delete(pid)
-        }
-      )
-    }
-  }, [productKey, readOnly, tenantId])
-
-  // Lines still without a unit start on their product's base unit, whenever the unit
-  // list is known: a re-picked product or a second line of the same product included.
-  useEffect(() => {
-    if (readOnly) return
-    for (const pid of Array.from(new Set(productKey.split(",").filter(Boolean)))) {
-      const base = unitOptions[pid]?.find((o) => o.is_base)
+    for (const pid of Array.from(new Set(unitKey.split("|").map((p) => p.split(":")[0]).filter(Boolean)))) {
+      const base = baseOf(pid)
       if (!base) continue
       patchProduct(pid, (it) => (it.unit_id ? null : { ...it, unit_id: base.id, unit_name: base.name }))
     }
-  }, [items, productKey, unitOptions, readOnly, patchProduct])
+  }, [unitKey, readOnly, patchProduct, baseOf])
 
   const addRow = useCallback(() => {
     onChange([
@@ -162,7 +140,9 @@ export function BillLineEditor({
             </tr>
           </thead>
           <tbody className="block divide-y divide-border md:table-row-group">
-            {items.map((item, idx) => (
+            {items.map((item, idx) => {
+              const line = forLine(item.product_id, { id: item.unit_id, name: item.unit_name })
+              return (
               <tr key={idx} className="flex flex-wrap items-start gap-x-2 gap-y-1 px-3 py-3 hover:bg-muted/20 md:table-row md:px-0 md:py-0">
                 <td className="hidden px-3 py-2 text-muted-foreground md:table-cell">{idx + 1}</td>
                 <td className="w-full px-0 py-0 md:table-cell md:w-auto md:px-3 md:py-2">
@@ -192,29 +172,23 @@ export function BillLineEditor({
                   {readOnly ? (
                     <span>{item.unit_name || "—"}</span>
                   ) : (
-                    <select
-                      className="w-full rounded-md border border-input bg-transparent px-2 py-1 text-base md:text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-                      value={item.unit_id ?? ""}
-                      onChange={(e) => {
-                        const uid = e.target.value
-                        const u = unitChoices(item, unitOptions[item.product_id]).find((u) => u.id === uid)
+                    <LineUnitSelect
+                      value={item.unit_id}
+                      options={line.options}
+                      ready={line.ready}
+                      failed={line.failed}
+                      onChange={(uid) => {
+                        const u = line.options.find((o) => o.id === uid)
                         const patch: Partial<BillLineItem> = { unit_id: uid, unit_name: u?.name }
-                        // An auto-filled price follows the unit: per-base price x the new unit's factor.
-                        const factor = parseFloat(unitOptions[item.product_id]?.find((o) => o.id === uid)?.conversion_factor ?? "")
+                        const factor = parseFloat(u?.conversion_factor ?? "")
                         const base = parseFloat(item._last_price?.base_value ?? "")
                         if (!item._price_touched && factor > 0 && base >= 0) {
                           patch.unit_price = (base * factor).toFixed(2)
                         }
                         updateRow(idx, patch)
+                        if (item.product_id) remember(item.product_id, uid, line.fromCatalog)
                       }}
-                    >
-                      <option value="">—</option>
-                      {unitChoices(item, unitOptions[item.product_id]).map((u) => (
-                        <option key={u.id} value={u.id}>
-                          {u.name}
-                        </option>
-                      ))}
-                    </select>
+                    />
                   )}
                 </td>
                 <td className="w-24 px-0 py-0 md:table-cell md:w-auto md:px-3 md:py-2">
@@ -251,7 +225,8 @@ export function BillLineEditor({
                   </td>
                 )}
               </tr>
-            ))}
+              )
+            })}
             {items.length === 0 && (
               <tr className="block md:table-row">
                 <td

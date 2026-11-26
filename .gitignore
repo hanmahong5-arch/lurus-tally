@@ -38,6 +38,9 @@ vendor/
 # Test cache
 /tmp/
 
+# Local intake originals (INTAKE_BLOB_DIR default)
+/data/
+
 # Frontend build artifacts
 web/.next/
 web/node_modules/

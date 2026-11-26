@@ -36,6 +36,9 @@ export function StatementTable({ st, cellClass = "px-3 py-1.5" }: { st: Statemen
           </div>
         ))}
       </div>
+      <p className="text-xs text-muted-foreground">
+        {ar ? "本期发货" : "本期进货"}按已审核的货单计欠款，不是发票金额。还没点收的在途单不在这里；票和货对不上时，到待办里分别催。
+      </p>
       <table className="w-full border-collapse text-sm">
         <thead>
           <tr className="border-b border-border text-left text-muted-foreground">

@@ -106,13 +106,14 @@ func (h *SaleHandler) RegisterRoutes(rg *gin.RouterGroup) {
 // ----- request / response types -----
 
 type saleItemInput struct {
-	ProductID   string `json:"product_id"`
-	WarehouseID string `json:"warehouse_id,omitempty"`
-	UnitID      string `json:"unit_id,omitempty"    binding:"max=128"`
-	UnitName    string `json:"unit_name,omitempty"  binding:"max=128"`
-	LineNo      int    `json:"line_no"`
-	Qty         string `json:"qty"`
-	UnitPrice   string `json:"unit_price"`
+	ProductID    string `json:"product_id"`
+	WarehouseID  string `json:"warehouse_id,omitempty"`
+	UnitID       string `json:"unit_id,omitempty"    binding:"max=128"`
+	UnitName     string `json:"unit_name,omitempty"  binding:"max=128"`
+	LineNo       int    `json:"line_no"`
+	Qty          string `json:"qty"`
+	UnitPrice    string `json:"unit_price"`
+	SourceItemID string `json:"source_item_id,omitempty"`
 }
 
 type createSaleRequest struct {
@@ -294,6 +295,9 @@ func (h *SaleHandler) Approve(c *gin.Context) {
 		PaidAmount: paidAmount,
 		PayType:    req.PaymentMethod,
 	}); err != nil {
+		if writeBatchDrawError(c, err) {
+			return
+		}
 		if errors.Is(err, appbill.ErrBillNotFound) {
 			c.JSON(http.StatusNotFound, errResp("bill_not_found", msgSaleGone, ""))
 			return
@@ -558,37 +562,11 @@ func (h *SaleHandler) Get(c *gin.Context) {
 		"payments":          payments,
 		"receivable_amount": head.ReceivableAmount().String(),
 	}
-	if h.returnUC != nil {
-		sum, err := h.returnUC.Summary(c.Request.Context(), tenantID, head, items)
-		if err != nil {
-			httperr.WriteInternal(c, err)
-			return
-		}
-		lines := make([]saleDetailItem, len(items))
-		for i, it := range items {
-			lines[i] = saleDetailItem{BillItem: it, ReturnedQty: sum.ReturnedQty[it.ID].String()}
-		}
-		resp["items"] = lines
-		applyReturnFigures(resp, head, sum.ReturnedAmount)
+	if err := attachSaleSupply(c, resp, h.billRepo, h.returnUC, tenantID, billID, head, items); err != nil {
+		httperr.WriteInternal(c, err)
+		return
 	}
 	c.JSON(http.StatusOK, resp)
-}
-
-// saleDetailItem is a sale line plus how much of it has come back.
-type saleDetailItem struct {
-	*domain.BillItem
-	ReturnedQty string `json:"returned_qty"`
-}
-
-// applyReturnFigures adds the money side of returns to a sale detail response. Goods the
-// customer sent back reduce what they owe (receivable_amount is the net figure); money
-// they had already paid beyond the reduced total becomes refund_due_amount, owed back to
-// them and not paid out by the system (see docs/plans/2026-10-10-return-receivable-decision.md).
-func applyReturnFigures(resp gin.H, head *domain.BillHead, returned decimal.Decimal) {
-	netTotal := decimal.Max(head.TotalAmount.Sub(returned), decimal.Zero)
-	resp["returned_amount"] = returned.String()
-	resp["receivable_amount"] = decimal.Max(netTotal.Sub(head.PaidAmount), decimal.Zero).String()
-	resp["refund_due_amount"] = decimal.Max(head.PaidAmount.Sub(netTotal), decimal.Zero).String()
 }
 
 // QuickCheckout handles POST /api/v1/sale-bills/quick-checkout
@@ -693,6 +671,9 @@ func (h *SaleHandler) QuickCheckout(c *gin.Context) {
 				"id":      dup.BillID,
 				"bill_no": dup.BillNo,
 			})
+			return
+		}
+		if writeBatchDrawError(c, err) {
 			return
 		}
 		if errors.Is(err, appbill.ErrInvalidPayMethod) {
@@ -872,14 +853,22 @@ func parseSaleItems(raw []saleItemInput) ([]appbill.SaleItem, error) {
 		if lineNo <= 0 {
 			lineNo = i + 1
 		}
+		var source uuid.UUID
+		if it.SourceItemID != "" {
+			source, err = uuid.Parse(it.SourceItemID)
+			if err != nil {
+				return nil, errWithField("items["+strconv.Itoa(i)+"].source_item_id", "must be a valid UUID")
+			}
+		}
 		items = append(items, appbill.SaleItem{
-			ProductID:   productID,
-			WarehouseID: warehouseID,
-			UnitID:      unitID,
-			UnitName:    it.UnitName,
-			LineNo:      lineNo,
-			Qty:         qty,
-			UnitPrice:   unitPrice,
+			ProductID:    productID,
+			WarehouseID:  warehouseID,
+			UnitID:       unitID,
+			UnitName:     it.UnitName,
+			LineNo:       lineNo,
+			Qty:          qty,
+			UnitPrice:    unitPrice,
+			SourceItemID: source,
 		})
 	}
 	return items, nil

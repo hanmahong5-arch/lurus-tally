@@ -21,6 +21,8 @@ export type Perm =
   | "cost.view"
   | "customer.write"
   | "export.stock"
+  | "intake.accept"
+  | "intake.capture"
   | "invoice.manage"
   | "payment.read"
   | "payment.record"
@@ -40,19 +42,19 @@ const ROLES: readonly ShopRole[] = ["owner", "manager", "clerk", "cashier", "fin
 /** Mirrors the backend table; roles.test.ts checks it against testdata/matrix.json. */
 export const ROLE_PERMS: Record<ShopRole, readonly Perm[]> = {
   owner: [
-    "ai.execute", "ai.use", "audit.view", "bill.approve", "bill.cancel", "bill.checkout", "bill.draft", "bill.read", "bill.return", "bill.return.own", "billing.manage", "catalog.write", "cost.view", "customer.write", "export.stock", "invoice.manage", "payment.read", "payment.record", "print.receipt", "print.settings", "product.write", "purchase.view", "replenish.view", "report.view", "settings.manage", "stock.adjust", "team.manage", "token.manage",
+    "ai.execute", "ai.use", "audit.view", "bill.approve", "bill.cancel", "bill.checkout", "bill.draft", "bill.read", "bill.return", "bill.return.own", "billing.manage", "catalog.write", "cost.view", "customer.write", "export.stock", "intake.accept", "intake.capture", "invoice.manage", "payment.read", "payment.record", "print.receipt", "print.settings", "product.write", "purchase.view", "replenish.view", "report.view", "settings.manage", "stock.adjust", "team.manage", "token.manage",
   ],
   manager: [
-    "ai.execute", "ai.use", "audit.view", "bill.approve", "bill.cancel", "bill.checkout", "bill.draft", "bill.read", "bill.return", "bill.return.own", "catalog.write", "cost.view", "customer.write", "export.stock", "invoice.manage", "payment.read", "payment.record", "print.receipt", "print.settings", "product.write", "purchase.view", "replenish.view", "report.view", "settings.manage", "stock.adjust", "team.manage",
+    "ai.execute", "ai.use", "audit.view", "bill.approve", "bill.cancel", "bill.checkout", "bill.draft", "bill.read", "bill.return", "bill.return.own", "catalog.write", "cost.view", "customer.write", "export.stock", "intake.accept", "intake.capture", "invoice.manage", "payment.read", "payment.record", "print.receipt", "print.settings", "product.write", "purchase.view", "replenish.view", "report.view", "settings.manage", "stock.adjust", "team.manage",
   ],
   clerk: [
-    "ai.use", "bill.draft", "bill.read", "catalog.write", "customer.write", "export.stock", "print.receipt", "product.write", "purchase.view", "replenish.view", "stock.adjust",
+    "ai.use", "bill.draft", "bill.read", "catalog.write", "customer.write", "export.stock", "intake.capture", "print.receipt", "product.write", "purchase.view", "replenish.view", "stock.adjust",
   ],
   cashier: [
     "bill.checkout", "bill.read", "bill.return.own", "customer.write", "print.receipt",
   ],
   finance: [
-    "ai.use", "audit.view", "bill.read", "cost.view", "export.stock", "invoice.manage", "payment.read", "payment.record", "purchase.view", "replenish.view", "report.view",
+    "ai.use", "audit.view", "bill.read", "cost.view", "export.stock", "intake.accept", "intake.capture", "invoice.manage", "payment.read", "payment.record", "purchase.view", "replenish.view", "report.view",
   ],
 }
 

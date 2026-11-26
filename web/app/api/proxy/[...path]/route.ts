@@ -49,7 +49,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ path: string[] 
     cache: "no-store",
   }
   if (!["GET", "HEAD"].includes(req.method)) {
-    init.body = await req.text()
+    init.body = await req.arrayBuffer()
   }
 
   let upstream: Response

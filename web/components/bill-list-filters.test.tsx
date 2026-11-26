@@ -193,6 +193,13 @@ describe("invoice_status filter", () => {
     expect(toBillFilterParams(parseBillFilters(lastUrl().searchParams)).invoice_status).toBe("partial")
   })
 
+  it("writes 未开足 so partial bills stay on the list", () => {
+    render(<Harness kind="sale" />)
+    fireEvent.change(screen.getByLabelText("开票状态"), { target: { value: "open" } })
+    expect(lastUrl().searchParams.get("inv")).toBe("open")
+    expect(toBillFilterParams(parseBillFilters(lastUrl().searchParams)).invoice_status).toBe("open")
+  })
+
   it("restores 开票状态 from the URL and ignores junk", () => {
     query = "inv=full"
     const { unmount } = render(<Harness kind="sale" />)

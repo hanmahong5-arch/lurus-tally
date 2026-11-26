@@ -391,20 +391,20 @@ func NewApp(cfg *config.Config) (*App, error) {
 	// handler's router group (auth, tenant-DB, permission middleware) so router.New keeps its signature.
 	printUC := appprint.New(billRepo, stockRepo, appacct.NewGetPrintSettings(acctPrintRepo), cloudPrinter).
 		WithReceiptExtras(repopayment.New(db), repoteam.New(db))
-	stockHandler.WithExtraRoutes(handlerprint.New(printUC).RegisterRoutes)
+	stockHandler.WithExtraRoutes(handlerprint.New(printUC).RegisterRoutes).WithExtraRoutes(mountIntake(l, db, cfg))
 	paymentRepo := repopayment.New(db)
 	billHandler := handlerbill.New(
 		appbill.NewCreatePurchaseDraftUseCase(billRepo),
 		appbill.NewUpdatePurchaseDraftUseCase(billRepo).WithUnitRepo(unitRepo),
-		appbill.NewApprovePurchaseUseCase(billRepo, recordMovementUC, unitRepo).WithPayments(paymentRepo),
+		appbill.NewApprovePurchaseUseCase(billRepo, recordMovementUC, unitRepo).WithPayments(paymentRepo).WithBatches(billRepo),
 		appbill.NewCancelPurchaseUseCase(billRepo),
 		appbill.NewListPurchasesUseCase(billRepo),
 		appbill.NewGetPurchaseUseCase(billRepo),
 		appbill.NewRestorePurchaseUseCase(billRepo),
 	).WithReceivables(appbill.NewReceivablesUseCase(billRepo)).
-		WithPurchaseReturn(appbill.NewPurchaseReturnUseCase(billRepo, recordMovementUC).WithUnitRepo(unitRepo).WithPayments(paymentRepo)).
+		WithPurchaseReturn(appbill.NewPurchaseReturnUseCase(billRepo, recordMovementUC).WithUnitRepo(unitRepo).WithPayments(paymentRepo).WithBatches(billRepo)).
 		WithLastPrices(appbill.NewLastPricesUseCase(billRepo).WithDefaultPrices(skuRepo)).
-		WithProductNames(stockRepo) // names the products in a 422 zero_price_lines refusal
+		WithProductNames(stockRepo).WithSupply(billRepo)
 
 	// Wire currency use cases (Story 9.1: multi-currency + manual exchange rate entry).
 	currencyRepo := repocurrency.New(db)
@@ -416,7 +416,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	)
 
 	// Wire sale + payment use cases (Story 7.1: sales shipment + POS checkout).
-	approveSaleUC := appbill.NewApproveSaleUseCase(billRepo, recordMovementUC, unitRepo, paymentRepo)
+	approveSaleUC := appbill.NewApproveSaleUseCase(billRepo, recordMovementUC, unitRepo, paymentRepo).WithBatches(billRepo)
 	quickCheckoutUC := appbill.NewQuickCheckoutUseCase(billRepo, approveSaleUC)
 	recordPaymentUC := apppayment.NewRecordPaymentUseCase(billRepo, paymentRepo)
 	listPaymentsUC := apppayment.NewListPaymentsUseCase(paymentRepo)
@@ -424,7 +424,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	saleReturnUC := appbill.NewReturnSaleUseCase(
 		billRepo,
 		appbill.NewCreateReturnBillUseCase(billRepo).WithUnitRepo(unitRepo),
-		appbill.NewApproveReturnBillUseCase(billRepo, recordMovementUC).WithUnitRepo(unitRepo),
+		appbill.NewApproveReturnBillUseCase(billRepo, recordMovementUC).WithUnitRepo(unitRepo).WithBatches(billRepo),
 	).WithUnitRepo(unitRepo)
 	saleHandler := handlerbill.NewSaleHandler(
 		appbill.NewCreateSaleUseCase(billRepo),
@@ -437,7 +437,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	).WithReturn(saleReturnUC).WithRefunds(appbill.NewSaleRefundUseCase(billRepo, saleReturnUC, paymentRepo)).
 		WithMemberNames(repoteam.New(db))
 	paymentHandler := handlerpayment.New(recordPaymentUC, listPaymentsUC).
-		WithReceipts(apppayment.NewReceiptUseCase(billRepo, billRepo, paymentRepo), apppayment.NewStatementUseCase(billRepo))
+		WithReceipts(apppayment.NewReceiptUseCase(billRepo, billRepo, paymentRepo), apppayment.NewStatementUseCase(billRepo)).WithMoney(apppayment.NewMoneyUseCase(paymentRepo, billRepo, recordPaymentUC))
 
 	// Wire billing → platform integration. Uses the same platClient already
 	// built above for account provisioning. nil client → 501 on /billing/*.
@@ -888,7 +888,7 @@ func NewApp(cfg *config.Config) (*App, error) {
 	)
 	importUC.WithReturnHandlers(
 		importReturnCreator{uc: appbill.NewCreateReturnBillUseCase(billRepo).WithUnitRepo(unitRepo)},
-		importReturnApprover{uc: appbill.NewApproveReturnBillUseCase(billRepo, recordMovementUC).WithUnitRepo(unitRepo)},
+		importReturnApprover{uc: appbill.NewApproveReturnBillUseCase(billRepo, recordMovementUC).WithUnitRepo(unitRepo).WithBatches(billRepo)},
 	)
 	importHandler := handlerimporting.New(importUC, uuid.Nil)
 

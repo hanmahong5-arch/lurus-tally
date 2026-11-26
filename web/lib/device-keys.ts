@@ -13,3 +13,5 @@ export const SIGNOUT_FAILED_EVENT = "tally:signout-failed"
 export const DEVICE_ID_KEY = "tally:device-id"
 /** localStorage key of the monotonically increasing local checkout sequence of this device. */
 export const CHECKOUT_SEQ_KEY = "tally:checkout-seq"
+/** localStorage key of this device's intake upload sequence. Separate from checkout so the two queues do not share numbers. */
+export const INTAKE_SEQ_KEY = "tally:intake-seq"

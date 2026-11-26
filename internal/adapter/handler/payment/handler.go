@@ -2,6 +2,7 @@
 package payment
 
 import (
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"strings"
@@ -24,11 +25,17 @@ type Handler struct {
 
 	receiptUC   *apppayment.ReceiptUseCase
 	statementUC *apppayment.StatementUseCase
+	moneyUC     *apppayment.MoneyUseCase
 }
 
 // New creates a Handler.
 func New(recordUC *apppayment.RecordPaymentUseCase, listUC *apppayment.ListPaymentsUseCase) *Handler {
 	return &Handler{recordUC: recordUC, listUC: listUC}
+}
+
+func (h *Handler) WithMoney(uc *apppayment.MoneyUseCase) *Handler {
+	h.moneyUC = uc
+	return h
 }
 
 // RegisterRoutes mounts payment routes.
@@ -39,6 +46,12 @@ func (h *Handler) RegisterRoutes(rg *gin.RouterGroup) {
 		rg.GET("/receipts/preview", h.PreviewReceipt)
 		rg.POST("/receipts", h.CreateReceipt)
 		rg.GET("/partners/:id/statement", h.Statement)
+	}
+	if h.moneyUC != nil {
+		rg.POST("/money-lines", h.ImportMoney)
+		rg.GET("/money-lines", h.ListMoney)
+		rg.POST("/money-lines/:id/match", h.MatchMoney)
+		rg.POST("/money-lines/:id/ignore", h.IgnoreMoney)
 	}
 }
 
@@ -184,4 +197,99 @@ func resolveTenantID(c *gin.Context) uuid.UUID {
 // because clients could spoof payment.creator_id by setting it.
 func resolveCreatorID(c *gin.Context) uuid.UUID {
 	return middleware.ActorUUID(c)
+}
+
+const maxMoneyFile = 1_500_000
+
+func (h *Handler) ImportMoney(c *gin.Context) {
+	tenantID := resolveTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, errResp("unauthorized", "请先登录", ""))
+		return
+	}
+	var req struct {
+		FileBase64 string `json:"file_base64"`
+		AccountRef string `json:"account_ref"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || req.FileBase64 == "" {
+		c.JSON(http.StatusBadRequest, errResp("validation_error", "请上传账单文件", ""))
+		return
+	}
+	raw, err := base64.StdEncoding.DecodeString(req.FileBase64)
+	if err != nil || len(raw) == 0 || len(raw) > maxMoneyFile {
+		c.JSON(http.StatusBadRequest, errResp("validation_error", "账单文件无法读取，请按月份重新导出后再上传", ""))
+		return
+	}
+	channel, inserted, skipped, err := h.moneyUC.Import(c.Request.Context(), tenantID, req.AccountRef, raw)
+	if err != nil {
+		writeMoneyError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"channel": channel, "inserted": inserted, "skipped": skipped})
+}
+
+func (h *Handler) ListMoney(c *gin.Context) {
+	tenantID := resolveTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, errResp("unauthorized", "请先登录", ""))
+		return
+	}
+	items, err := h.moneyUC.List(c.Request.Context(), tenantID)
+	if err != nil {
+		httperr.WriteInternal(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"items": items})
+}
+
+func (h *Handler) MatchMoney(c *gin.Context) {
+	tenantID := resolveTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, errResp("unauthorized", "请先登录", ""))
+		return
+	}
+	lineID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errResp("validation_error", "这笔流水的编号不正确", ""))
+		return
+	}
+	var req struct {
+		BillID string `json:"bill_id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, errResp("validation_error", "请选择要记入的单据", ""))
+		return
+	}
+	billID, err := uuid.Parse(req.BillID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errResp("validation_error", "单据编号不正确", ""))
+		return
+	}
+	creatorID := resolveCreatorID(c)
+	if creatorID == uuid.Nil {
+		creatorID = tenantID
+	}
+	if err := h.moneyUC.Confirm(c.Request.Context(), tenantID, creatorID, lineID, billID); err != nil {
+		writeMoneyError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
+
+func (h *Handler) IgnoreMoney(c *gin.Context) {
+	tenantID := resolveTenantID(c)
+	if tenantID == uuid.Nil {
+		c.JSON(http.StatusUnauthorized, errResp("unauthorized", "请先登录", ""))
+		return
+	}
+	lineID, err := uuid.Parse(c.Param("id"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errResp("validation_error", "这笔流水的编号不正确", ""))
+		return
+	}
+	if err := h.moneyUC.Ignore(c.Request.Context(), tenantID, lineID); err != nil {
+		writeMoneyError(c, err)
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true})
 }

@@ -256,8 +256,8 @@ func TestParseSince_StartOfThePeriodNeverInTheFuture(t *testing.T) {
 	}
 }
 
-// A fact with `since` / `replaces` goes through AddWithOptions; a plain one
-// keeps going through Add.
+// Any remember_customer_fact write goes through AddWithOptions when the client
+// implements FactWriter (plain facts included).
 type optionsMemory struct {
 	recordingMemory
 	opts     []memorusclient.AddOptions
@@ -307,15 +307,18 @@ func TestRememberCustomerFact_SinceAndReplacesGoThroughAddWithOptions(t *testing
 		t.Errorf("tool result: %s", res)
 	}
 
-	// A single-valued slot ignores `replaces` and a plain fact still uses Add.
+	// A single-valued slot ignores `replaces`; a plain fact still uses AddWithOptions.
 	mc = &optionsMemory{}
 	o, reqs = factOrchestrator(t, []CustomerRef{{ID: zhangID, Name: "张三"}}, mc,
 		factCall(zhangPaysWeChat), llmclient.Message{Role: "assistant", Content: "记住了"})
 	if _, err := o.Chat(context.Background(), ChatInput{TenantID: uuid.New(), UserMessage: "张三以后改用微信付款"}); err != nil {
 		t.Fatal(err)
 	}
-	if mc.optsUsed != 0 || len(mc.settled()) != 1 {
-		t.Errorf("a plain fact must go through Add: optsUsed=%d writes=%d", mc.optsUsed, len(mc.settled()))
+	if mc.optsUsed != 1 || len(mc.writes) != 1 {
+		t.Errorf("a plain fact must go through AddWithOptions: optsUsed=%d writes=%d", mc.optsUsed, len(mc.writes))
+	}
+	if mc.opts[0].ValidFrom != nil || mc.opts[0].ReplacesValue != "" {
+		t.Errorf("plain fact should send empty extras: %+v", mc.opts[0])
 	}
 	_ = reqs
 }

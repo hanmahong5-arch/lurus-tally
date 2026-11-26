@@ -36,7 +36,8 @@ type Handler struct {
 	// purchaseReturn is optional; see WithPurchaseReturn.
 	purchaseReturn *appbill.PurchaseReturnUseCase
 	// names is optional; see WithProductNames.
-	names ProductNamer
+	names  ProductNamer
+	supply appbill.SupplyReader
 }
 
 // ProductNamer resolves product names for the zero-price refusal. Without it the
@@ -533,25 +534,11 @@ func (h *Handler) Get(c *gin.Context) {
 		}
 	}
 	resp := gin.H{"head": out.Head, "items": out.Items}
-	if h.purchaseReturn != nil {
-		returned, err := h.purchaseReturn.Summary(c.Request.Context(), tenantID, out.Head)
-		if err != nil {
-			httperr.WriteInternal(c, err)
-			return
-		}
-		lines := make([]purchaseDetailItem, len(out.Items))
-		for i, it := range out.Items {
-			lines[i] = purchaseDetailItem{BillItem: it, ReturnedQty: returned[it.ID].String()}
-		}
-		resp["items"] = lines
+	if err := h.attachPurchaseSupply(c, resp, tenantID, billID, out); err != nil {
+		httperr.WriteInternal(c, err)
+		return
 	}
 	writePurchaseJSON(c, http.StatusOK, resp, hideMoney)
-}
-
-// purchaseDetailItem is a purchase line plus how much of it has gone back to the supplier.
-type purchaseDetailItem struct {
-	*domain.BillItem
-	ReturnedQty string `json:"returned_qty"`
 }
 
 // ----- Helpers -----

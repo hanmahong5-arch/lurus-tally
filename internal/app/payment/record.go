@@ -14,6 +14,8 @@ import (
 	domainpayment "github.com/hanmahong5-arch/lurus-tally/internal/domain/payment"
 )
 
+type sqlTx = sql.Tx
+
 // ErrInvalidPayType is returned when the payment method is not one of the accepted values.
 var ErrInvalidPayType = errors.New("record payment: unsupported payment method")
 
@@ -96,6 +98,7 @@ type RecordPaymentRequest struct {
 	Amount    decimal.Decimal
 	PayType   string
 	Remark    string
+	after     func(tx *sqlTx, paymentID uuid.UUID) error
 }
 
 // RecordPaymentUseCase records an additional payment against an approved bill.
@@ -220,6 +223,11 @@ func (uc *RecordPaymentUseCase) ExecuteReturning(ctx context.Context, req Record
 		// Update cumulative paid_amount on bill_head.
 		if err := uc.billRepo.UpdatePaidAmount(ctx, tx, req.TenantID, req.BillID, newPaid); err != nil {
 			return fmt.Errorf("record payment: update paid_amount: %w", err)
+		}
+		if req.after != nil {
+			if err := req.after(tx, p.ID); err != nil {
+				return err
+			}
 		}
 
 		created = p

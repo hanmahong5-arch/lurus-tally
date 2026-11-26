@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/shopspring/decimal"
 
+	repobill "github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/bill"
 	"github.com/hanmahong5-arch/lurus-tally/internal/adapter/repo/dbscope"
 	appob "github.com/hanmahong5-arch/lurus-tally/internal/app/onboarding"
 	apptodo "github.com/hanmahong5-arch/lurus-tally/internal/app/todo"
@@ -84,15 +85,17 @@ func (r *Repo) Collected(ctx context.Context, tenantID uuid.UUID, from, to time.
 	return r.sum(ctx, "collected", q, tenantID, from, to)
 }
 
-// Uninvoiced sums total_amount minus the amount covered by live invoices over
-// approved sales dated in [from, to); fully invoiced bills contribute nothing.
+// Uninvoiced sums what approved sales dated in [from, to) can still be invoiced for:
+// the total after sales returns, cut to cents, minus live invoice links. A sale that
+// is fully returned or already invoiced for the net contributes nothing.
 func (r *Repo) Uninvoiced(ctx context.Context, tenantID uuid.UUID, from, to time.Time) (decimal.Decimal, error) {
-	const q = `
-		SELECT COALESCE(SUM(GREATEST(b.total_amount - COALESCE((
+	q := "WITH" + repobill.SaleReturnsCTE("") + `
+		SELECT COALESCE(SUM(GREATEST(TRUNC(GREATEST(b.total_amount - COALESCE(r.amt, 0), 0), 2) - COALESCE((
 			SELECT SUM(ib.amount) FROM tally.invoice_bill ib
 			JOIN tally.invoice iv ON iv.id = ib.invoice_id
 			WHERE ib.bill_id = b.id AND iv.status = 'issued' AND iv.deleted_at IS NULL), 0), 0)), 0)::text
 		FROM tally.bill_head b
+		LEFT JOIN rsum r ON r.sale_id = b.id
 		WHERE b.tenant_id = $1 AND b.deleted_at IS NULL AND b.sub_type = '销售' AND b.status = 2
 		  AND b.bill_date >= $2 AND b.bill_date < $3`
 	return r.sum(ctx, "uninvoiced", q, tenantID, from, to)

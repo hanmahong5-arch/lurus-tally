@@ -9,8 +9,8 @@ import {
   getSaleBill,
   quickCheckout,
   updateSaleBill,
-  type BillLineItemInput,
 } from "@/lib/api/sale"
+import { saleLinePayload } from "@/lib/sale-from-purchase"
 import { getProduct } from "@/lib/api/products"
 import { getCustomer } from "@/lib/api/customers"
 import { SaleLineEditor, type SaleLineItem } from "@/components/sale-line-editor"
@@ -38,6 +38,7 @@ import { extractApiError } from "@/lib/api/errors"
 import { describeStockShortage } from "@/lib/stock-shortage"
 import { takeBillCopy } from "@/lib/bill-copy"
 import { todayCST } from "@/lib/date"
+import { useSaleFromPurchase } from "@/hooks/use-sale-from-purchase"
 
 const CONTROL_CLASS =
   "h-8 w-full rounded-lg border border-input bg-transparent px-2.5 text-sm outline-none transition-colors focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:opacity-50"
@@ -79,9 +80,10 @@ function NewSaleInner() {
   const checkoutKey = useSubmitKey()
   // ?edit=<id>: change a draft in place instead of creating a new bill.
   const editId = searchParams.get("edit")
+  const fromId = editId ? null : searchParams.get("from")
 
-  // retail profile defaults to quick checkout; explicit ?mode=quick also triggers it
-  const defaultQuick = profileType === "retail" || searchParams.get("mode") === "quick"
+  // retail profile defaults to quick checkout; a sale opened from a purchase stays a draft.
+  const defaultQuick = !fromId && (profileType === "retail" || searchParams.get("mode") === "quick")
 
   const SALE_INITIAL: SaleDraft = {
     isQuick: defaultQuick,
@@ -97,7 +99,7 @@ function NewSaleInner() {
     exchangeRate: "1",
   }
 
-  const draft = useDraft<SaleDraft>(editId ? `draft:sale:edit:${editId}` : "draft:sale:new", SALE_INITIAL)
+  const draft = useDraft<SaleDraft>(editId ? `draft:sale:edit:${editId}` : fromId ? `draft:sale:from:${fromId}` : "draft:sale:new", SALE_INITIAL)
 
   const [isQuickPref, setIsQuick] = useState(editId ? false : (draft.value.isQuick ?? defaultQuick))
   const isQuick = !editId && mayCheckout && (isQuickPref || !mayDraft)
@@ -111,6 +113,13 @@ function NewSaleInner() {
   const [paidAmount, setPaidAmount] = useState(draft.value.paidAmount ?? "")
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [fromNote, setFromNote] = useState("")
+  useSaleFromPurchase(fromId, tenantId, !!draft.restoredAt, (built) => {
+    setItems(built.items)
+    if (built.warehouseId) setWarehouseId(built.warehouseId)
+    setFromNote(built.note)
+    setIsQuick(false)
+  }, setError)
   // Set when the checkout failed on stock, so the banner offers the way out.
   const [shortStock, setShortStock] = useState(false)
   // Edit mode: the form only becomes submittable once the draft has been read back.
@@ -199,6 +208,7 @@ function NewSaleInner() {
             line_no: i + 1,
             qty: it.qty,
             unit_price: it.unit_price,
+            source_item_id: it.source_item_id,
             _subtotal: it.line_amount,
             // The draft keeps its own prices: editing must not silently re-price.
             _price_touched: true,
@@ -254,18 +264,6 @@ function NewSaleInner() {
     items.reduce((acc, it) => acc + lineCents(parseFloat(it.qty) || 0, parseFloat(it.unit_price) || 0), 0)
   )
 
-  function buildLineItems(withWarehouse = false): BillLineItemInput[] {
-    return items.map((it, idx) => ({
-      product_id: it.product_id,
-      unit_id: it.unit_id,
-      unit_name: it.unit_name,
-      line_no: idx + 1,
-      qty: it.qty,
-      unit_price: it.unit_price,
-      warehouse_id: withWarehouse ? warehouseId || undefined : undefined,
-    }))
-  }
-
   async function handleQuickCheckout(e: React.FormEvent) {
     e.preventDefault()
     if (items.length === 0) {
@@ -293,7 +291,7 @@ function NewSaleInner() {
       const body = {
         partner_id: customerId || undefined,
         customer_name: customerId ? undefined : customerName || undefined,
-        items: buildLineItems(true),
+        items: saleLinePayload(items, warehouseId, true),
         payment_method: paymentMethod,
         paid_amount: paid,
         remark: remark || undefined,
@@ -342,7 +340,7 @@ function NewSaleInner() {
             warehouse_id: warehouseId || undefined,
             bill_date: billDate !== origBillDate ? new Date(billDate).toISOString() : undefined,
             remark: remark || undefined,
-            items: buildLineItems(),
+            items: saleLinePayload(items, warehouseId),
           },
           tenantId
         )
@@ -357,7 +355,7 @@ function NewSaleInner() {
           remark: remark || undefined,
           currency: currency !== "CNY" ? currency : undefined,
           exchange_rate: currency !== "CNY" ? exchangeRate : undefined,
-          items: buildLineItems(),
+          items: saleLinePayload(items, warehouseId),
       }
       const res = await createSaleBill(body, tenantId, createKey.keyFor(body))
       createKey.succeeded()
@@ -384,7 +382,7 @@ function NewSaleInner() {
           editId ? "改好商品和数量后保存，单号不变" : isQuick ? "一键完成销售出库 + 收款" : "填写销售单信息，保存后生成草稿"
         }
         actions={
-          editId || !mayCheckout || !mayDraft ? undefined : (
+          editId || fromId || !mayCheckout || !mayDraft ? undefined : (
             <Button variant="ghost" size="sm" onClick={() => setIsQuick(!isQuick)}>
               {isQuick ? "切换为草稿模式" : "切换为快速收银"}
             </Button>
@@ -393,6 +391,7 @@ function NewSaleInner() {
       />
 
       {!editId && <DraftRestoreToast restoredAt={draft.restoredAt} onDiscard={draft.discardDraft} />}
+      {fromNote && <p className="text-sm text-muted-foreground">{fromNote}</p>}
 
       <form onSubmit={isQuick ? handleQuickCheckout : handleCreateDraft} className="space-y-6">
         {/* Header fields */}

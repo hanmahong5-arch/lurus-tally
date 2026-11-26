@@ -99,6 +99,9 @@ const billsInvoicedExpr = `COALESCE((SELECT SUM(ib.amount) FROM tally.invoice_bi
 // their plain total.
 const billsNetTotalExpr = "GREATEST(bh.total_amount - COALESCE(r.amt, 0), 0)"
 
+// billsInvoiceableExpr is that net total cut to cents, the same base as bill-list invoice status.
+const billsInvoiceableExpr = "TRUNC(" + billsNetTotalExpr + ", 2)"
+
 // buildBillsWhere returns the extra WHERE conditions and their args, numbering
 // placeholders from $2 ($1 is the tenant).
 func buildBillsWhere(f BillsFilter) (string, []any) {
@@ -148,11 +151,13 @@ func buildBillsWhere(f BillsFilter) (string, []any) {
 	}
 	switch f.InvoiceStatus {
 	case billdomain.InvoiceNone:
-		conds = append(conds, "bh.status = 2 AND "+billsInvoicedExpr+" <= 0")
+		conds = append(conds, "bh.status = 2 AND "+billsInvoicedExpr+" <= 0 AND "+billsInvoiceableExpr+" > 0")
 	case billdomain.InvoicePartial:
-		conds = append(conds, "bh.status = 2 AND "+billsInvoicedExpr+" > 0 AND "+billsInvoicedExpr+" < TRUNC(bh.total_amount, 2)")
+		conds = append(conds, "bh.status = 2 AND "+billsInvoicedExpr+" > 0 AND "+billsInvoicedExpr+" < "+billsInvoiceableExpr)
 	case billdomain.InvoiceFull:
-		conds = append(conds, "bh.status = 2 AND "+billsInvoicedExpr+" > 0 AND "+billsInvoicedExpr+" >= TRUNC(bh.total_amount, 2)")
+		conds = append(conds, "bh.status = 2 AND "+billsInvoicedExpr+" >= "+billsInvoiceableExpr)
+	case "open":
+		conds = append(conds, "bh.status = 2 AND "+billsInvoicedExpr+" < "+billsInvoiceableExpr)
 	}
 	if len(conds) == 0 {
 		return "", nil

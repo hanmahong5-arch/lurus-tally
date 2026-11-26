@@ -164,14 +164,18 @@ const (
 	InvoiceFull    = "full"
 )
 
-// InvoiceStatus classifies how much of the bill total is covered by live invoices.
+// InvoiceStatus classifies how much of the invoiceable amount is covered by live invoices.
+// That amount is the bill total after sales returns, cut to cents: a sub-cent tail must not
+// keep the bill partial, and a sale that was fully returned has nothing left to invoice.
 func (b *BillHead) InvoiceStatus() string {
+	base := decimal.Max(b.TotalAmount.Sub(b.ReturnedAmount), decimal.Zero).Truncate(2)
 	if !b.InvoicedAmount.IsPositive() {
-		return InvoiceNone
+		if base.IsPositive() {
+			return InvoiceNone
+		}
+		return InvoiceFull
 	}
-	// Invoices are issued in whole cents, so a sub-cent tail on the total (9.9999)
-	// must not keep the bill "partial" forever: compare against the total cut to cents.
-	if b.InvoicedAmount.LessThan(b.TotalAmount.Truncate(2)) {
+	if b.InvoicedAmount.LessThan(base) {
 		return InvoicePartial
 	}
 	return InvoiceFull

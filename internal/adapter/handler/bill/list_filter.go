@@ -85,7 +85,7 @@ func parseListFilter(query url.Values, creatorID uuid.UUID, f *appbill.BillListF
 
 	if is := query.Get("invoice_status"); is != "" {
 		switch is {
-		case domain.InvoiceNone, domain.InvoicePartial, domain.InvoiceFull:
+		case domain.InvoiceNone, domain.InvoicePartial, domain.InvoiceFull, "open":
 		default:
 			return errors.New("开票状态不正确")
 		}

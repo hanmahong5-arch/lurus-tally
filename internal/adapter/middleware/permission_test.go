@@ -217,24 +217,25 @@ func TestTrimTodoSummary_ByPermission(t *testing.T) {
 		r.Use(middleware.TrimTodoSummary("/todo"))
 		r.GET("/todo", func(c *gin.Context) {
 			c.JSON(http.StatusOK, gin.H{
-				"draft_purchases":   gin.H{"count": 1, "items": []gin.H{{"total_amount": "200.00"}}},
-				"draft_sales":       gin.H{"count": 1, "items": []gin.H{{"total_amount": "50.00"}}},
-				"overdue_customers": gin.H{"count": 1, "items": []gin.H{{"unpaid_amount": "9.00"}}},
-				"uninvoiced_sales":  gin.H{"count": 1, "items": []gin.H{{"total_amount": "7.00"}}},
-				"kpis":              gin.H{"today_sales": "5.00", "today_collected": "4.00", "receivable_unpaid": "3.00", "month_uninvoiced": "2.00"},
+				"draft_purchases":      gin.H{"count": 1, "items": []gin.H{{"total_amount": "200.00"}}},
+				"draft_sales":          gin.H{"count": 1, "items": []gin.H{{"total_amount": "50.00"}}},
+				"overdue_customers":    gin.H{"count": 1, "items": []gin.H{{"unpaid_amount": "9.00"}}},
+				"uninvoiced_sales":     gin.H{"count": 1, "items": []gin.H{{"total_amount": "7.00"}}},
+				"uninvoiced_purchases": gin.H{"count": 1, "items": []gin.H{{"total_amount": "314.00"}}},
+				"kpis":                 gin.H{"today_sales": "5.00", "today_collected": "4.00", "receivable_unpaid": "3.00", "month_uninvoiced": "2.00"},
 			})
 		})
 		return r
 	}
 	owner := do(build(team.RoleOwner), "GET", "/todo").Body.String()
-	for _, want := range []string{"200.00", "9.00", "receivable_unpaid", "today_collected"} {
+	for _, want := range []string{"200.00", "314.00", "9.00", "receivable_unpaid", "today_collected"} {
 		if !strings.Contains(owner, want) {
 			t.Errorf("owner must see %s: %s", want, owner)
 		}
 	}
 	for _, role := range []team.Role{team.RoleClerk, team.RoleCashier} {
 		body := do(build(role), "GET", "/todo").Body.String()
-		if !permission.Allowed(role, permission.CostView) && strings.Contains(body, "200.00") {
+		if !permission.Allowed(role, permission.CostView) && (strings.Contains(body, "200.00") || strings.Contains(body, "314.00")) {
 			t.Errorf("%s: purchase total leaked: %s", role, body)
 		}
 		if !permission.Allowed(role, permission.PaymentRead) {

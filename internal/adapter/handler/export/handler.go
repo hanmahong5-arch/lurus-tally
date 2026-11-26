@@ -146,10 +146,10 @@ func parseBillsFilter(c *gin.Context) (f appexport.BillsFilter, rng, msg string)
 		return f, "", "按收付款状态筛选时只能查看已审核的单据"
 	}
 	switch is := c.Query("invoice_status"); is {
-	case "", "none", "partial", "full":
+	case "", "none", "partial", "full", "open":
 		f.InvoiceStatus = is
 	default:
-		return f, "", "开票状态只能是 none、partial 或 full"
+		return f, "", "开票状态只能是 none、partial、full 或 open"
 	}
 	if f.InvoiceStatus != "" && f.Status != nil && *f.Status != 2 {
 		return f, "", "按开票状态筛选时只能查看已审核的单据"

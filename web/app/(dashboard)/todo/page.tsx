@@ -1,21 +1,20 @@
 import Link from "next/link"
 
-import { auth } from "@/auth"
+import { auth, devBackendHeaders } from "@/auth"
 import { EmptyState } from "@/components/ui/empty-state"
 import { ErrorBanner } from "@/components/ui/error-banner"
 import { PageContainer } from "@/components/ui/page-container"
 import { PageHeader } from "@/components/ui/page-header"
-import { Badge } from "@/components/ui/badge"
 import { buttonVariants } from "@/components/ui/button"
 import { formatCNY } from "@/lib/format"
 import { normalizeRole, roleCan, type Perm } from "@/lib/roles"
 import {
   fetchTodoSummary,
-  type TodoBill,
   type TodoDebtor,
   type TodoNegativeStockItem,
   type TodoStockItem,
 } from "@/lib/api/todo"
+import { BillSection, SectionHeader } from "./sections"
 
 export const revalidate = 60
 
@@ -27,7 +26,8 @@ export const revalidate = 60
  *   2. Draft sale bills awaiting review
  *   3. Low-stock products
  *   4. Customers owing for more than 30 days
- *   5. Approved sales not fully invoiced
+ *   5. Approved sales not fully invoiced (goods shipped, invoice still open)
+ *   6. Approved purchases not fully invoiced (goods received, supplier invoice still open)
  *
  * All numbers come from one backend call (GET /todo/summary). If the call, or
  * any source behind it, fails the page says so — it never shows an all-clear
@@ -36,7 +36,7 @@ export const revalidate = 60
 export default async function TodoPage() {
   const session = await auth()
   const accessToken = session?.accessToken ?? ""
-  const summary = await fetchTodoSummary(accessToken)
+  const summary = await fetchTodoSummary(accessToken, accessToken ? undefined : devBackendHeaders(session))
   // 每个按钮通向需要权限的操作；角色未知时不遮挡，后端兜底。
   const role = normalizeRole(session?.user?.role, session?.user?.isOwner === true)
   const can = (p: Perm) => role === null || roleCan(role, p)
@@ -76,7 +76,7 @@ export default async function TodoPage() {
         !partial && (
           <EmptyState
             title="一切都好"
-            description="待审单据、低库存、欠款、待开票都已处理完；新的提醒会自动出现在这里。"
+            description="待审单据、低库存、欠款和没开齐的发票都已处理完；新的提醒会自动出现在这里。"
           />
         )
       ) : (
@@ -90,6 +90,11 @@ export default async function TodoPage() {
             detailHref={(id) => `/purchases/${id}`}
             action={can("bill.approve") ? "去审核" : undefined}
             showAmount={can("cost.view")}
+            note={
+              summary.draft_purchases.stale_count
+                ? `其中 ${summary.draft_purchases.stale_count} 张超过 7 天还没确认收货。货可能在路上或已经到了，库存和对账单都还没记上。`
+                : undefined
+            }
           />
           <BillSection
             icon="📊"
@@ -118,98 +123,27 @@ export default async function TodoPage() {
           />
           <BillSection
             icon="🧾"
-            title="还没开足发票的销售单"
+            title="已发货、发票还没开齐的销售单"
             count={summary.uninvoiced_sales.count}
             items={summary.uninvoiced_sales.items}
-            allHref="/sales?inv=none&range=all"
+            allHref="/sales?inv=open&range=all"
             detailHref={(id) => `/sales/${id}`}
             action={can("invoice.manage") ? "去开票" : undefined}
             showAmount={can("payment.read")}
           />
+          <BillSection
+            icon="📥"
+            title="已入库、供应商发票还没开齐"
+            count={summary.uninvoiced_purchases?.count ?? 0}
+            items={summary.uninvoiced_purchases?.items ?? []}
+            allHref="/purchases?status=2&inv=open&range=all"
+            detailHref={(id) => `/purchases/${id}`}
+            action={can("invoice.manage") ? "登记发票" : undefined}
+            showAmount={can("cost.view")}
+          />
         </div>
       )}
     </PageContainer>
-  )
-}
-
-function SectionHeader({
-  icon,
-  title,
-  count,
-  href,
-}: {
-  icon: string
-  title: string
-  count: number
-  href?: string
-}) {
-  return (
-    <div className="mb-2 flex items-center justify-between">
-      <h2 className="flex items-center gap-2 text-sm font-medium">
-        <span aria-hidden="true">{icon}</span>
-        {title}
-        {count > 0 && <Badge tone="accent">{count}</Badge>}
-      </h2>
-      {href && (
-        <Link href={href} className="text-xs text-muted-foreground hover:text-foreground">
-          全部 →
-        </Link>
-      )}
-    </div>
-  )
-}
-
-function BillSection({
-  icon,
-  title,
-  count,
-  items,
-  allHref,
-  detailHref,
-  action,
-  showAmount = true,
-}: {
-  icon: string
-  title: string
-  count: number
-  items: TodoBill[]
-  allHref: string
-  detailHref: (id: string) => string
-  /** The button label; omitted when the viewer may not act on these bills. */
-  action?: string
-  /** False when the viewer may not see the money on these bills (purchase prices, receivables). */
-  showAmount?: boolean
-}) {
-  if (count === 0) return null
-  return (
-    <section>
-      <SectionHeader icon={icon} title={title} count={count} href={allHref} />
-      <ul className="divide-y divide-border rounded-xl border border-border bg-card">
-        {items.map((b) => (
-          <li key={b.id} className="flex items-center justify-between gap-3 px-4 py-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">{b.bill_no}</p>
-              <p className="truncate text-xs text-muted-foreground">
-                {b.partner_name || "散客"} · {b.bill_date}
-              </p>
-            </div>
-            {showAmount && (
-              <div className="text-right font-mono text-sm tabular-nums">{formatCNY(b.total_amount)}</div>
-            )}
-            {action && (
-              <Link href={detailHref(b.id)} className={buttonVariants({ size: "sm" })}>
-                {action}
-              </Link>
-            )}
-          </li>
-        ))}
-      </ul>
-      {count > items.length && (
-        <p className="mt-1.5 text-center text-xs text-muted-foreground">
-          还有 {count - items.length} 张，点右上角“全部”查看
-        </p>
-      )}
-    </section>
   )
 }
 

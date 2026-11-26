@@ -173,7 +173,10 @@ func (o *Orchestrator) rememberCustomerFact(ctx context.Context, tenantID uuid.U
 	wctx, cancel := context.WithTimeout(ctx, asyncMemoryWriteTimeout)
 	defer cancel()
 	var unmatched bool
-	if fw, ok := o.memory.(FactWriter); ok && (opts.ValidFrom != nil || opts.ReplacesValue != "") {
+	// Prefer AddWithOptions whenever the client speaks contract-v2, even for a
+	// plain fact with empty opts — so superseded / unmatched_replaces_value are
+	// not discarded (product-line bet 2026-11-05: tally is the deep reference).
+	if fw, ok := o.memory.(FactWriter); ok {
 		var r *memorusclient.AddResult
 		r, err = fw.AddWithOptions(wctx, tenantID.String(), text, meta, opts)
 		if err == nil && r != nil {

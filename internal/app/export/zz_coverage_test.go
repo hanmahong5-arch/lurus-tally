@@ -719,9 +719,9 @@ func TestBillsExport_Filtered_PaymentStatusClauses(t *testing.T) {
 func TestBillsExport_Filtered_InvoiceStatusClauses(t *testing.T) {
 	inv := `COALESCE\(\(SELECT SUM\(ib\.amount\) FROM tally\.invoice_bill ib\s+JOIN tally\.invoice iv ON iv\.id = ib\.invoice_id AND iv\.tenant_id = ib\.tenant_id\s+WHERE ib\.bill_id = bh\.id AND ib\.tenant_id = bh\.tenant_id AND iv\.status = 'issued' AND iv\.deleted_at IS NULL\), 0\)`
 	for is, want := range map[string]string{
-		"none":    `AND bh\.status = 2 AND ` + inv + ` <= 0\s+ORDER BY`,
-		"partial": `AND bh\.status = 2 AND ` + inv + ` > 0 AND ` + inv + ` < TRUNC\(bh\.total_amount, 2\)\s+ORDER BY`,
-		"full":    `AND bh\.status = 2 AND ` + inv + ` > 0 AND ` + inv + ` >= TRUNC\(bh\.total_amount, 2\)\s+ORDER BY`,
+		"none":    `AND bh\.status = 2 AND ` + inv + ` <= 0 AND TRUNC\(GREATEST\(bh\.total_amount - COALESCE\(r\.amt, 0\), 0\), 2\) > 0\s+ORDER BY`,
+		"partial": `AND bh\.status = 2 AND ` + inv + ` > 0 AND ` + inv + ` < TRUNC\(GREATEST\(bh\.total_amount - COALESCE\(r\.amt, 0\), 0\), 2\)\s+ORDER BY`,
+		"full":    `AND bh\.status = 2 AND ` + inv + ` >= TRUNC\(GREATEST\(bh\.total_amount - COALESCE\(r\.amt, 0\), 0\), 2\)\s+ORDER BY`,
 	} {
 		db, mock := sqlmockNew(t)
 		tenantID := uuid.New()
