@@ -84,6 +84,19 @@ patches:
     target:
       kind: Service
       name: tally-web
+  # R6 keeps invoice originals on the data disk. The base volume is an emptyDir
+  # so other clusters still boot; this pod is the only replica.
+  - patch: |-
+      - op: replace
+        path: /spec/template/spec/volumes/1
+        value:
+          name: intake
+          hostPath:
+            path: /data/tally-intake
+            type: DirectoryOrCreate
+    target:
+      kind: Deployment
+      name: tally-backend
   # Drop the base placeholder Secret, as the PROD overlay does: applying it
   # would overwrite the hand-seeded `tally-secrets` per key. STAGE used to
   # survive only because base/secret.yaml's REPLACE_AT_DEPLOY values are

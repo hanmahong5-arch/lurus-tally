@@ -27,6 +27,7 @@ spec:
       securityContext:
         runAsNonRoot: true
         runAsUser: 65534
+        fsGroup: 65534
       containers:
         - name: tally-backend
           image: ghcr.io/hanmahong5-arch/lurus-tally-backend:main-placeholder
@@ -72,6 +73,10 @@ spec:
           volumeMounts:
             - name: tmp
               mountPath: /tmp
+            - name: intake
+              mountPath: /data/intake
       volumes:
         - name: tmp
+          emptyDir: {}
+        - name: intake
           emptyDir: {}

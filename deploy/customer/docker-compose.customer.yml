@@ -90,6 +90,8 @@ services:
       DATABASE_DSN: postgres://${POSTGRES_USER:-tally}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-lurus}?sslmode=disable&search_path=tally
       REDIS_URL: redis://redis:6379/5
       NATS_URL: nats://nats:4222
+      # Originals live on a volume. This image does not use the backup bucket.
+      INTAKE_BLOB_DIR: /data/intake
     # 同机装了别的 Lurus 产品时,用这个名字去找它们(Platform / newapi / memorus)。
     # 那些产品是**另一个 compose 项目**,有自己的网络,所以 `http://core:18104`
     # 这种服务名在这里解析不出来;它们把端口发布在宿主上,走宿主网关才通。
@@ -98,6 +100,8 @@ services:
     # 没装别的产品时这行是无害的:不填 PLATFORM_BASE_URL 就没人会去解析它。
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - tally_intake:/data/intake
     ports:
       - "${TALLY_BACKEND_PORT:-18200}:18200"
     networks:
@@ -109,10 +113,23 @@ services:
         condition: service_healthy
       nats:
         condition: service_healthy
+      intake-ready:
+        condition: service_completed_successfully
     # No container-level healthcheck: the runtime image is built FROM scratch
     # (see ../../Dockerfile) and has no shell/curl/wget to run a CMD probe.
     # Verify liveness externally instead — see INSTALL.md "验证" section
     # (curl http://localhost:18200/internal/v1/tally/health from the host).
+
+  # The backend runs as uid 65534 and cannot chown its own volume from scratch.
+  intake-ready:
+    image: redis:7-alpine
+    user: "0:0"
+    restart: "no"
+    entrypoint: ["chown", "65534:65534", "/data/intake"]
+    volumes:
+      - tally_intake:/data/intake
+    networks:
+      - tally_customer
 
   web:
     # Image resolution — same rule as `backend` above, keyed off
@@ -155,3 +172,4 @@ volumes:
   tally_pgdata:
   tally_redisdata:
   tally_natsdata:
+  tally_intake:

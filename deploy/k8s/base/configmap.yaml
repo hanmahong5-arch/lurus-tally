@@ -49,3 +49,5 @@ data:
   # 云打印(飞鹅)。API 地址可覆盖；账号 FEIE_USER / FEIE_UKEY 属密钥，放 tally-secrets，不写这里。
   # 两者任一为空 -> 云打印整体关闭，收银台回落到浏览器打印。出网需放行 api.feieyun.cn:80 (见 docs/ops/cloud-print.md)。
   FEIE_API_URL: "http://api.feieyun.cn/Api/Open/"
+  # Invoice originals. A volume, not the backup bucket. The pod mounts this path.
+  INTAKE_BLOB_DIR: "/data/intake"
